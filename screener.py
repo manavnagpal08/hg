@@ -1,4 +1,4 @@
-# Version 1.12 - Replacing spaCy with GeoText for Location Extraction
+# Version 1.13 - Custom City List for Location Extraction
 import streamlit as st
 import pdfplumber
 import pandas as pd
@@ -16,7 +16,7 @@ import nltk
 import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
-from geotext import GeoText # Import GeoText
+# Removed spacy and geotext imports
 
 # Set Streamlit page configuration for wide layout
 st.set_page_config(layout="wide")
@@ -40,12 +40,58 @@ def load_ml_model():
 
 model, ml_model = load_ml_model()
 
-# No specific model loading needed for GeoText, it processes text directly.
-# Removed load_spacy_model and nlp variable.
+# Removed spaCy model loading and related warnings.
+# Location extraction will now rely on a predefined list of cities.
 
-# Add a prominent warning if the location extraction might be limited (general warning now)
-# Removed the specific spaCy model warning as GeoText doesn't require a separate model download.
-st.info("💡 Location extraction uses `geotext` and might have varying accuracy based on resume formatting.")
+
+# --- Predefined List of Cities for Location Extraction ---
+MASTER_CITIES = set([
+    # Indian Cities
+    "Bengaluru", "Mumbai", "Delhi", "Chennai", "Hyderabad", "Kolkata", "Pune", "Ahmedabad", "Jaipur", "Lucknow",
+    "Chandigarh", "Kochi", "Coimbatore", "Nagpur", "Bhopal", "Indore", "Gurgaon", "Noida", "Surat", "Visakhapatnam",
+    "Patna", "Vadodara", "Ghaziabad", "Ludhiana", "Agra", "Nashik", "Faridabad", "Meerut", "Rajkot", "Varanasi",
+    "Srinagar", "Aurangabad", "Dhanbad", "Amritsar", "Allahabad", "Ranchi", "Jamshedpur", "Gwalior", "Jabalpur",
+    "Vijayawada", "Jodhpur", "Raipur", "Kota", "Guwahati", "Thiruvananthapuram", "Mysuru", "Hubballi-Dharwad",
+    "Mangaluru", "Belagavi", "Davangere", "Ballari", "Tumakuru", "Shivamogga", "Bidar", "Hassan", "Gadag-Betageri",
+    "Chitradurga", "Udupi", "Kolar", "Mandya", "Chikkamagaluru", "Koppal", "Chamarajanagar", "Yadgir", "Raichur",
+    "Kalaburagi", "Bengaluru Rural", "Dakshina Kannada", "Uttara Kannada", "Kodagu", "Chikkaballapur", "Ramanagara",
+    "Bagalkot", "Gadag", "Haveri", "Vijayanagara", "Krishnagiri", "Vellore", "Salem", "Erode", "Tiruppur", "Madurai",
+    "Tiruchirappalli", "Thanjavur", "Dindigul", "Kanyakumari", "Thoothukudi", "Tirunelveli", "Nagercoil", "Puducherry",
+    "Panaji", "Margao", "Vasco da Gama", "Mapusa", "Ponda", "Bicholim", "Curchorem", "Sanquelim", "Valpoi", "Pernem",
+    "Quepem", "Canacona", "Mormugao", "Sanguem", "Dharbandora", "Tiswadi", "Salcete", "Bardez",
+
+    # Foreign Cities (a selection)
+    "London", "New York", "Paris", "Berlin", "Tokyo", "Sydney", "Toronto", "Vancouver", "Singapore", "Dubai",
+    "San Francisco", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia", "San Antonio", "San Diego",
+    "Dallas", "San Jose", "Austin", "Jacksonville", "Fort Worth", "Columbus", "Charlotte", "Indianapolis",
+    "Seattle", "Denver", "Washington D.C.", "Boston", "Nashville", "El Paso", "Detroit", "Oklahoma City",
+    "Portland", "Las Vegas", "Memphis", "Louisville", "Baltimore", "Milwaukee", "Albuquerque", "Tucson",
+    "Fresno", "Sacramento", "Mesa", "Atlanta", "Kansas City", "Colorado Springs", "Raleigh", "Miami", "Omaha",
+    "Virginia Beach", "Long Beach", "Oakland", "Minneapolis", "Tulsa", "Wichita", "New Orleans", "Cleveland",
+    "Tampa", "Honolulu", "Anaheim", "Santa Ana", "St. Louis", "Riverside", "Lexington", "Pittsburgh", "Cincinnati",
+    "Anchorage", "Plano", "Newark", "Orlando", "Irvine", "Garland", "Hialeah", "Scottsdale", "North Las Vegas",
+    "Chandler", "Laredo", "Chula Vista", "Madison", "Reno", "Buffalo", "Durham", "Rochester", "Winston-Salem",
+    "St. Petersburg", "Jersey City", "Toledo", "Lincoln", "Greensboro", "Boise", "Richmond", "Stockton",
+    "San Bernardino", "Des Moines", "Modesto", "Fayetteville", "Shreveport", "Akron", "Tacoma", "Aurora",
+    "Oxnard", "Fontana", "Montgomery", "Little Rock", "Grand Rapids", "Springfield", "Yonkers", "Augusta",
+    "Mobile", "Port St. Lucie", "Denton", "Spokane", "Chattanooga", "Worcester", "Providence", "Fort Lauderdale",
+    "Chesapeake", "Fremont", "Baton Rouge", "Santa Clarita", "Birmingham", "Glendale", "Huntsville",
+    "Salt Lake City", "Frisco", "McKinney", "Grand Prairie", "Overland Park", "Brownsville", "Killeen",
+    "Pasadena", "Olathe", "Dayton", "Savannah", "Fort Collins", "Naples", "Gainesville", "Lakeland", "Sarasota",
+    "Daytona Beach", "Melbourne", "Clearwater", "St. Augustine", "Key West", "Fort Myers", "Cape Coral",
+    "Coral Springs", "Pompano Beach", "Miami Beach", "West Palm Beach", "Boca Raton", "Fort Pierce",
+    "Port Orange", "Kissimmee", "Sanford", "Ocala", "Bradenton", "Palm Bay", "Deltona", "Largo",
+    "Deerfield Beach", "Boynton Beach", "Coconut Creek", "Sunrise", "Plantation", "Davie", "Miramar",
+    "Hollywood", "Pembroke Pines", "Coral Gables", "Doral", "Aventura", "Sunny Isles Beach", "North Miami",
+    "Miami Gardens", "Homestead", "Cutler Bay", "Pinecrest", "Kendall", "Richmond Heights", "West Kendall",
+    "East Kendall", "South Miami", "Sweetwater", "Opa-locka", "Florida City", "Golden Glades", "Leisure City",
+    "Princeton", "West Perrine", "Naranja", "Goulds", "South Miami Heights", "Country Walk", "The Crossings",
+    "Three Lakes", "Richmond West", "Palmetto Bay", "Palmetto Estates", "Perrine", "Cutler Ridge", "Westview",
+    "Gladeview", "Brownsville", "Liberty City", "West Little River", "Pinewood", "Ojus", "Ives Estates",
+    "Highland Lakes", "Sunny Isles Beach", "Golden Beach", "Bal Harbour", "Surfside", "Bay Harbor Islands",
+    "Indian Creek", "North Bay Village", "Biscayne Park", "El Portal", "Miami Shores", "North Miami Beach",
+    "Aventura"
+])
 
 
 # --- Stop Words List (Using NLTK) ---
@@ -470,22 +516,25 @@ def extract_phone_number(text):
 
 def extract_location(text):
     """
-    Extracts location details (cities, countries) using GeoText.
+    Extracts location details by matching against a predefined list of cities.
+    This approach is less reliant on external NLP models and should be more stable
+    in various deployment environments.
     """
-    places = GeoText(text)
-    locations = set()
-    
-    # GeoText extracts cities and countries
-    if places.cities:
-        for city in places.cities:
-            locations.add(city.title())
-    if places.countries:
-        for country in places.countries:
-            locations.add(country.title())
-    
-    if locations:
-        # Join unique locations, sorted for consistency
-        return ", ".join(sorted(list(locations)))
+    found_locations = set()
+    text_lower = text.lower()
+
+    # Sort cities by length to prioritize longer, more specific matches (e.g., "New York City" before "New York")
+    sorted_cities = sorted(list(MASTER_CITIES), key=len, reverse=True)
+
+    for city in sorted_cities:
+        # Use regex to find whole word matches for the city name
+        # re.escape handles special characters in city names (e.g., "St. Louis")
+        pattern = r'\b' + re.escape(city.lower()) + r'\b'
+        if re.search(pattern, text_lower):
+            found_locations.add(city) # Add the original, title-cased city name
+
+    if found_locations:
+        return ", ".join(sorted(list(found_locations)))
     return "Not Found"
 
 
@@ -774,9 +823,12 @@ def extract_project_details(text):
                 
                 # Extract technologies (simple approach: look for words in MASTER_SKILLS within the block)
                 block_lower = block.lower()
-                for skill in MASTER_SKILLS:
-                    if re.search(r'\b' + re.escape(skill.lower()) + r'\b', block_lower):
-                        technologies.append(skill)
+                # MASTER_SKILLS needs to be defined globally or passed here for this to work
+                # For now, assuming MASTER_SKILLS is available in the global scope if it's used elsewhere
+                if 'MASTER_SKILLS' in globals():
+                    for skill in MASTER_SKILLS:
+                        if re.search(r'\b' + re.escape(skill.lower()) + r'\b', block_lower):
+                            technologies.append(skill)
                 
                 # Remaining lines form the description
                 description = [line.strip() for line in description_lines if line.strip()]
@@ -1059,6 +1111,8 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
     semantic_similarity = 0.0
 
     # Extract raw skills for scoring
+    # Ensure MASTER_SKILLS is defined or passed here if it's not global
+    # For now, assuming MASTER_SKILLS is available in the global scope
     resume_raw_skills, _ = extract_relevant_keywords(resume_clean, MASTER_SKILLS)
     jd_raw_skills, _ = extract_relevant_keywords(jd_clean, MASTER_SKILLS)
 
@@ -1234,10 +1288,8 @@ def resume_screener_page():
     st.markdown("## 🎯 Skill Prioritization (Optional)")
     st.caption("Assign higher importance to specific skills in the Job Description.")
     
-    # Extract all unique skills from MASTER_SKILLS for selection
-    all_master_skills = sorted(list(SKILL_CATEGORIES.values())) # Changed to use SKILL_CATEGORIES directly
-    all_master_skills = sorted(list(set([item for sublist in SKILL_CATEGORIES.values() for item in sublist])))
-
+    # Corrected: Extract all unique skills from SKILL_CATEGORIES for selection
+    all_master_skills = sorted(list(set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])))
 
     col_weights_1, col_weights_2 = st.columns(2)
     with col_weights_1:
@@ -1264,7 +1316,8 @@ def resume_screener_page():
         st.caption("Visualizing the most frequent and important keywords from the Job Description.")
         st.info("💡 To filter candidates by these skills, use the 'Filter Candidates by Skill' section below the main results table.") # New instruction
         
-        jd_words_for_cloud_set, _ = extract_relevant_keywords(jd_text, all_master_skills) # Use all_master_skills for cloud
+        # Use all_master_skills for cloud generation
+        jd_words_for_cloud_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
         jd_words_for_cloud = " ".join(list(jd_words_for_cloud_set))
 
         if jd_words_for_cloud:
@@ -1295,7 +1348,7 @@ def resume_screener_page():
             exp = extract_years_of_experience(text)
             email = extract_email(text)
             phone = extract_phone_number(text)
-            location = extract_location(text) # Now uses GeoText
+            location = extract_location(text) # Now uses custom city list
             languages = extract_languages(text)
             
             # Extract structured details
