@@ -1,4 +1,4 @@
-# Version 1.16 - Added Editable Notes, Shortlist, and General Search Filter
+# Version 1.17 - Removed Manual Shortlisting/Notes, Enhanced Filtering UI
 import streamlit as st
 import pdfplumber
 import pandas as pd
@@ -16,7 +16,6 @@ import nltk
 import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
-# Removed spacy import - no external NLP library for location needed
 
 # Set Streamlit page configuration for wide layout
 st.set_page_config(layout="wide")
@@ -39,10 +38,6 @@ def load_ml_model():
         return None, None
 
 model, ml_model = load_ml_model()
-
-# Removed spaCy model loading and related warnings.
-# Location extraction will now rely on a predefined list of cities.
-
 
 # --- Predefined List of Cities for Location Extraction ---
 MASTER_CITIES = set([
@@ -1151,22 +1146,20 @@ def resume_screener_page():
 
     resume_files = st.file_uploader("📄 **Upload Resumes (PDF)**", type="pdf", accept_multiple_files=True, help="Upload one or more PDF resumes for screening.")
 
-    # Initialize or update the editable_df in session state
-    if 'editable_df' not in st.session_state:
-        st.session_state['editable_df'] = pd.DataFrame()
+    # Initialize or update the comprehensive_df in session state
+    if 'comprehensive_df' not in st.session_state:
+        st.session_state['comprehensive_df'] = pd.DataFrame()
     
     # Store raw resume texts for search functionality
     if 'resume_raw_texts' not in st.session_state:
         st.session_state['resume_raw_texts'] = {}
-
-    df = pd.DataFrame()
 
     if jd_text and resume_files:
         # --- Job Description Keyword Cloud ---
         st.markdown("---")
         st.markdown("## ☁️ Job Description Keyword Cloud")
         st.caption("Visualizing the most frequent and important keywords from the Job Description.")
-        st.info("💡 To filter candidates by these skills, use the 'Filter Candidates by Skill' section below the main results table.") # New instruction
+        st.info("💡 To filter candidates by these skills, use the 'Filter Candidates by Skill' section below the main results table.")
         
         # Use all_master_skills for cloud generation
         jd_words_for_cloud_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
@@ -1202,7 +1195,7 @@ def resume_screener_page():
             exp = extract_years_of_experience(text)
             email = extract_email(text)
             phone = extract_phone_number(text)
-            location = extract_location(text) # Now uses custom city list
+            location = extract_location(text)
             languages = extract_languages(text)
             
             # Extract structured details
@@ -1277,43 +1270,29 @@ def resume_screener_page():
         progress_bar.empty()
         status_text.empty()
 
-        # Create the initial DataFrame from results
-        current_run_df = pd.DataFrame(results).sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
-
-        # Merge with existing session state data for 'Shortlist' and 'Note'
-        if not st.session_state['editable_df'].empty:
-            # Only merge if the 'File Name' matches to preserve existing notes/shortlist status
-            # For new files, 'Shortlist' will be False and 'Note' will be empty
-            st.session_state['editable_df'] = pd.merge(
-                current_run_df,
-                st.session_state['editable_df'][['File Name', 'Shortlist', 'Note']],
-                on='File Name',
-                how='left',
-                suffixes=('', '_old')
-            )
-            # Fill NaN for new files in 'Shortlist' and 'Note'
-            st.session_state['editable_df']['Shortlist'] = st.session_state['editable_df']['Shortlist'].fillna(False)
-            st.session_state['editable_df']['Note'] = st.session_state['editable_df']['Note'].fillna("")
-            # Drop old columns if they exist from suffixes
-            st.session_state['editable_df'] = st.session_state['editable_df'].drop(columns=[col for col in st.session_state['editable_df'].columns if '_old' in col], errors='ignore')
-        else:
-            # For the very first run or if session state was empty, initialize with default values
-            st.session_state['editable_df'] = current_run_df
-            st.session_state['editable_df']['Shortlist'] = False
-            st.session_state['editable_df']['Note'] = ""
+        # Create the initial DataFrame from results and store in session state
+        st.session_state['comprehensive_df'] = pd.DataFrame(results).sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
         
-        # Save results to CSV for analytics.py to use (using the current run's data, not editable)
-        current_run_df.to_csv("results.csv", index=False)
+        # Add a 'Tag' column for quick categorization
+        st.session_state['comprehensive_df']['Tag'] = st.session_state['comprehensive_df'].apply(lambda row: 
+            "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.85 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.5) else (
+            "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.7 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.0) else (
+            "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 and row['Years Experience'] <= max_experience and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 2.5) else (
+            "⚠️ Needs Review" if row['Score (%)'] >= 40 else 
+            "❌ Limited Match"))), axis=1)
+
+        # Save results to CSV for analytics.py to use
+        st.session_state['comprehensive_df'].to_csv("results.csv", index=False)
 
 
         # --- Overall Candidate Comparison Chart ---
         st.markdown("## 📊 Candidate Score Comparison")
         st.caption("Visual overview of how each candidate ranks against the job requirements.")
-        if not current_run_df.empty: # Use current_run_df for charts
+        if not st.session_state['comprehensive_df'].empty:
             fig, ax = plt.subplots(figsize=(12, 7))
             # Define colors: Green for top, Yellow for moderate, Red for low
-            colors = ['#4CAF50' if s >= cutoff else '#FFC107' if s >= (cutoff * 0.75) else '#F44346' for s in current_run_df['Score (%)']]
-            bars = ax.bar(current_run_df['Candidate Name'], current_run_df['Score (%)'], color=colors)
+            colors = ['#4CAF50' if s >= cutoff else '#FFC107' if s >= (cutoff * 0.75) else '#F44346' for s in st.session_state['comprehensive_df']['Score (%)']]
+            bars = ax.bar(st.session_state['comprehensive_df']['Candidate Name'], st.session_state['comprehensive_df']['Score (%)'], color=colors)
             ax.set_xlabel("Candidate", fontsize=14)
             ax.set_ylabel("Score (%)", fontsize=14)
             ax.set_title("Resume Screening Scores Across Candidates", fontsize=16, fontweight='bold')
@@ -1335,8 +1314,8 @@ def resume_screener_page():
         st.markdown("## 👑 Top Candidate AI Assessment")
         st.caption("A concise, AI-powered assessment for the most suitable candidate.")
         
-        if not current_run_df.empty: # Use current_run_df for top candidate display
-            top_candidate = current_run_df.iloc[0] # Get the top candidate (already sorted by score)
+        if not st.session_state['comprehensive_df'].empty:
+            top_candidate = st.session_state['comprehensive_df'].iloc[0] # Get the top candidate (already sorted by score)
             
             # Safely format CGPA and Semantic Similarity for display
             cgpa_display = f"{top_candidate['CGPA (4.0 Scale)']:.2f}" if top_candidate['CGPA (4.0 Scale)'] is not None else "N/A"
@@ -1402,33 +1381,33 @@ def resume_screener_page():
         # === AI Recommendation for Shortlisted Candidates (Streamlined) ===
         # This section now focuses on a quick summary for *all* shortlisted,
         # with the top one highlighted above.
-        st.markdown("## 🌟 Shortlisted Candidates Overview")
-        st.caption("Candidates meeting your score, experience, and CGPA criteria.")
+        st.markdown("## 🌟 Candidates Meeting Criteria Overview")
+        st.caption("Candidates automatically identified as meeting your defined score, experience, and CGPA criteria.")
 
-        # Updated filtering for shortlisted candidates to include CGPA and max experience
-        shortlisted_candidates = current_run_df[ # Use current_run_df for this filter
-            (current_run_df['Score (%)'] >= cutoff) & 
-            (current_run_df['Years Experience'] >= min_experience) &
-            (current_run_df['Years Experience'] <= max_experience) & # New: Max experience filter
-            ((current_run_df['CGPA (4.0 Scale)'].isnull()) | (current_run_df['CGPA (4.0 Scale)'] >= min_cgpa)) # Handle cases where CGPA is not found
-        ]
+        # Filter candidates based on the sliders
+        auto_shortlisted_candidates = st.session_state['comprehensive_df'][
+            (st.session_state['comprehensive_df']['Score (%)'] >= cutoff) & 
+            (st.session_state['comprehensive_df']['Years Experience'] >= min_experience) &
+            (st.session_state['comprehensive_df']['Years Experience'] <= max_experience) &
+            ((st.session_state['comprehensive_df']['CGPA (4.0 Scale)'].isnull()) | (st.session_state['comprehensive_df']['CGPA (4.0 Scale)'] >= min_cgpa))
+        ].copy() # Use .copy() to avoid SettingWithCopyWarning
 
-        if not shortlisted_candidates.empty:
-            st.success(f"**{len(shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, CGPA ≥ {min_cgpa} or N/A).")
+        if not auto_shortlisted_candidates.empty:
+            st.success(f"**{len(auto_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, CGPA ≥ {min_cgpa} or N/A).")
             
-            # Display a concise table for shortlisted candidates
-            display_shortlisted_summary_cols = [
+            # Display a concise table for automatically shortlisted candidates
+            display_auto_shortlisted_cols = [
                 'Candidate Name',
                 'Score (%)',
                 'Years Experience',
-                'CGPA (4.0 Scale)', # Added CGPA
+                'CGPA (4.0 Scale)',
                 'Semantic Similarity',
-                'Email', # Include email here for quick reference
-                'AI Suggestion' # This is the concise AI suggestion
+                'Email',
+                'AI Suggestion'
             ]
             
             st.dataframe(
-                shortlisted_candidates[display_shortlisted_summary_cols],
+                auto_shortlisted_candidates[display_auto_shortlisted_cols],
                 use_container_width=True,
                 hide_index=True,
                 column_config={
@@ -1464,62 +1443,130 @@ def resume_screener_page():
                     )
                 }
             )
-            st.info("For individual detailed AI assessments and action steps, please refer to the table above or the Analytics Dashboard.")
+            st.info("For individual detailed AI assessments and action steps, please refer to the table below.")
 
         else:
             st.warning(f"No candidates met the defined screening criteria (score cutoff, experience between {min_experience}-{max_experience} years, and minimum CGPA). You might consider adjusting the sliders or reviewing the uploaded resumes/JD.")
 
         st.markdown("---")
 
-        # Add a 'Tag' column for quick categorization - UPDATED WITH CGPA and Max Exp
-        st.session_state['editable_df']['Tag'] = st.session_state['editable_df'].apply(lambda row: 
-            "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.85 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.5) else (
-            "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.7 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.0) else (
-            "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 and row['Years Experience'] <= max_experience and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 2.5) else (
-            "⚠️ Needs Review" if row['Score (%)'] >= 40 else 
-            "❌ Limited Match"))), axis=1)
-
         st.markdown("## 📋 Comprehensive Candidate Results Table")
-        st.caption("Full details for all processed resumes. You can edit 'Shortlist' and 'Note' columns.")
+        st.caption("Full details for all processed resumes. Use the filters below to refine the view.")
         
-        # --- Interactive Filters ---
-        col_filter_1, col_filter_2 = st.columns(2)
-        with col_filter_1:
+        # --- Interactive Filters for Comprehensive Table ---
+        st.markdown("### 🔍 Filter Candidates")
+        filter_col1, filter_col2, filter_col3 = st.columns(3)
+        filter_col4, filter_col5, filter_col6 = st.columns(3)
+
+        with filter_col1:
             # Populate multiselect with skills from the JD's word cloud set
-            jd_raw_skills_set, _ = extract_relevant_keywords(jd_text, all_master_skills) # Re-extract JD skills here for the filter
-            all_unique_jd_skills = sorted(list(jd_raw_skills_set)) # Use JD skills for filter options
+            jd_raw_skills_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
+            all_unique_jd_skills = sorted(list(jd_raw_skills_set))
             selected_filter_skills = st.multiselect(
-                "**Filter by Skills (AND logic):**",
-                options=all_unique_jd_skills, # Use JD skills here
+                "**Skills (AND logic):**",
+                options=all_unique_jd_skills,
                 help="Only candidates possessing ALL selected skills will be shown."
             )
-        with col_filter_2:
+        with filter_col2:
             search_query = st.text_input(
-                "**Search in Results (Name, Email, Location, Raw Text):**",
-                placeholder="Type to search...",
+                "**Keyword Search:**",
+                placeholder="Name, Email, Location, Raw Text...",
                 help="Search for text across Candidate Name, Email, Location, and Resume Raw Text."
             )
+        with filter_col3:
+            selected_tags = st.multiselect(
+                "**AI Tag:**",
+                options=["👑 Exceptional Match", "🔥 Strong Candidate", "✨ Promising Fit", "⚠️ Needs Review", "❌ Limited Match"],
+                help="Filter by AI-generated assessment tags."
+            )
         
-        # Apply filters to the editable DataFrame
-        filtered_editable_df = st.session_state['editable_df'].copy()
+        with filter_col4:
+            min_score_filter, max_score_filter = st.slider(
+                "**Score Range (%):**",
+                0, 100, (0, 100), help="Filter candidates by their overall score range."
+            )
+        with filter_col5:
+            min_exp_filter, max_exp_filter = st.slider(
+                "**Experience Range (Years):**",
+                0, 20, (0, 20), help="Filter candidates by their years of experience range."
+            )
+        with filter_col6:
+            min_cgpa_filter, max_cgpa_filter = st.slider(
+                "**CGPA Range (4.0 Scale):**",
+                0.0, 4.0, (0.0, 4.0), 0.1, help="Filter candidates by their CGPA range (normalized to 4.0)."
+            )
+        
+        # Additional filters
+        filter_col_loc, filter_col_lang = st.columns(2)
+        with filter_col_loc:
+            all_locations = sorted(st.session_state['comprehensive_df']['Location'].unique())
+            selected_locations = st.multiselect(
+                "**Location:**",
+                options=all_locations,
+                help="Filter by candidate location."
+            )
+        with filter_col_lang:
+            # Extract all unique languages from the 'Languages' column across all candidates
+            all_languages = sorted(list(set(
+                lang.strip() for langs_str in st.session_state['comprehensive_df']['Languages'] if langs_str != "Not Found" for lang in langs_str.split(',')
+            )))
+            selected_languages = st.multiselect(
+                "**Languages:**",
+                options=all_languages,
+                help="Filter by languages spoken by the candidate."
+            )
+
+
+        # Apply all filters to the comprehensive DataFrame
+        filtered_display_df = st.session_state['comprehensive_df'].copy()
 
         if selected_filter_skills:
             for skill in selected_filter_skills:
-                # Ensure case-insensitive and exact word matching for filtering
-                filtered_editable_df = filtered_editable_df[filtered_editable_df['Matched Keywords'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
+                filtered_display_df = filtered_display_df[filtered_display_df['Matched Keywords'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
 
         if search_query:
             search_query_lower = search_query.lower()
-            filtered_editable_df = filtered_editable_df[
-                filtered_editable_df['Candidate Name'].str.lower().str.contains(search_query_lower, na=False) |
-                filtered_editable_df['Email'].str.lower().str.contains(search_query_lower, na=False) |
-                filtered_editable_df['Location'].str.lower().str.contains(search_query_lower, na=False) |
-                filtered_editable_df['Resume Raw Text'].str.lower().str.contains(search_query_lower, na=False)
+            filtered_display_df = filtered_display_df[
+                filtered_display_df['Candidate Name'].str.lower().str.contains(search_query_lower, na=False) |
+                filtered_display_df['Email'].str.lower().str.contains(search_query_lower, na=False) |
+                filtered_display_df['Location'].str.lower().str.contains(search_query_lower, na=False) |
+                filtered_display_df['Resume Raw Text'].str.lower().str.contains(search_query_lower, na=False)
+            ]
+        
+        if selected_tags:
+            filtered_display_df = filtered_display_df[filtered_display_df['Tag'].isin(selected_tags)]
+        
+        # Apply numerical range filters
+        filtered_display_df = filtered_display_df[
+            (filtered_display_df['Score (%)'] >= min_score_filter) & (filtered_display_df['Score (%)'] <= max_score_filter)
+        ]
+        filtered_display_df = filtered_display_df[
+            (filtered_display_df['Years Experience'] >= min_exp_filter) & (filtered_display_df['Years Experience'] <= max_exp_filter)
+        ]
+        # For CGPA, handle None values gracefully (e.g., treat None as outside the filter range unless range is full 0-4)
+        if not (min_cgpa_filter == 0.0 and max_cgpa_filter == 4.0):
+            filtered_display_df = filtered_display_df[
+                ((filtered_display_df['CGPA (4.0 Scale)'].notnull()) & 
+                 (filtered_display_df['CGPA (4.0 Scale)'] >= min_cgpa_filter) & 
+                 (filtered_display_df['CGPA (4.0 Scale)'] <= max_cgpa_filter))
+            ]
+        
+        if selected_locations:
+            # Filter rows where ANY of the selected locations are present in the 'Location' string
+            location_pattern = '|'.join([re.escape(loc) for loc in selected_locations])
+            filtered_display_df = filtered_display_df[
+                filtered_display_df['Location'].str.contains(location_pattern, case=False, na=False)
+            ]
+        
+        if selected_languages:
+            # Filter rows where ANY of the selected languages are present in the 'Languages' string
+            language_pattern = '|'.join([re.escape(lang) for lang in selected_languages])
+            filtered_display_df = filtered_display_df[
+                filtered_display_df['Languages'].str.contains(language_pattern, case=False, na=False)
             ]
 
         # Define columns to display in the comprehensive table
         comprehensive_cols = [
-            'Shortlist', # New editable column
             'Candidate Name',
             'Score (%)',
             'Years Experience',
@@ -1536,31 +1583,17 @@ def resume_screener_page():
             'AI Suggestion',
             'Matched Keywords',
             'Missing Skills',
-            'JD Used',
-            'Note', # New editable column
-            # 'Resume Raw Text' # Removed from default display to keep table manageable, can be viewed in Analytics
+            'JD Used'
         ]
         
         # Ensure all columns exist before trying to display them
-        final_display_cols = [col for col in comprehensive_cols if col in filtered_editable_df.columns]
+        final_display_cols = [col for col in comprehensive_cols if col in filtered_display_df.columns]
 
-        # Use st.data_editor to make 'Shortlist' and 'Note' editable
-        edited_df = st.data_editor(
-            filtered_editable_df[final_display_cols], # Use filtered_editable_df here
+        st.dataframe(
+            filtered_display_df[final_display_cols],
             use_container_width=True,
-            hide_index=False, # Show index (File Name) as it's the key
+            hide_index=True,
             column_config={
-                "Shortlist": st.column_config.CheckboxColumn(
-                    "Shortlist",
-                    help="Manually mark candidates for shortlisting",
-                    default=False,
-                ),
-                "Note": st.column_config.TextColumn(
-                    "Note",
-                    help="Add personal notes for this candidate",
-                    default="",
-                    width="large"
-                ),
                 "Score (%)": st.column_config.ProgressColumn(
                     "Score (%)",
                     help="Matching score against job requirements",
@@ -1576,14 +1609,14 @@ def resume_screener_page():
                 "CGPA (4.0 Scale)": st.column_config.NumberColumn(
                     "CGPA (4.0 Scale)",
                     help="Candidate's CGPA normalized to a 4.0 scale",
-                    format="%.2f", # Use .2f for float, Streamlit handles None gracefully here
+                    format="%.2f",
                     min_value=0.0,
                     max_value=4.0
                 ),
                 "Semantic Similarity": st.column_config.NumberColumn(
                     "Semantic Similarity",
                     help="Conceptual similarity between JD and Resume (higher is better)",
-                    format="%.2f", # Use .2f for float, Streamlit handles None gracefully here
+                    format="%.2f",
                     min_value=0,
                     max_value=1
                 ),
@@ -1629,8 +1662,6 @@ def resume_screener_page():
                 )
             }
         )
-        # Update the session state DataFrame with the edited data
-        st.session_state['editable_df'] = edited_df
 
         st.info("Remember to check the Analytics Dashboard for in-depth visualizations of skill overlaps, gaps, and other metrics!")
     else:
