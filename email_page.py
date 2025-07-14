@@ -24,13 +24,11 @@ def send_email_to_candidate():
     # --- END DEBUGGING ---
 
     # Check if screening results are available in session state
-    # CORRECTED: Use 'comprehensive_df' as the source for screening results
     if 'comprehensive_df' not in st.session_state or st.session_state['comprehensive_df'].empty:
         st.warning("No screening results found. Please run the '🧠 Resume Screener' first to get candidates to email.")
         return # Exit the function if no results
 
     try:
-        # CORRECTED: Use 'comprehensive_df'
         df_results = st.session_state['comprehensive_df'].copy()
 
         # Ensure required columns exist before proceeding
