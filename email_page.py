@@ -1,4 +1,4 @@
-# email_page.py
+# email_sender.py
 
 import streamlit as st
 import pandas as pd
@@ -13,12 +13,14 @@ def send_email_to_candidate():
     st.info("Prepare and send emails to shortlisted candidates based on screening results.")
 
     # Check if screening results are available in session state
-    if 'screening_results' not in st.session_state or not st.session_state['screening_results']:
+    # CORRECTED: Use 'comprehensive_df' as the source for screening results
+    if 'comprehensive_df' not in st.session_state or st.session_state['comprehensive_df'].empty:
         st.warning("No screening results found. Please run the '🧠 Resume Screener' first to get candidates to email.")
         return # Exit the function if no results
 
     try:
-        df_results = pd.DataFrame(st.session_state['screening_results'])
+        # CORRECTED: Use 'comprehensive_df'
+        df_results = st.session_state['comprehensive_df'].copy()
 
         # Ensure required columns exist before proceeding
         required_columns = ['Candidate Name', 'Email', 'Score (%)', 'Years Experience', 'AI Suggestion']
@@ -35,14 +37,18 @@ def send_email_to_candidate():
         # It's better to get the cutoff values from session_state if they are stored there by screener.py
         cutoff_score = st.session_state.get('screening_cutoff_score', 75)
         min_exp_required = st.session_state.get('screening_min_experience', 2)
+        max_exp_allowed = st.session_state.get('screening_max_experience', 10) # Added max experience
+        min_cgpa_required = st.session_state.get('screening_min_cgpa', 2.5) # Added min CGPA
 
         shortlisted_candidates = df_results[
             (df_results["Score (%)"] >= cutoff_score) &
-            (df_results["Years Experience"] >= min_exp_required)
+            (df_results["Years Experience"] >= min_exp_required) &
+            (df_results["Years Experience"] <= max_exp_allowed) & # Apply max experience filter
+            ((df_results['CGPA (4.0 Scale)'].isnull()) | (df_results['CGPA (4.0 Scale)'] >= min_cgpa_required)) # Apply CGPA filter
         ].copy() # Use .copy() to avoid SettingWithCopyWarning
 
         if shortlisted_candidates.empty:
-            st.warning(f"No candidates meet the current shortlisting criteria (Score >= {cutoff_score}%, Experience >= {min_exp_required} years). Adjust criteria in Screener or review results.")
+            st.warning(f"No candidates meet the current shortlisting criteria (Score >= {cutoff_score}%, Experience {min_exp_required}-{max_exp_allowed} years, CGPA >= {min_cgpa_required} or N/A). Adjust criteria in Screener or review results.")
             st.dataframe(df_results[['Candidate Name', 'Score (%)', 'Years Experience', 'AI Suggestion']], use_container_width=True)
             return
 
