@@ -1,4 +1,4 @@
-# Version 1.20 - Robust Session State Management and Error Handling
+# Version 1.21 - Robust Session State Management and Error Handling (Further Refined)
 import streamlit as st
 import pdfplumber
 import pandas as pd
@@ -1306,28 +1306,36 @@ def resume_screener_page():
         newly_processed_df = pd.DataFrame(results, columns=expected_cols)
 
         if not newly_processed_df.empty:
-            # Merge new results with existing state, preserving user edits for 'Shortlisted' and 'Notes'
-            # Use a left merge to keep all existing session data, then update with new processed data
-            # For existing 'File Name' entries, new data from 'newly_processed_df' will overwrite old data,
-            # except for 'Shortlisted' and 'Notes' which are user-editable.
+            # Preserve 'Shortlisted' and 'Notes' from existing data for files that are being re-processed
+            temp_new_df = newly_processed_df.copy()
             
-            # First, update the existing rows in session_state['full_results_df'] with new screening data
-            # For columns that are NOT 'Shortlisted' or 'Notes'.
-            cols_to_update = [col for col in newly_processed_df.columns if col not in ['Shortlisted', 'Notes']]
+            # Find file names that exist in both the new batch and the session state
+            common_file_names_in_new = temp_new_df['File Name'].isin(st.session_state['full_results_df']['File Name'])
             
-            # Align indices for update
-            st.session_state['full_results_df'] = st.session_state['full_results_df'].set_index('File Name')
-            newly_processed_df_indexed = newly_processed_df.set_index('File Name')
+            if common_file_names_in_new.any(): # If there are common files
+                # Get the 'Shortlisted' and 'Notes' for these common files from the session state
+                existing_shortlisted_notes_for_common = st.session_state['full_results_df'][
+                    st.session_state['full_results_df']['File Name'].isin(temp_new_df.loc[common_file_names_in_new, 'File Name'])
+                ][['File Name', 'Shortlisted', 'Notes']].set_index('File Name')
+                
+                # Update temp_new_df with these existing Shortlisted/Notes
+                temp_new_df.set_index('File Name', inplace=True)
+                temp_new_df.update(existing_shortlisted_notes_for_common)
+                temp_new_df.reset_index(inplace=True)
 
-            # Update existing entries with fresh data (except Shortlisted/Notes)
-            st.session_state['full_results_df'].update(newly_processed_df_indexed[cols_to_update])
+            # Identify files in the old session state that are NOT in the newly processed batch
+            unique_old_files_df = st.session_state['full_results_df'][
+                ~st.session_state['full_results_df']['File Name'].isin(temp_new_df['File Name'])
+            ]
+            
+            # Concatenate the (potentially updated) new files with the unique old files
+            st.session_state['full_results_df'] = pd.concat([temp_new_df, unique_old_files_df], ignore_index=True)
+            
+            # Ensure correct dtypes after concatenation, especially for 'Shortlisted'
+            st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
+            st.session_state['full_results_df']['Notes'] = st.session_state['full_results_df']['Notes'].astype(str)
+            st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df']['Tag'].astype(str)
 
-            # Add new entries (files that were not previously in full_results_df)
-            new_files_df = newly_processed_df_indexed[~newly_processed_df_indexed.index.isin(st.session_state['full_results_df'].index)]
-            if not new_files_df.empty:
-                st.session_state['full_results_df'] = pd.concat([st.session_state['full_results_df'], new_files_df])
-
-            st.session_state['full_results_df'] = st.session_state['full_results_df'].reset_index()
             st.session_state['full_results_df'] = st.session_state['full_results_df'].sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
         else:
             st.info("No resumes were successfully processed. Please check your uploaded files.")
@@ -1653,16 +1661,25 @@ def resume_screener_page():
             'JD Used'
         ]
         
-        final_display_cols = [col for col in comprehensive_cols if col in filtered_df_for_editor.columns]
+        # Ensure 'File Name' is included for internal indexing but can be hidden
+        final_display_cols_for_editor = [col for col in comprehensive_cols if col in filtered_df_for_editor.columns]
+        if 'File Name' not in final_display_cols_for_editor:
+            final_display_cols_for_editor.insert(0, 'File Name') # Add it at the beginning for consistency
 
         # Use st.data_editor for the main table to allow inline editing of 'Shortlisted' and 'Notes'
         # Ensure that filtered_df_for_editor is not empty before attempting to display it
         if not filtered_df_for_editor.empty:
             edited_df = st.data_editor(
-                filtered_df_for_editor[final_display_cols + ['Shortlisted', 'Notes']], # Add editable columns
+                filtered_df_for_editor[final_display_cols_for_editor + ['Shortlisted', 'Notes']], # Add editable columns
                 use_container_width=True,
                 hide_index=True,
                 column_config={
+                    "File Name": st.column_config.Column( # Hidden column for internal use
+                        "File Name",
+                        help="Internal identifier for the resume file",
+                        disabled=True, # Make it non-editable
+                        width="hidden" # Hide the column from display
+                    ),
                     "Score (%)": st.column_config.ProgressColumn(
                         "Score (%)",
                         help="Matching score against job requirements",
@@ -1757,14 +1774,10 @@ def resume_screener_page():
 
             # Update the session state DataFrame with the edited data from st.data_editor
             # This is crucial to persist changes made in the data editor
-            # We need to merge edited_df back into the original full_results_df in session_state
-            # to ensure that changes to 'Shortlisted' and 'Notes' persist even if filters change.
             if not edited_df.empty:
-                # Create a temporary DataFrame from the edited_df with only 'File Name', 'Shortlisted', 'Notes'
-                # to merge back into the main session state DataFrame.
+                # Now 'File Name' will always be present in edited_df
                 edited_subset = edited_df[['File Name', 'Shortlisted', 'Notes']].set_index('File Name')
                 
-                # Update the corresponding rows in the full_results_df
                 current_full_df = st.session_state['full_results_df'].set_index('File Name')
                 current_full_df.update(edited_subset) # Update existing rows
                 st.session_state['full_results_df'] = current_full_df.reset_index()
@@ -1794,8 +1807,13 @@ def resume_screener_page():
         manually_shortlisted_df = st.session_state['full_results_df'][st.session_state['full_results_df']['Shortlisted'] == True]
 
         if not manually_shortlisted_df.empty:
+            # Re-create final_display_cols for the shortlisted table, ensuring 'File Name' is hidden if present
+            # but not explicitly listed in comprehensive_cols for display.
+            # This ensures consistency with the main table's visible columns.
+            final_display_cols_for_shortlisted = [col for col in comprehensive_cols if col in manually_shortlisted_df.columns]
+
             st.dataframe(
-                manually_shortlisted_df[final_display_cols + ['Notes']], # Display same columns as main table + Notes
+                manually_shortlisted_df[final_display_cols_for_shortlisted + ['Notes']], # Display same columns as main table + Notes
                 use_container_width=True,
                 hide_index=True,
                 column_config={
