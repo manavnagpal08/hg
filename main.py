@@ -7,8 +7,7 @@ import os
 import json
 import datetime # Import datetime for timestamps
 import plotly.express as px # Re-added plotly.express for interactive graphs
-import statsmodels.api as sm # Added this import for OLS trendline
-import collections # For defaultdict in skill categorization
+import statsmodels.api as sm # Added this import for OLS trendline in analytics
 
 # Import the page functions from their respective files
 from login import (
@@ -19,6 +18,12 @@ from login import (
 
 # Import the feedback page function
 from feedback import feedback_and_help_page # NEW: Import feedback page
+
+# Import the screener page function (assuming it's in a separate file)
+from screener import resume_screener_page # Make sure screener.py exists and defines this function
+
+# Import the email sender function (assuming it's in a separate file)
+from email_sender import send_email_to_candidate # Make sure email_sender.py exists and defines this function
 
 # --- Helper for Activity Logging ---
 def log_activity(message):
@@ -31,7 +36,7 @@ def log_activity(message):
     st.session_state.activity_log = st.session_state.activity_log[:50]
 
 # --- Page Config ---
-st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="�")
+st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
 
 # --- Dark Mode Toggle ---
 dark_mode = st.sidebar.toggle("🌙 Dark Mode", key="dark_mode_main")
@@ -415,10 +420,11 @@ def analytics_dashboard_page():
 
     # --- Visualizations ---
     st.markdown("### 📊 Visualizations")
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
         "Score Distribution", "Experience Distribution", "Shortlist Breakdown",
         "Score vs. Experience", "Skill Clouds", "CGPA Distribution",
-        "Score vs. CGPA", "Experience vs. CGPA"
+        "Score vs. CGPA", "Experience vs. CGPA", "Skills by Category",
+        "Location Distribution"
     ])
 
     with tab1:
@@ -564,21 +570,18 @@ def analytics_dashboard_page():
         else:
             st.info("No CGPA data available for this visualization.")
 
-    # New tabs for Skill Categories and Location Distribution
-    tab_skills_cat, tab_location_dist = st.tabs(["Skills by Category", "Location Distribution"])
-
-    with tab_skills_cat:
+    with tab9: # New tab for Skills by Category
         st.markdown("#### 🧠 Skills by Category")
         if 'Matched Keywords (Categorized)' in filtered_df.columns and not filtered_df['Matched Keywords (Categorized)'].empty:
             # Flatten the dictionary of categorized skills into a list of (category, skill) tuples
-            all_categorized_skills = collections.defaultdict(int)
+            all_categorized_skills_counts = collections.defaultdict(int)
             for categorized_dict in filtered_df['Matched Keywords (Categorized)'].dropna():
                 if isinstance(categorized_dict, dict):
                     for category, skills_list in categorized_dict.items():
-                        all_categorized_skills[category] += len(skills_list)
+                        all_categorized_skills_counts[category] += len(skills_list)
             
-            if all_categorized_skills:
-                skills_cat_df = pd.DataFrame(all_categorized_skills.items(), columns=['Category', 'Count']).sort_values('Count', ascending=False)
+            if all_categorized_skills_counts:
+                skills_cat_df = pd.DataFrame(all_categorized_skills_counts.items(), columns=['Category', 'Count']).sort_values('Count', ascending=False)
                 fig_skills_cat = px.bar(
                     skills_cat_df,
                     x='Count',
@@ -595,7 +598,7 @@ def analytics_dashboard_page():
         else:
             st.info("No 'Matched Keywords (Categorized)' data available or column not found.")
 
-    with tab_location_dist:
+    with tab10: # New tab for Location Distribution
         st.markdown("#### 📍 Candidate Location Distribution")
         if 'Location' in filtered_df.columns and not filtered_df['Location'].empty:
             # Handle multiple locations per candidate (if comma-separated)
@@ -959,83 +962,7 @@ elif tab == "⚙️ Admin Tools":
 
 elif tab == "🧠 Resume Screener":
     try:
-        # The content of screener.py is now effectively part of main.py
-        # You would call the functions defined in the screener.py (if they were in a separate file)
-        # Since it's now integrated, we'll assume the functions are defined above or below this point.
-        # For this specific scenario, let's assume the functions are defined within main.py
-        # and we are calling the main function for the screener page.
-        # If the screener logic is directly in the main script, you might not need a separate call here.
-        # However, to maintain modularity as per previous discussions, we'll keep the function call.
-        
-        # NOTE: The actual resume_screener_page function needs to be defined in this file (main.py)
-        # or imported from a separate file. Assuming it's defined in main.py for this context.
-        # For the purpose of this response, I'm assuming the resume_screener_page function
-        # is available in the context of main.py, as it was provided in the previous turn.
-        # If it's not, you'll need to paste the content of screener.py into main.py.
-        
-        # Calling the function that contains the screener logic
-        # (This function was provided in a previous turn and should be present in main.py)
-        # from screener import resume_screener_page # This import is no longer needed if integrated
-        # resume_screener_page() # Call the integrated function
-
-        # Since the user explicitly provided the screener code in the previous turn,
-        # and it's quite large, I will not paste it again here.
-        # The assumption is that `resume_screener_page` exists in this `main.py` file.
-        # If it's still in a separate `screener.py` file, the import and call is correct.
-        # If the user wants it fully integrated, the content of screener.py needs to be
-        # literally pasted into main.py and the import removed.
-
-        # For the current context, I will assume the `resume_screener_page` function
-        # is defined within this `main.py` file, as the user is asking to integrate.
-        # However, to avoid repeating the large code block, I'll just keep the structure.
-
-        # If you have the `resume_screener_page` function defined above in this `main.py`
-        # then you would simply call it like this:
-        # resume_screener_page()
-
-        # For this turn, I will assume the user has already pasted the `screener.py` content
-        # into `main.py` and the `resume_screener_page` function is now part of `main.py`.
-        # Therefore, the `from screener import resume_screener_page` line should be removed
-        # if the code is truly integrated.
-        # I will keep the `try-except` block for robustness.
-
-        # Placeholder for the actual call to the integrated screener page function
-        # (Assuming the function definition exists within this main.py)
-        # If it's not defined, you will need to paste the code from screener.py here.
-        st.write("Loading Resume Screener...") # Placeholder message
-        # You would call the actual function here if it's defined in this file.
-        # For example:
-        # resume_screener_page() # This line would be active if the function is defined above.
-
-        # The previous turn's `screener.py` content was quite long.
-        # To avoid re-pasting it, I'll assume it's correctly integrated.
-        # Let's ensure the `resume_screener_page` function is indeed defined in this `main.py`.
-        # I will add a minimal placeholder for `resume_screener_page` if it's not there,
-        # but the user needs to paste the full content of `screener.py` into `main.py`
-        # if they want a single file.
-
-        # Since the user explicitly mentioned "pasted analytics.py implement in this also",
-        # it implies they want the code to be *literally* in this file.
-        # I will now add the full `resume_screener_page` function at the top of this file
-        # to ensure it's self-contained.
-
-        # I will move the `resume_screener_page` definition to the top of the file
-        # to ensure it's available when called.
-        # (This is a mental note for the full code generation, not part of this response's text.)
-
-        # After defining `resume_screener_page` at the top, this block will simply call it.
-        # For now, assuming it's available:
-        # This part of the code should be replaced by the actual call to the screener function
-        # once the screener.py content is fully integrated into main.py.
-        # For this turn, I'm just correcting the analytics part.
-        # The user will need to ensure resume_screener_page is defined.
-
-        # Let's assume the `resume_screener_page` function is now defined in `main.py`
-        # (as it was in the previous turn's `screener.py` content).
-        # So, we just call it.
-        from screener import resume_screener_page # Keep this import if screener is still separate
-        resume_screener_page()
-
+        resume_screener_page() # Call the imported function
         if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
             if st.session_state.get('last_screen_log_count', 0) < len(st.session_state['comprehensive_df']):
                 log_activity(f"Performed resume screening for {len(st.session_state['comprehensive_df'])} candidates.")
@@ -1076,8 +1003,7 @@ elif tab == "📊 Screening Analytics":
 
 elif tab == "📤 Email Candidates":
     try:
-        from email_sender import send_email_to_candidate
-        send_email_to_candidate()
+        send_email_to_candidate() # Call the imported function
     except ImportError:
         st.info("`email_sender.py` not found or function not defined. Please create it.")
     except Exception as e:
@@ -1112,4 +1038,3 @@ elif tab == "🚪 Logout":
     st.session_state.pop('username', None)
     st.success("✅ Logged out.")
     st.rerun()
-
