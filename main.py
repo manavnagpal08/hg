@@ -198,6 +198,9 @@ else:
         log_activity(f"User '{st.session_state.username}' logged in.")
         st.session_state.last_login_logged_for_user = st.session_state.username
 
+# Determine if the logged-in user is an admin
+is_admin = is_current_user_admin()
+
 # Initialize comprehensive_df globally if it doesn't exist
 # This ensures it's always a DataFrame, even if empty, preventing potential KeyErrors
 if 'comprehensive_df' not in st.session_state:
