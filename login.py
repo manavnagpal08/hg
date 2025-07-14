@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import bcrypt
 import os
+import re # Import regex for email validation
 
 # File to store user credentials
 USER_DB_FILE = "users.json"
@@ -15,12 +16,14 @@ def load_users():
             json.dump({}, f)
     with open(USER_DB_FILE, "r") as f:
         users = json.load(f)
-        # Ensure each user has a 'status' key for backward compatibility
+        # Ensure each user has a 'status' key and 'company' key for backward compatibility
         for username, data in users.items():
             if isinstance(data, str): # Old format: "username": "hashed_password"
-                users[username] = {"password": data, "status": "active"}
+                users[username] = {"password": data, "status": "active", "company": "N/A"}
             elif "status" not in data:
                 data["status"] = "active"
+            if "company" not in data: # Add company field if missing
+                data["company"] = "N/A"
         return users
 
 def save_users(users):
@@ -36,18 +39,26 @@ def check_password(password, hashed_password):
     """Checks a password against its bcrypt hash."""
     return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
 
+def is_valid_email(email):
+    """Basic validation for email format."""
+    # Regex for a simple email check (covers @ and at least one . after @)
+    return re.match(r"[^@]+@[^@]+\.[^@]+", email)
+
 def register_section():
     """Public self-registration form."""
     st.subheader("📝 Create New Account")
     with st.form("registration_form", clear_on_submit=True):
-        new_username = st.text_input("Choose Username (Email address recommended)", key="new_username_reg_public")
+        new_username = st.text_input("Choose Username (Email address required)", key="new_username_reg_public")
+        new_company_name = st.text_input("Company Name", key="new_company_name_reg_public") # New field
         new_password = st.text_input("Choose Password", type="password", key="new_password_reg_public")
         confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password_reg_public")
         register_button = st.form_submit_button("Register New Account")
 
         if register_button:
-            if not new_username or not new_password or not confirm_password:
+            if not new_username or not new_password or not confirm_password or not new_company_name:
                 st.error("Please fill in all fields.")
+            elif not is_valid_email(new_username): # Email format validation
+                st.error("Please enter a valid email address for the username.")
             elif new_password != confirm_password:
                 st.error("Passwords do not match.")
             else:
@@ -55,7 +66,11 @@ def register_section():
                 if new_username in users:
                     st.error("Username already exists. Please choose a different one.")
                 else:
-                    users[new_username] = {"password": hash_password(new_password), "status": "active"}
+                    users[new_username] = {
+                        "password": hash_password(new_password),
+                        "status": "active",
+                        "company": new_company_name # Store company name
+                    }
                     save_users(users)
                     st.success("✅ Registration successful! You can now switch to the 'Login' option.")
                     # Manually set the session state to switch to Login option
@@ -66,18 +81,25 @@ def admin_registration_section():
     st.subheader("➕ Create New User Account (Admin Only)")
     with st.form("admin_registration_form", clear_on_submit=True):
         new_username = st.text_input("New User's Username (Email)", key="new_username_admin_reg")
+        new_company_name = st.text_input("New User's Company Name", key="new_company_name_admin_reg") # New field
         new_password = st.text_input("New User's Password", type="password", key="new_password_admin_reg")
         admin_register_button = st.form_submit_button("Add New User")
 
     if admin_register_button:
-        if not new_username or not new_password:
+        if not new_username or not new_password or not new_company_name:
             st.error("Please fill in all fields.")
+        elif not is_valid_email(new_username): # Email format validation
+            st.error("Please enter a valid email address for the username.")
         else:
             users = load_users()
             if new_username in users:
                 st.error(f"User '{new_username}' already exists.")
             else:
-                users[new_username] = {"password": hash_password(new_password), "status": "active"}
+                users[new_username] = {
+                    "password": hash_password(new_password),
+                    "status": "active",
+                    "company": new_company_name
+                }
                 save_users(users)
                 st.success(f"✅ User '{new_username}' added successfully!")
 
@@ -176,6 +198,7 @@ def login_section():
                     elif check_password(password, user_data["password"]):
                         st.session_state.authenticated = True
                         st.session_state.username = username
+                        st.session_state.user_company = user_data.get("company", "N/A") # Store company name
                         st.success("✅ Login successful!")
                         st.rerun()
                     else:
@@ -202,12 +225,13 @@ if __name__ == "__main__":
 
     for admin_user in ADMIN_USERNAME:
         if admin_user not in users:
-            users[admin_user] = {"password": hash_password(default_admin_password), "status": "active"}
+            users[admin_user] = {"password": hash_password(default_admin_password), "status": "active", "company": "AdminCo"}
             st.info(f"Created default admin user: {admin_user} with password '{default_admin_password}'")
     save_users(users) # Save after potentially adding new admin users
 
     if login_section():
         st.write(f"Welcome, {st.session_state.username}!")
+        st.write(f"Your company: {st.session_state.get('user_company', 'N/A')}") # Display company
         st.write("You are logged in.")
         
         if is_current_user_admin():
@@ -228,8 +252,9 @@ if __name__ == "__main__":
                     for user, data in users_data.items():
                         hashed_pass = data.get("password", data) if isinstance(data, dict) else data
                         status = data.get("status", "N/A") if isinstance(data, dict) else "N/A"
-                        display_users.append([user, hashed_pass, status])
-                    st.dataframe(pd.DataFrame(display_users, columns=["Email/Username", "Hashed Password (DO NOT EXPOSE)", "Status"]), use_container_width=True)
+                        company = data.get("company", "N/A") # Get company
+                        display_users.append([user, hashed_pass, status, company])
+                    st.dataframe(pd.DataFrame(display_users, columns=["Email/Username", "Hashed Password (DO NOT EXPOSE)", "Status", "Company"]), use_container_width=True)
                 else:
                     st.info("No users registered yet.")
             except ImportError:
