@@ -1,37 +1,246 @@
-# Version 1.21 - Robust Session State Management and Error Handling (Further Refined)
 import streamlit as st
-import pdfplumber
 import pandas as pd
-import re
-import os
-import sklearn
-import joblib
-import numpy as np
-from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
-from sentence_transformers import SentenceTransformer
-import nltk
+import os
+import json
+import datetime
+import plotly.express as px
+import pdfplumber
+import re
+import numpy as np
 import collections
-from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
+import joblib # For loading ML models
+from sklearn.metrics.pairwise import cosine_similarity # For semantic similarity
+from sentence_transformers import SentenceTransformer # For semantic embeddings
+import nltk # For stopwords
 
-# Set Streamlit page configuration for wide layout
-st.set_page_config(layout="wide")
-
-# Download NLTK stopwords data if not already downloaded
+# Ensure NLTK stopwords are downloaded
 try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
     nltk.download('stopwords')
 
-# --- Load Embedding + ML Model ---
+# --- Global Configuration and Helpers ---
+# Set Streamlit page configuration for wide layout
+st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
+
+# --- Helper for Activity Logging ---
+def log_activity(message):
+    """Logs an activity with a timestamp to the session state."""
+    if 'activity_log' not in st.session_state:
+        st.session_state.activity_log = []
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state.activity_log.insert(0, f"[{timestamp}] {message}") # Add to the beginning for most recent first
+    # Keep log size manageable, e.g., last 50 activities
+    st.session_state.activity_log = st.session_state.activity_log[:50]
+
+# --- User Management (from login.py) ---
+USERS_FILE = "users.json"
+
+def load_users():
+    """Loads user data from a JSON file."""
+    if not os.path.exists(USERS_FILE):
+        return {}
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)
+
+def save_users(users):
+    """Saves user data to a JSON file."""
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f, indent=4)
+
+def hash_password(password):
+    """A simple placeholder for password hashing."""
+    import hashlib
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def verify_password(stored_hash, provided_password):
+    """Verifies a provided password against a stored hash."""
+    return stored_hash == hash_password(provided_password)
+
+def is_current_user_admin():
+    """Checks if the currently logged-in user is an admin."""
+    if 'username' not in st.session_state:
+        return False
+    users = load_users()
+    user_data = users.get(st.session_state.username)
+    return isinstance(user_data, dict) and user_data.get("role") == "admin"
+
+def login_section():
+    """Handles user login and authentication."""
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    if 'username' not in st.session_state:
+        st.session_state.username = None
+
+    if st.session_state.authenticated:
+        return True
+
+    st.sidebar.subheader("Login")
+    username = st.sidebar.text_input("Username (Email)", key="login_username_input")
+    password = st.sidebar.text_input("Password", type="password", key="login_password_input")
+
+    if st.sidebar.button("Login", key="login_button"):
+        users = load_users()
+        user_data = users.get(username)
+        if user_data and isinstance(user_data, dict) and user_data.get("status") == "active" and verify_password(user_data["password"], password):
+            st.session_state.authenticated = True
+            st.session_state.username = username
+            st.sidebar.success("Logged in successfully!")
+            log_activity(f"User '{username}' logged in.")
+            st.rerun()
+        else:
+            st.sidebar.error("Invalid username, password, or account is inactive.")
+            log_activity(f"Failed login attempt for '{username}'.")
+    
+    st.sidebar.markdown("---")
+    st.sidebar.info("New users, please register with an administrator.")
+
+    return st.session_state.authenticated
+
+def admin_registration_section():
+    """Admin tool to register new users."""
+    st.subheader("➕ Register New User")
+    with st.form("register_user_form"):
+        new_username = st.text_input("New Username (Email)", key="new_user_email")
+        new_password = st.text_input("New Password", type="password", key="new_user_password")
+        confirm_password = st.text_input("Confirm Password", type="password", key="confirm_new_user_password")
+        new_role = st.selectbox("Role", ["user", "admin"], key="new_user_role")
+        register_button = st.form_submit_button("Register User")
+
+        if register_button:
+            if new_password != confirm_password:
+                st.error("Passwords do not match.")
+            elif not new_username or not new_password:
+                st.error("Username and password cannot be empty.")
+            else:
+                users = load_users()
+                if new_username in users:
+                    st.error("User already exists.")
+                else:
+                    users[new_username] = {"password": hash_password(new_password), "role": new_role, "status": "active"}
+                    save_users(users)
+                    st.success(f"User '{new_username}' registered successfully as {new_role}!")
+                    log_activity(f"Admin '{st.session_state.username}' registered new user '{new_username}' with role '{new_role}'.")
+
+def admin_password_reset_section():
+    """Admin tool to reset user passwords."""
+    st.subheader("🔑 Reset User Password")
+    with st.form("reset_password_form"):
+        target_username = st.text_input("Username to Reset Password For", key="reset_user_email")
+        new_password = st.text_input("New Password", type="password", key="reset_new_password")
+        confirm_password = st.text_input("Confirm New Password", type="password", key="reset_confirm_password")
+        reset_button = st.form_submit_button("Reset Password")
+
+        if reset_button:
+            if new_password != confirm_password:
+                st.error("Passwords do not match.")
+            elif not target_username or not new_password:
+                st.error("Username and new password cannot be empty.")
+            else:
+                users = load_users()
+                if target_username not in users:
+                    st.error("User not found.")
+                else:
+                    users[target_username]["password"] = hash_password(new_password)
+                    save_users(users)
+                    st.success(f"Password for '{target_username}' reset successfully!")
+                    log_activity(f"Admin '{st.session_state.username}' reset password for user '{target_username}'.")
+
+def admin_disable_enable_user_section():
+    """Admin tool to disable/enable user accounts."""
+    st.subheader("🚫 Enable/Disable User Account")
+    with st.form("toggle_user_status_form"):
+        target_username = st.text_input("Username to Enable/Disable", key="toggle_user_email")
+        action = st.radio("Action", ["Enable", "Disable"], key="toggle_user_action")
+        toggle_button = st.form_submit_button(f"{action} User")
+
+        if toggle_button:
+            users = load_users()
+            if target_username not in users:
+                st.error("User not found.")
+            else:
+                users[target_username]["status"] = "active" if action == "Enable" else "inactive"
+                save_users(users)
+                st.success(f"User '{target_username}' account set to '{users[target_username]['status']}'!")
+                log_activity(f"Admin '{st.session_state.username}' set status of '{target_username}' to '{users[target_username]['status']}'.")
+
+# --- Feedback & Help (from feedback.py) ---
+def feedback_and_help_page():
+    st.markdown('<div class="dashboard-header">❓ Feedback & Help</div>', unsafe_allow_html=True)
+    st.write("We value your feedback! Please share your thoughts, suggestions, or report any issues you encounter.")
+
+    with st.form("feedback_form"):
+        feedback_type = st.radio(
+            "Type of Feedback:",
+            ["Suggestion", "Bug Report", "General Comment", "Feature Request"],
+            key="feedback_type"
+        )
+        feedback_message = st.text_area("Your Message:", height=150, key="feedback_message")
+        contact_email = st.text_input("Your Email (Optional, for follow-up):", value=st.session_state.get('username', ''), key="feedback_email")
+        submit_button = st.form_submit_button("Submit Feedback")
+
+        if submit_button:
+            if not feedback_message.strip():
+                st.error("Please enter your feedback message.")
+            else:
+                # In a real application, you would save this to a database,
+                # send an email, or use an external service.
+                # For this example, we'll just log it and show a success message.
+                feedback_entry = {
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "user": st.session_state.get('username', 'anonymous'),
+                    "type": feedback_type,
+                    "message": feedback_message,
+                    "contact_email": contact_email
+                }
+                
+                # Append to a simple file for demonstration
+                try:
+                    with open("feedback_log.jsonl", "a") as f:
+                        f.write(json.dumps(feedback_entry) + "\n")
+                    st.success("Thank you for your feedback! We've received your message.")
+                    log_activity(f"User '{st.session_state.get('username', 'anonymous')}' submitted feedback ({feedback_type}).")
+                    # Clear the form after submission
+                    st.session_state.feedback_message = ""
+                    st.session_state.feedback_email = st.session_state.get('username', '') # Reset email to current user's
+                except Exception as e:
+                    st.error(f"Failed to save feedback: {e}")
+
+    st.markdown("---")
+    st.subheader("Help & FAQs")
+    st.markdown("""
+    Welcome to ScreenerPro! Here are some tips to get started:
+
+    * **Dashboard:** Your central hub for key metrics and quick actions.
+    * **Resume Screener:** Upload job descriptions and resumes to get instant matching scores and AI assessments.
+    * **Manage JDs:** Add, view, or delete your job description templates.
+    * **Screening Analytics:** Dive deeper into the data with interactive charts and detailed candidate breakdowns.
+    * **Email Candidates:** Generate pre-filled email templates for shortlisted candidates.
+    * **Search Resumes:** Quickly find candidates based on keywords.
+    * **Candidate Notes:** Add and manage private notes for each candidate.
+    * **Admin Tools:** (Admins only) Manage user accounts, including registration, password resets, and status changes.
+
+    **Troubleshooting Tips:**
+    * **"File Not Found" Errors:** Ensure your `ml_screening_model.pkl` and any `.txt` JD files are in the same directory as this script.
+    * **PDF Processing Issues:** Some complex PDF formats might not extract text perfectly. Try converting them to a simpler PDF or text format if issues persist.
+    * **Performance:** Processing many resumes can take time. Please be patient.
+    * **Data Persistence:** Your screening results and notes are stored in the current session. If you close your browser or the app restarts, the data will be cleared unless explicitly saved/loaded (feature not implemented in this version for simplicity).
+    """)
+
+# --- ML Model Loading (moved from screener.py) ---
 @st.cache_resource
 def load_ml_model():
     try:
         model = SentenceTransformer("all-MiniLM-L6-v2")
-        ml_model = joblib.load("ml_screening_model.pkl")
+        # Placeholder for actual ML model. If you have a trained model, uncomment and load it.
+        # ml_model = joblib.load("ml_screening_model.pkl") 
+        ml_model = None # Set to None for now if no model is provided
+        if ml_model is None:
+            st.warning("ML screening model ('ml_screening_model.pkl') not found. Semantic scoring will fall back to a basic keyword-based approach. Please train and provide the model for full functionality.")
         return model, ml_model
     except Exception as e:
         st.error(f"❌ Error loading ML models: {e}. Please ensure 'ml_screening_model.pkl' is in the same directory.")
@@ -39,7 +248,7 @@ def load_ml_model():
 
 model, ml_model = load_ml_model()
 
-# --- Predefined List of Cities for Location Extraction ---
+# --- Predefined Lists & Categories (from screener.py) ---
 MASTER_CITIES = set([
     # Indian Cities
     "Bengaluru", "Mumbai", "Delhi", "Chennai", "Hyderabad", "Kolkata", "Pune", "Ahmedabad", "Jaipur", "Lucknow",
@@ -88,8 +297,6 @@ MASTER_CITIES = set([
     "Aventura"
 ])
 
-
-# --- Stop Words List (Using NLTK) ---
 NLTK_STOP_WORDS = set(nltk.corpus.stopwords.words('english'))
 CUSTOM_STOP_WORDS = set([
     "work", "experience", "years", "year", "months", "month", "day", "days", "project", "projects",
@@ -176,7 +383,6 @@ CUSTOM_STOP_WORDS = set([
 ])
 STOP_WORDS = NLTK_STOP_WORDS.union(CUSTOM_STOP_WORDS)
 
-# --- Skill Categories (for categorization and weighting) ---
 SKILL_CATEGORIES = {
     "Programming Languages": ["Python", "Java", "JavaScript", "C++", "C#", "Go", "Ruby", "PHP", "Swift", "Kotlin", "TypeScript", "R", "Bash Scripting", "Shell Scripting"],
     "Web Technologies": ["HTML5", "CSS3", "React", "Angular", "Vue.js", "Node.js", "Django", "Flask", "Spring Boot", "Express.js", "WebSockets"],
@@ -211,45 +417,27 @@ SKILL_CATEGORIES = {
     "DLP", "CASB", "SOAR", "XDR", "EDR", "MDR", "GRC", "ITIL", "Lean Six Sigma", "CFA", "CPA", "SHRM-CP",
     "PHR", "CEH", "OSCP", "CCNA", "CISSP", "CISM", "CompTIA Security+"]
 }
-
-# Dynamically generate MASTER_SKILLS from SKILL_CATEGORIES
 MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
 
-
-# --- Helpers ---
+# --- Resume Processing Helpers (from screener.py) ---
 def clean_text(text):
-    """Cleans text by removing newlines, extra spaces, and non-ASCII characters."""
     text = re.sub(r'\n', ' ', text)
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'[^\x00-\x7F]+', ' ', text)
     return text.strip().lower()
 
 def extract_relevant_keywords(text, filter_set):
-    """
-    Extracts relevant keywords from text, prioritizing multi-word skills from filter_set.
-    If filter_set is empty, it falls back to filtering out general STOP_WORDS.
-    Returns a tuple: (raw_keywords_set, categorized_keywords_dict)
-    """
     cleaned_text = clean_text(text)
     extracted_keywords = set()
     categorized_keywords = collections.defaultdict(list)
-
-    if filter_set: # If a specific filter_set (like MASTER_SKILLS) is provided
-        # Sort skills by length descending to match longer phrases first
+    if filter_set:
         sorted_filter_skills = sorted(list(filter_set), key=len, reverse=True)
-        
-        temp_text = cleaned_text # Use a temporary text to remove matched phrases
-
+        temp_text = cleaned_text
         for skill_phrase in sorted_filter_skills:
-            # Create a regex pattern to match the whole skill phrase
-            # \b ensures whole word match, re.escape handles special characters in skill names
             pattern = r'\b' + re.escape(skill_phrase.lower()) + r'\b'
-            
-            # Find all occurrences of the skill phrase
             matches = re.findall(pattern, temp_text)
             if matches:
-                extracted_keywords.add(skill_phrase.lower()) # Add the original skill (lowercase)
-                # Categorize the skill
+                extracted_keywords.add(skill_phrase.lower())
                 found_category = False
                 for category, skills_in_category in SKILL_CATEGORIES.items():
                     if skill_phrase.lower() in [s.lower() for s in skills_in_category]:
@@ -257,14 +445,8 @@ def extract_relevant_keywords(text, filter_set):
                         found_category = True
                         break
                 if not found_category:
-                    categorized_keywords["Uncategorized"].append(skill_phrase) # Add to uncategorized if no match
-
-                # Replace the found skill with placeholders to avoid re-matching parts of it
+                    categorized_keywords["Uncategorized"].append(skill_phrase)
                 temp_text = re.sub(pattern, " ", temp_text)
-        
-        # After extracting phrases, now extract individual words that are in the filter_set
-        # and haven't been part of a multi-word skill already extracted.
-        # This ensures single-word skills from MASTER_SKILLS are also captured.
         individual_words_remaining = set(re.findall(r'\b\w+\b', temp_text))
         for word in individual_words_remaining:
             if word in filter_set:
@@ -277,18 +459,14 @@ def extract_relevant_keywords(text, filter_set):
                         break
                 if not found_category:
                     categorized_keywords["Uncategorized"].append(word)
-
-    else: # Fallback: if no specific filter_set (MASTER_SKILLS is empty), use the default STOP_WORDS logic
+    else:
         all_words = set(re.findall(r'\b\w+\b', cleaned_text))
         extracted_keywords = {word for word in all_words if word not in STOP_WORDS}
         for word in extracted_keywords:
-            categorized_keywords["General Keywords"].append(word) # Default category for fallback
-
+            categorized_keywords["General Keywords"].append(word)
     return extracted_keywords, dict(categorized_keywords)
 
-
 def extract_text_from_pdf(uploaded_file):
-    """Extracts text from an uploaded PDF file."""
     try:
         with pdfplumber.open(uploaded_file) as pdf:
             return ''.join(page.extract_text() or '' for page in pdf.pages)
@@ -296,278 +474,148 @@ def extract_text_from_pdf(uploaded_file):
         return f"[ERROR] {str(e)}"
 
 def extract_years_of_experience(text):
-    """Extracts years of experience from a given text by parsing date ranges or keywords."""
     text = text.lower()
     total_months = 0
     job_date_ranges = re.findall(
         r'(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})\s*(?:to|–|-)\s*(present|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})',
         text
     )
-
     for start, end in job_date_ranges:
         try:
-            start_date = datetime.strptime(start.strip(), '%b %Y')
+            start_date = datetime.datetime.strptime(start.strip(), '%b %Y')
         except ValueError:
             try:
-                start_date = datetime.strptime(start.strip(), '%B %Y')
+                start_date = datetime.datetime.strptime(start.strip(), '%B %Y')
             except ValueError:
                 continue
-
         if end.strip() == 'present':
-            end_date = datetime.now()
+            end_date = datetime.datetime.now()
         else:
             try:
-                end_date = datetime.strptime(end.strip(), '%b %Y')
+                end_date = datetime.datetime.strptime(end.strip(), '%b %Y')
             except ValueError:
                 try:
-                    end_date = datetime.strptime(end.strip(), '%B %Y')
+                    end_date = datetime.datetime.strptime(end.strip(), '%B %Y')
                 except ValueError:
                     continue
-
         delta_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
         total_months += max(delta_months, 0)
-
     if total_months == 0:
         match = re.search(r'(\d+(?:\.\d+)?)\s*(\+)?\s*(year|yrs|years)\b', text)
         if not match:
             match = re.search(r'experience[^\d]{0,10}(\d+(?:\.\d+)?)', text)
         if match:
             return float(match.group(1))
-
     return round(total_months / 12, 1)
 
 def extract_email(text):
-    """Extracts an email address from the given text."""
     match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text)
     return match.group(0) if match else None
 
 def extract_phone_number(text):
-    """Extracts a phone number from the given text."""
-    # Common patterns: (XXX) XXX-XXXX, XXX-XXX-XXXX, XXXXXXXXXX, XXX.XXX.XXXX
-    # This regex is more robust for various formats
     match = re.search(r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', text)
     return match.group(0) if match else None
 
 def extract_location(text):
-    """
-    Extracts location details by matching against a predefined list of cities (MASTER_CITIES).
-    This approach is less reliant on external NLP models and should be more stable
-    in various deployment environments.
-    """
     found_locations = set()
     text_lower = text.lower()
-
-    # Sort cities by length descending to prioritize longer, more specific matches
-    # (e.g., "New York City" before "New York")
     sorted_cities = sorted(list(MASTER_CITIES), key=len, reverse=True)
-
     for city in sorted_cities:
-        # Use regex to find whole word matches for the city name
-        # re.escape handles special characters in city names (e.g., "St. Louis")
         pattern = r'\b' + re.escape(city.lower()) + r'\b'
         if re.search(pattern, text_lower):
-            found_locations.add(city) # Add the original, title-cased city name
-
-    if found_locations:
-        return ", ".join(sorted(list(found_locations)))
-    return "Not Found"
-
+            found_locations.add(city)
+    return ", ".join(sorted(list(found_locations))) if found_locations else "Not Found"
 
 def extract_name(text):
-    """
-    Attempts to extract a name from the first few lines of the resume text.
-    This is a heuristic and might not be perfect for all resume formats.
-    Filters out common non-name terms like "LinkedIn".
-    """
     lines = text.strip().split('\n')
-    if not lines:
-        return None
-
-    # Define terms to explicitly exclude from being identified as a name
+    if not lines: return None
     EXCLUDE_NAME_TERMS = {"linkedin", "github", "portfolio", "resume", "cv", "profile", "contact", "email", "phone"}
-
     potential_name_lines = []
-    # Consider the first 5 lines for name extraction
     for line in lines[:5]:
         line = line.strip()
         line_lower = line.lower()
-
-        # Filter out lines that clearly contain email, phone, or too many words
-        # Also, filter out lines that contain any of the EXCLUDE_NAME_TERMS
         if not re.search(r'[@\d\.\-]', line) and \
            len(line.split()) <= 4 and \
            not any(term in line_lower for term in EXCLUDE_NAME_TERMS):
-            # Heuristic: Check if the line is mostly capitalized words (like a name)
             if line.isupper() or (line and line[0].isupper() and all(word[0].isupper() or not word.isalpha() for word in line.split())):
                 potential_name_lines.append(line)
-
     if potential_name_lines:
-        # Prioritize longer potential names, then filter out common resume section headers
         name = max(potential_name_lines, key=len)
         name = re.sub(r'summary|education|experience|skills|projects|certifications|profile|contact', '', name, flags=re.IGNORECASE).strip()
-        # Further clean up any leading/trailing non-alphabetic characters if they remain
         name = re.sub(r'^[^\w\s]+|[^\w\s]+$', '', name).strip()
-        if name:
-            return name.title()
+        if name: return name.title()
     return None
 
 def extract_cgpa(text):
-    """
-    Extracts CGPA/GPA from text. Handles formats like X.X/Y.Y, X.X out of Y.Y, or just X.X.
-    Assumes a standard scale (e.g., 4.0, 5.0, 10.0).
-    Returns the CGPA normalized to a 4.0 scale if a scale is found, otherwise the raw value.
-    """
     text = text.lower()
-    
-    # Regex to find patterns like "3.5/4.0", "3.8/5", "8.5/10", "gpa 3.7", "cgpa of 3.9"
-    # Group 1: CGPA value, Group 2: Optional scale (e.g., /4.0, out of 5)
     matches = re.findall(r'(?:cgpa|gpa|grade point average)\s*[:\s]*(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?|(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(?:cgpa|gpa)', text)
-
     for match in matches:
-        # Prioritize matches where 'cgpa' or 'gpa' keyword is present
-        if match[0] and match[0].strip(): # First pattern: (cgpa|gpa)\s*[:\s]*(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?
+        if match[0] and match[0].strip():
             raw_cgpa = float(match[0])
             scale = float(match[1]) if match[1] else None
-        elif match[2] and match[2].strip(): # Second pattern: (\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(cgpa|gpa)
+        elif match[2] and match[2].strip():
             raw_cgpa = float(match[2])
             scale = float(match[3]) if match[3] else None
-        else:
-            continue
-
-        if scale and scale not in [0, 1]: # Avoid division by zero or scale of 1
-            # Normalize to 4.0 scale
+        else: continue
+        if scale and scale not in [0, 1]:
             normalized_cgpa = (raw_cgpa / scale) * 4.0
             return round(normalized_cgpa, 2)
-        elif raw_cgpa <= 4.0: # Assume it's already on a 4.0 scale if no explicit scale and value is low
-            return round(raw_cgpa, 2)
-        elif raw_cgpa <= 10.0: # Assume it's on a 10.0 scale if value is higher than 4 but less than 10
-            return round((raw_cgpa / 10.0) * 4.0, 2)
-        
-    return None # Return None if no CGPA found
+        elif raw_cgpa <= 4.0: return round(raw_cgpa, 2)
+        elif raw_cgpa <= 10.0: return round((raw_cgpa / 10.0) * 4.0, 2)
+    return None
 
 def extract_education_details(text):
-    """
-    Extracts education details (University, Degree, Major, Year) from text.
-    This is a heuristic and may require refinement based on resume formats.
-    Returns a list of dicts.
-    """
     education_section_matches = re.finditer(r'(?:education|academic background|qualifications)\s*(\n|$)', text, re.IGNORECASE)
     education_details = []
-    
     start_index = -1
-    for match in education_section_matches:
-        start_index = match.end()
-        break # Take the first education section
-
+    for match in education_section_matches: start_index = match.end(); break
     if start_index != -1:
-        # Try to find the end of the education section (e.g., start of next major section)
         sections = ['experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications']
         end_index = len(text)
         for section in sections:
             section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
-            if section_match:
-                end_index = start_index + section_match.start()
-                break
-        
+            if section_match: end_index = start_index + section_match.start(); break
         education_text = text[start_index:end_index].strip()
-        
-        # Split into potential education blocks (e.g., by degree or year lines)
-        # Look for lines that contain a degree or a year range
         edu_blocks = re.split(r'\n(?=\s*(?:bachelor|master|phd|associate|diploma|certificat|graduat|postgraduat|doctorate|university|college|institute|school|academy)\b|\d{4}\s*[-–]\s*(?:\d{4}|present))', education_text, flags=re.IGNORECASE)
-        
         for block in edu_blocks:
             block = block.strip()
-            if not block:
-                continue
-            
-            uni = None
-            degree = None
-            major = None
-            year = None
-
-            # Try to extract year (e.g., 2020, 2018-2022)
+            if not block: continue
+            uni, degree, major, year = None, None, None, None
             year_match = re.search(r'(\d{4})\s*[-–]\s*(\d{4}|present)|\b(\d{4})\b', block)
             if year_match:
-                if year_match.group(1) and year_match.group(2):
-                    year = f"{year_match.group(1)}-{year_match.group(2)}"
-                elif year_match.group(3):
-                    year = year_match.group(3)
-
-            # Try to extract degree (e.g., Bachelor of Science, M.S., Ph.D.)
+                if year_match.group(1) and year_match.group(2): year = f"{year_match.group(1)}-{year_match.group(2)}"
+                elif year_match.group(3): year = year_match.group(3)
             degree_match = re.search(r'\b(b\.?s\.?|bachelor of science|b\.?a\.?|bachelor of arts|m\.?s\.?|master of science|m\.?a\.?|master of arts|ph\.?d\.?|doctor of philosophy|mba|master of business administration|diploma|certificate)\b', block, re.IGNORECASE)
-            if degree_match:
-                degree = degree_match.group(0).title()
-
-            # Try to extract university (often capitalized, common keywords)
-            # This is very hard without a pre-defined list of universities
-            # For now, a simple heuristic: look for capitalized phrases near "university" or "college"
+            if degree_match: degree = degree_match.group(0).title()
             uni_match = re.search(r'\b([A-Z][a-z]+(?:[\s-][A-Z][a-z]+)*)\s+(?:university|college|institute|school|academy)\b', block, re.IGNORECASE)
-            if uni_match:
-                uni = uni_match.group(1)
-            else: # Fallback: look for any capitalized phrase that might be a university name
+            if uni_match: uni = uni_match.group(1)
+            else:
                 lines = block.split('\n')
                 for line in lines:
                     potential_uni_match = re.search(r'^[A-Z][a-zA-Z\s,&\.]+\b(university|college|institute|school|academy)?', line.strip())
-                    if potential_uni_match and len(potential_uni_match.group(0).split()) > 1:
-                        uni = potential_uni_match.group(0).strip().replace(',', '')
-                        break
-            
-            # Try to extract major (e.g., Computer Science, Electrical Engineering)
+                    if potential_uni_match and len(potential_uni_match.group(0).split()) > 1: uni = potential_uni_match.group(0).strip().replace(',', ''); break
             major_match = re.search(r'(?:in|of)\s+([A-Z][a-zA-Z\s]+(?:engineering|science|arts|business|management|studies|technology))', block, re.IGNORECASE)
-            if major_match:
-                major = major_match.group(1).strip()
-            
-            if uni or degree or major or year:
-                education_details.append({
-                    "University": uni,
-                    "Degree": degree,
-                    "Major": major,
-                    "Year": year
-                })
+            if major_match: major = major_match.group(1).strip()
+            if uni or degree or major or year: education_details.append({"University": uni, "Degree": degree, "Major": major, "Year": year})
     return education_details
 
-
 def extract_work_history(text):
-    """
-    Extracts work history details (Company, Title, Start Date, End Date) from text.
-    This is a heuristic and may not capture all formats.
-    Returns a list of dicts.
-    """
     work_history_section_matches = re.finditer(r'(?:experience|work history|employment history)\s*(\n|$)', text, re.IGNORECASE)
     work_details = []
-    
     start_index = -1
-    for match in work_history_section_matches:
-        start_index = match.end()
-        break
-
+    for match in work_history_section_matches: start_index = match.end(); break
     if start_index != -1:
         sections = ['education', 'skills', 'projects', 'certifications', 'awards', 'publications']
         end_index = len(text)
         for section in sections:
             section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
-            if section_match:
-                end_index = start_index + section_match.start()
-                break
-        
+            if section_match: end_index = start_index + section_match.start(); break
         work_text = text[start_index:end_index].strip()
-        
-        # Split by common job title/company patterns or date ranges.
-        # This regex looks for a line starting with a capitalized word (potential company/title)
-        # followed by a date range.
         job_blocks = re.split(r'\n(?=[A-Z][a-zA-Z\s,&\.]+(?:\s(?:at|@))?\s*[A-Z][a-zA-Z\s,&\.]*\s*(?:-|\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}))', work_text, flags=re.IGNORECASE)
-        
         for block in job_blocks:
             block = block.strip()
-            if not block:
-                continue
-            
-            company = None
-            title = None
-            start_date = None
-            end_date = None
-
-            # Extract dates (e.g., Jan 2020 - Dec 2022, 2018 - Present)
+            if not block: continue
+            company, title, start_date, end_date = None, None, None, None
             date_range_match = re.search(
                 r'((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})\s*[-–]\s*(present|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})',
                 block, re.IGNORECASE
@@ -575,122 +623,56 @@ def extract_work_history(text):
             if date_range_match:
                 start_date = date_range_match.group(1)
                 end_date = date_range_match.group(2)
-                # Remove dates from block to help with company/title extraction
                 block = block.replace(date_range_match.group(0), '').strip()
-
-            # Try to extract title and company
-            # Look for lines that look like "Job Title at Company Name" or "Company Name, Job Title"
             lines = block.split('\n')
             for line in lines:
                 line = line.strip()
                 if not line: continue
-
-                # Pattern: "Job Title at Company Name"
                 title_company_match = re.search(r'([A-Z][a-zA-Z\s,\-&.]+)\s+(?:at|@)\s+([A-Z][a-zA-Z\s,\-&.]+)', line)
-                if title_company_match:
-                    title = title_company_match.group(1).strip()
-                    company = title_company_match.group(2).strip()
-                    break
-                
-                # Pattern: "Company Name, Job Title" (often first line of a block)
+                if title_company_match: title, company = title_company_match.group(1).strip(), title_company_match.group(2).strip(); break
                 company_title_match = re.search(r'^([A-Z][a-zA-Z\s,\-&.]+),\s*([A-Z][a-zA-Z\s,\-&.]+)', line)
-                if company_title_match:
-                    company = company_title_match.group(1).strip()
-                    title = company_title_match.group(2).strip()
-                    break
-                
-                # Fallback: Just try to get a capitalized phrase as company/title
+                if company_title_match: company, title = company_title_match.group(1).strip(), company_title_match.group(2).strip(); break
                 if not company and not title:
                     potential_org_match = re.search(r'^[A-Z][a-zA-Z\s,\-&.]+', line)
                     if potential_org_match and len(potential_org_match.group(0).split()) > 1:
                         if not company: company = potential_org_match.group(0).strip()
                         elif not title: title = potential_org_match.group(0).strip()
-                        break # Take the first good match
-
-            if company or title or start_date or end_date:
-                work_details.append({
-                    "Company": company,
-                    "Title": title,
-                    "Start Date": start_date,
-                    "End Date": end_date
-                })
+                        break
+            if company or title or start_date or end_date: work_details.append({"Company": company, "Title": title, "Start Date": start_date, "End Date": end_date})
     return work_details
 
 def extract_project_details(text):
-    """
-    Extracts project details (Title, Description, Technologies) from text.
-    This is a heuristic and may not capture all formats.
-    Returns a list of dicts.
-    """
     project_section_matches = re.finditer(r'(?:projects|personal projects|key projects)\s*(\n|$)', text, re.IGNORECASE)
     project_details = []
-    
     start_index = -1
-    for match in project_section_matches:
-        start_index = match.end()
-        break
-
+    for match in project_section_matches: start_index = match.end(); break
     if start_index != -1:
         sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications']
         end_index = len(text)
         for section in sections:
             section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
-            if section_match:
-                end_index = start_index + section_match.start()
-                break
-        
+            if section_match: end_index = start_index + section_match.start(); break
         project_text = text[start_index:end_index].strip()
-        
-        # Split into individual projects, often marked by a title line or bullet point
-        # This regex tries to split by a line starting with a capital letter followed by words,
-        # often indicating a new project title.
         project_blocks = re.split(r'\n(?=[A-Z][a-zA-Z\s,&\-]+\s*(?:\()?\d{4}(?:\))?)|\n(?=•\s*[A-Z][a-zA-Z\s,&\-]+)', project_text)
-        
         for block in project_blocks:
             block = block.strip()
-            if not block:
-                continue
-            
-            title = None
-            description = []
-            technologies = []
-
+            if not block: continue
+            title, description, technologies = None, [], []
             lines = block.split('\n')
             if lines:
-                # First line is often the title
                 title_line = lines[0].strip()
-                if len(title_line.split()) <= 10 and re.match(r'^[A-Z]', title_line): # Heuristic for title line
-                    title = title_line
-                    description_lines = lines[1:]
-                else:
-                    description_lines = lines # If no clear title line, whole block is description
-                
-                # Extract technologies (simple approach: look for words in MASTER_SKILLS within the block)
+                if len(title_line.split()) <= 10 and re.match(r'^[A-Z]', title_line): title, description_lines = title_line, lines[1:]
+                else: description_lines = lines
                 block_lower = block.lower()
-                for skill in MASTER_SKILLS: # MASTER_SKILLS is now dynamically generated
-                    if re.search(r'\b' + re.escape(skill.lower()) + r'\b', block_lower):
-                        technologies.append(skill)
-                
-                # Remaining lines form the description
+                for skill in MASTER_SKILLS:
+                    if re.search(r'\b' + re.escape(skill.lower()) + r'\b', block_lower): technologies.append(skill)
                 description = [line.strip() for line in description_lines if line.strip()]
-                
-            if title or description or technologies:
-                project_details.append({
-                    "Project Title": title,
-                    "Description": "\n".join(description),
-                    "Technologies Used": ", ".join(technologies)
-                })
+            if title or description or technologies: project_details.append({"Project Title": title, "Description": "\n".join(description), "Technologies Used": ", ".join(technologies)})
     return project_details
 
 def extract_languages(text):
-    """
-    Extracts spoken languages from the resume text.
-    Looks for a "Languages" section and lists known languages.
-    """
     languages_list = []
     text_lower = text.lower()
-
-    # Define a comprehensive list of languages (Indian and Foreign)
     all_languages = [
         "english", "hindi", "spanish", "french", "german", "mandarin", "japanese", "arabic",
         "russian", "portuguese", "italian", "korean", "bengali", "marathi", "telugu", "tamil",
@@ -699,115 +681,66 @@ def extract_languages(text):
         "turkish", "hebrew", "thai", "vietnamese", "indonesian", "malay", "filipino", "swahili",
         "farsi", "persian", "polish", "ukrainian", "romanian", "czech", "slovak", "hungarian"
     ]
-    
-    # Look for a "Languages" section header
     languages_section_match = re.search(r'\b(languages|language skills|linguistic abilities)\b\s*(\n|$)', text_lower)
-    
     if languages_section_match:
         start_index = languages_section_match.end()
-        # Define potential end markers for the languages section
         sections = ['education', 'experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
         end_index = len(text_lower)
         for section in sections:
             section_match = re.search(r'\b' + re.escape(section) + r'\b', text_lower[start_index:], re.IGNORECASE)
-            if section_match:
-                end_index = start_index + section_match.start()
-                break
-        
+            if section_match: end_index = start_index + section_match.start(); break
         languages_text = text_lower[start_index:end_index].strip()
-        
-        # Extract languages from the identified section
         for lang in all_languages:
-            if re.search(r'\b' + re.escape(lang) + r'\b', languages_text):
-                languages_list.append(lang.title())
+            if re.search(r'\b' + re.escape(lang) + r'\b', languages_text): languages_list.append(lang.title())
     else:
-        # Fallback: if no explicit section, try to find languages anywhere in the text
-        # This is less precise but can catch languages mentioned in summary/profile
         for lang in all_languages:
             if re.search(r'\b' + re.escape(lang) + r'\b', text_lower):
-                if lang.title() not in languages_list: # Avoid duplicates if found in multiple places
-                    languages_list.append(lang.title())
-
+                if lang.title() not in languages_list: languages_list.append(lang.title())
     return ", ".join(sorted(list(set(languages_list)))) if languages_list else "Not Found"
 
-
 def format_education_details(edu_list):
-    """Formats a list of education dictionaries into a readable string."""
-    if not edu_list:
-        return "Not Found"
+    if not edu_list: return "Not Found"
     formatted_entries = []
     for entry in edu_list:
         parts = []
-        if entry.get("Degree"):
-            parts.append(entry["Degree"])
-        if entry.get("Major"):
-            parts.append(f"in {entry['Major']}")
-        if entry.get("University"):
-            parts.append(f"from {entry['University']}")
-        if entry.get("Year"):
-            parts.append(f"({entry['Year']})")
+        if entry.get("Degree"): parts.append(entry["Degree"])
+        if entry.get("Major"): parts.append(f"in {entry['Major']}")
+        if entry.get("University"): parts.append(f"from {entry['University']}")
+        if entry.get("Year"): parts.append(f"({entry['Year']})")
         formatted_entries.append(" ".join(parts).strip())
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
 
 def format_work_history(work_list):
-    """Formats a list of work history dictionaries into a readable string."""
-    if not work_list:
-        return "Not Found"
+    if not work_list: return "Not Found"
     formatted_entries = []
     for entry in work_list:
         parts = []
-        if entry.get("Title"):
-            parts.append(entry["Title"])
-        if entry.get("Company"):
-            parts.append(f"at {entry['Company']}")
-        if entry.get("Start Date") and entry.get("End Date"):
-            parts.append(f"({entry['Start Date']} - {entry['End Date']})")
-        elif entry.get("Start Date"):
-            parts.append(f"(Since {entry['Start Date']})")
+        if entry.get("Title"): parts.append(entry["Title"])
+        if entry.get("Company"): parts.append(f"at {entry['Company']}")
+        if entry.get("Start Date") and entry.get("End Date"): parts.append(f"({entry['Start Date']} - {entry['End Date']})")
+        elif entry.get("Start Date"): parts.append(f"(Since {entry['Start Date']})")
         formatted_entries.append(" ".join(parts).strip())
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
 
 def format_project_details(proj_list):
-    """Formats a list of project dictionaries into a readable string."""
-    if not proj_list:
-        return "Not Found"
+    if not proj_list: return "Not Found"
     formatted_entries = []
     for entry in proj_list:
         parts = []
-        if entry.get("Project Title"):
-            parts.append(f"**{entry['Project Title']}**")
-        if entry.get("Technologies Used"):
-            parts.append(f"({entry['Technologies Used']})")
-        # Description can be long, so maybe just a snippet or indicate presence
+        if entry.get("Project Title"): parts.append(f"**{entry['Project Title']}**")
+        if entry.get("Technologies Used"): parts.append(f"({entry['Technologies Used']})")
         if entry.get("Description") and entry["Description"].strip():
             desc_snippet = entry["Description"].split('\n')[0][:50] + "..." if len(entry["Description"]) > 50 else entry["Description"]
             parts.append(f'"{desc_snippet}"')
         formatted_entries.append(" ".join(parts).strip())
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
 
-
-# --- Concise AI Suggestion Function (for table display) ---
 @st.cache_data(show_spinner="Generating concise AI Suggestion...")
 def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_similarity, cgpa):
-    """
-    Generates a concise AI suggestion based on rules, focusing on overall fit and key points.
-    Now includes CGPA in the assessment.
-    """
     overall_fit_description = ""
     review_focus_text = ""
     key_strength_hint = ""
-
-    # Define thresholds
-    high_score = 85
-    moderate_score = 65
-    high_exp = 4
-    moderate_exp = 2
-    high_sem_sim = 0.75
-    moderate_sem_sim = 0.4
-    high_cgpa = 3.5 # Assuming normalized to 4.0 scale
-    moderate_cgpa = 3.0
-
-    # Base assessment
+    high_score, moderate_score, high_exp, moderate_exp, high_sem_sim, moderate_sem_sim, high_cgpa, moderate_cgpa = 85, 65, 4, 2, 0.75, 0.4, 3.5, 3.0
     if score >= high_score and years_exp >= high_exp and semantic_similarity >= high_sem_sim:
         overall_fit_description = "High alignment."
         key_strength_hint = "Strong technical and experience match, quick integration expected."
@@ -820,243 +753,124 @@ def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_si
         overall_fit_description = "Limited alignment."
         key_strength_hint = "May require significant development or a different role."
         review_focus_text = "Foundational skills, transferable experience, long-term potential."
-
-    # Incorporate CGPA into the suggestion
     cgpa_note = ""
     if cgpa is not None:
-        if cgpa >= high_cgpa:
-            cgpa_note = "Excellent academic record. "
-        elif cgpa >= moderate_cgpa:
-            cgpa_note = "Solid academic background. "
-        else:
-            cgpa_note = "Academic record may need review. "
-    else:
-        cgpa_note = "CGPA not found. "
-
+        if cgpa >= high_cgpa: cgpa_note = "Excellent academic record. "
+        elif cgpa >= moderate_cgpa: cgpa_note = "Solid academic background. "
+        else: cgpa_note = "Academic record may need review. "
+    else: cgpa_note = "CGPA not found. "
     summary_text = f"**Fit:** {overall_fit_description} **Strengths:** {cgpa_note}{key_strength_hint} **Focus:** {review_focus_text}"
     return summary_text
 
-# --- Detailed HR Assessment Function (for top candidate display) ---
 @st.cache_data(show_spinner="Generating detailed HR Assessment...")
 def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_similarity, cgpa, jd_text, resume_text, matched_keywords, missing_skills, max_exp_cutoff):
-    """
-    Generates a detailed, multi-paragraph HR assessment for a candidate.
-    Now includes matched and missing skills, CGPA, and considers max experience.
-    """
     assessment_parts = []
     overall_assessment_title = ""
-    next_steps_focus = ""
-
-    # Convert lists to strings for display if they are lists
     matched_kws_str = ", ".join(matched_keywords) if isinstance(matched_keywords, list) else matched_keywords
     missing_skills_str = ", ".join(missing_skills) if isinstance(missing_skills, list) else missing_skills
+    high_score, strong_score, promising_score = 90, 80, 60
+    high_exp, strong_exp, promising_exp = 5, 3, 1
+    high_sem_sim, strong_sem_sim, promising_sem_sim = 0.85, 0.7, 0.35
+    high_cgpa, strong_cgpa, promising_cgpa = 3.5, 3.0, 2.5
 
-    # Define thresholds
-    high_score = 90
-    strong_score = 80
-    promising_score = 60
-    high_exp = 5
-    strong_exp = 3
-    promising_exp = 1
-    high_sem_sim = 0.85
-    strong_sem_sim = 0.7
-    promising_sem_sim = 0.35
-    high_cgpa = 3.5 # Assuming normalized to 4.0 scale
-    strong_cgpa = 3.0
-    promising_cgpa = 2.5
-
-    # Tier 1: Exceptional Candidate
     if score >= high_score and years_exp >= high_exp and years_exp <= max_exp_cutoff and semantic_similarity >= high_sem_sim and (cgpa is None or cgpa >= high_cgpa):
         overall_assessment_title = "Exceptional Candidate: Highly Aligned with Strategic Needs"
         assessment_parts.append(f"**{candidate_name}** presents an **exceptional profile** with a high score of {score:.2f}% and {years_exp:.1f} years of experience. This demonstrates a profound alignment with the job description's core requirements, further evidenced by a strong semantic similarity of {semantic_similarity:.2f}.")
-        if cgpa is not None:
-            assessment_parts.append(f"Their academic record, with a CGPA of {cgpa:.2f} (normalized to 4.0 scale), further solidifies their strong foundational knowledge.")
+        if cgpa is not None: assessment_parts.append(f"Their academic record, with a CGPA of {cgpa:.2f} (normalized to 4.0 scale), further solidifies their strong foundational knowledge.")
         assessment_parts.append(f"**Key Strengths:** This candidate possesses a robust skill set directly matching critical keywords in the JD, including: *{matched_kws_str if matched_kws_str else 'No specific keywords listed, but overall strong match'}*. Their extensive experience indicates a capacity for leadership and handling complex challenges, suggesting immediate productivity and minimal ramp-up time. They are poised to make significant contributions from day one.")
         assessment_parts.append("The resume highlights a clear career progression and a history of successful project delivery, often exceeding expectations. Their qualifications exceed expectations, making them a top-tier applicant for this role.")
         assessment_parts.append("This individual's profile suggests they are not only capable of fulfilling the role's duties but also have the potential to mentor others, drive innovation, and take on strategic initiatives within the team. Their background indicates a strong fit for a high-impact position.")
-        next_steps_focus = "The next steps should focus on assessing cultural integration, exploring leadership potential, and delving into strategic contributions during the interview. Prepare for a deep dive into their most challenging projects, how they navigated complex scenarios, and their long-term vision. Consider fast-tracking this candidate through the interview process and potentially involving senior leadership early on."
         assessment_parts.append(f"**Action:** Strongly recommend for immediate interview. Prioritize for hiring and consider for advanced roles if applicable.")
-
-    # Tier 2: Strong Candidate
     elif score >= strong_score and years_exp >= strong_exp and years_exp <= max_exp_cutoff and semantic_similarity >= strong_sem_sim and (cgpa is None or cgpa >= strong_cgpa):
         overall_assessment_title = "Strong Candidate: Excellent Potential for Key Contributions"
         assessment_parts.append(f"**{candidate_name}** is a **strong candidate** with a score of {score:.2f}% and {years_exp:.1f} years of experience. They show excellent alignment with the job description, supported by a solid semantic similarity of {semantic_similarity:.2f}.")
-        if cgpa is not None:
-            assessment_parts.append(f"Their academic performance, with a CGPA of {cgpa:.2f}, indicates a solid theoretical grounding.")
+        if cgpa is not None: assessment_parts.append(f"Their academic performance, with a CGPA of {cgpa:.2f}, indicates a solid theoretical grounding.")
         assessment_parts.append(f"**Key Strengths:** Significant overlap in required skills and practical experience that directly addresses the job's demands. Matched keywords include: *{matched_kws_str if matched_kws_str else 'No specific keywords listed, but overall strong match'}*. This individual is likely to integrate well and contribute effectively from an early stage, bringing valuable expertise to the team.")
         assessment_parts.append("Their resume indicates a consistent track record of achieving results and adapting to new challenges. They demonstrate a solid understanding of the domain and could quickly become a valuable asset, requiring moderate onboarding.")
         assessment_parts.append("This candidate is well-suited for the role and demonstrates the core competencies required. Their experience suggests they can handle typical challenges and contribute positively to team dynamics.")
-        next_steps_focus = "During the interview, explore specific project methodologies, problem-solving approaches, and long-term career aspirations to confirm alignment with team dynamics and growth opportunities within the company. Focus on behavioral questions to understand their collaboration style, initiative, and how they handle feedback. A technical assessment might be beneficial to confirm depth of skills."
         assessment_parts.append(f"**Action:** Recommend for interview. Good fit for the role, with potential for growth.")
-
-    # Tier 3: Promising Candidate
     elif score >= promising_score and years_exp >= promising_exp and years_exp <= max_exp_cutoff and semantic_similarity >= promising_sem_sim and (cgpa is None or cgpa >= promising_cgpa):
         overall_assessment_title = "Promising Candidate: Requires Focused Review on Specific Gaps"
         assessment_parts.append(f"**{candidate_name}** is a **promising candidate** with a score of {score:.2f}% and {years_exp:.1f} years of experience. While demonstrating a foundational understanding (semantic similarity: {semantic_similarity:.2f}), there are areas that warrant deeper investigation to ensure a complete fit.")
-        
         gaps_identified = []
-        if score < 70:
-            gaps_identified.append("The overall score suggests some core skill areas may need development or further clarification.")
-        if years_exp < promising_exp:
-            gaps_identified.append(f"Experience ({years_exp:.1f} yrs) is on the lower side; assess their ability to scale up quickly and take on more responsibility.")
-        if semantic_similarity < 0.5:
-            gaps_identified.append("Semantic understanding of the JD's nuances might be limited; probe their theoretical knowledge versus practical application in real-world scenarios.")
-        if cgpa is not None and cgpa < promising_cgpa:
-            gaps_identified.append(f"Academic record (CGPA: {cgpa:.2f}) is below preferred, consider its relevance to role demands.")
-        if missing_skills_str:
-            gaps_identified.append(f"**Potential Missing Skills:** *{missing_skills_str}*. Focus interview questions on these areas to assess their current proficiency or learning agility.")
-        
-        if years_exp > max_exp_cutoff:
-            gaps_identified.append(f"Experience ({years_exp:.1f} yrs) exceeds the maximum desired ({max_exp_cutoff} yrs). Evaluate if this indicates overqualification or a potential mismatch in role expectations.")
-
-        if gaps_identified:
-            assessment_parts.append("Areas for further exploration include: " + " ".join(gaps_identified))
-        
+        if score < 70: gaps_identified.append("The overall score suggests some core skill areas may need development or further clarification.")
+        if years_exp < promising_exp: gaps_identified.append(f"Experience ({years_exp:.1f} yrs) is on the lower side; assess their ability to scale up quickly and take on more responsibility.")
+        if semantic_similarity < 0.5: gaps_identified.append("Semantic understanding of the JD's nuances might be limited; probe their theoretical knowledge versus practical application in real-world scenarios.")
+        if cgpa is not None and cgpa < promising_cgpa: gaps_identified.append(f"Academic record (CGPA: {cgpa:.2f}) is below preferred, consider its relevance to role demands.")
+        if missing_skills_str: gaps_identified.append(f"**Potential Missing Skills:** *{missing_skills_str}*. Focus interview questions on these areas to assess their current proficiency or learning agility.")
+        if years_exp > max_exp_cutoff: gaps_identified.append(f"Experience ({years_exp:.1f} yrs) exceeds the maximum desired ({max_exp_cutoff} yrs). Evaluate if this indicates overqualification or a potential mismatch in role expectations.")
+        if gaps_identified: assessment_parts.append("Areas for further exploration include: " + " ".join(gaps_identified))
         assessment_parts.append("The candidate shows potential, especially if they can demonstrate quick learning or relevant transferable skills. Their resume indicates a willingness to grow and take on new challenges, which is a positive sign for development opportunities.")
-        next_steps_focus = "The interview should focus on validating foundational skills, understanding their learning agility, and assessing their potential for growth within the role. Be prepared to discuss specific examples of how they've applied relevant skills and how they handle challenges, particularly in areas where skills are missing. Consider a skills assessment or a structured case study to gauge problem-solving abilities. Discuss their motivation for this role and long-term career goals."
         assessment_parts.append(f"**Action:** Consider for initial phone screen or junior role. Requires careful evaluation and potentially a development plan.")
-
-    # Tier 4: Limited Match
     else:
         overall_assessment_title = "Limited Match: Consider Only for Niche Needs or Pipeline Building"
         assessment_parts.append(f"**{candidate_name}** shows a **limited match** with a score of {score:.2f}% and {years_exp:.1f} years of experience (semantic similarity: {semantic_similarity:.2f}). This profile indicates a significant deviation from the core requirements of the job description.")
-        if cgpa is not None:
-            assessment_parts.append(f"Their academic record (CGPA: {cgpa:.2f}) also indicates a potential mismatch.")
+        if cgpa is not None: assessment_parts.append(f"Their academic record (CGPA: {cgpa:.2f}) also indicates a potential mismatch.")
         assessment_parts.append(f"**Key Concerns:** A low overlap in essential skills and potentially insufficient experience for the role's demands. Many key skills appear to be missing: *{missing_skills_str if missing_skills_str else 'No specific missing skills listed, but overall low match'}*. While some transferable skills may exist, a substantial investment in training or a re-evaluation of role fit would likely be required for this candidate to succeed.")
-        
-        if years_exp > max_exp_cutoff:
-            assessment_parts.append(f"Additionally, their experience ({years_exp:.1f} yrs) significantly exceeds the maximum desired ({max_exp_cutoff} yrs), which might indicate overqualification or a mismatch in career trajectory for this specific opening.")
-
+        if years_exp > max_exp_cutoff: assessment_parts.append(f"Additionally, their experience ({years_exp:.1f} yrs) significantly exceeds the maximum desired ({max_exp_cutoff} yrs), which might indicate overqualification or a mismatch in career trajectory for this specific opening.")
         assessment_parts.append("The resume does not strongly align with the technical or experience demands of this specific position. Their background may be more suited for a different type of role or industry, or an entry-level position if their core skills are strong but experience is lacking.")
         assessment_parts.append("This candidate might not be able to meet immediate role requirements without extensive support. Their current profile suggests a mismatch with the current opening.")
-        next_steps_focus = "This candidate is generally not recommended for the current role unless there are specific, unforeseen niche requirements or a strategic need to broaden the candidate pool significantly. If proceeding, focus on understanding their fundamental capabilities, their motivation for this specific role despite the mismatch, and long-term career aspirations. It might be more beneficial to suggest other roles within the organization or provide feedback for future applications."
         assessment_parts.append(f"**Action:** Not recommended for this role. Consider for other open positions or future pipeline, or politely decline.")
-
     final_assessment = f"**Overall HR Assessment: {overall_assessment_title}**\n\n"
     final_assessment += "\n".join(assessment_parts)
-
     return final_assessment
 
-
-def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills, jd_skills_filter_set): # Added jd_skills_filter_set
-    """
-    Calculates a semantic score using an ML model and provides additional details.
-    Falls back to smart_score if the ML model is not loaded or prediction fails.
-    Applies STOP_WORDS filtering for keyword analysis (internally, not for display).
-    Now includes CGPA and weighted keyword matching in the scoring.
-    """
+def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills, jd_skills_filter_set):
     jd_clean = clean_text(jd_text)
     resume_clean = clean_text(resume_text)
-
     score = 0.0
     semantic_similarity = 0.0
-
-    # Extract raw skills for scoring
     resume_raw_skills, _ = extract_relevant_keywords(resume_clean, MASTER_SKILLS)
-    jd_raw_skills, _ = extract_relevant_keywords(jd_clean, jd_skills_filter_set) # Use the passed filter set for JD
-
-    # Calculate weighted keyword overlap
+    jd_raw_skills, _ = extract_relevant_keywords(jd_clean, jd_skills_filter_set)
     weighted_keyword_overlap_score = 0
     total_jd_skill_weight = 0
-
-    # Define weights
-    WEIGHT_HIGH = 3
-    WEIGHT_MEDIUM = 2
-    WEIGHT_BASE = 1
-
+    WEIGHT_HIGH, WEIGHT_MEDIUM, WEIGHT_BASE = 3, 2, 1
     for jd_skill in jd_raw_skills:
         current_weight = WEIGHT_BASE
-        if jd_skill in [s.lower() for s in high_priority_skills]:
-            current_weight = WEIGHT_HIGH
-        elif jd_skill in [s.lower() for s in medium_priority_skills]:
-            current_weight = WEIGHT_MEDIUM
-        
+        if jd_skill in [s.lower() for s in high_priority_skills]: current_weight = WEIGHT_HIGH
+        elif jd_skill in [s.lower() for s in medium_priority_skills]: current_weight = WEIGHT_MEDIUM
         total_jd_skill_weight += current_weight
-        
-        if jd_skill in resume_raw_skills:
-            weighted_keyword_overlap_score += current_weight
-
-    if total_jd_skill_weight > 0:
-        weighted_jd_coverage_percentage = (weighted_keyword_overlap_score / total_jd_skill_weight) * 100
-    else:
-        weighted_jd_coverage_percentage = 0.0
-
+        if jd_skill in resume_raw_skills: weighted_keyword_overlap_score += current_weight
+    if total_jd_skill_weight > 0: weighted_jd_coverage_percentage = (weighted_keyword_overlap_score / total_jd_skill_weight) * 100
+    else: weighted_jd_coverage_percentage = 0.0
 
     if ml_model is None or model is None:
         st.warning("ML models not loaded. Providing basic score and generic feedback.")
-        # Simplified fallback for score and feedback
-        basic_score = (weighted_jd_coverage_percentage * 0.7) # Use weighted coverage
-        basic_score += min(years_exp * 5, 30) # Add up to 30 for experience
-        
-        # Add a small CGPA bonus/penalty for fallback score
+        basic_score = (weighted_jd_coverage_percentage * 0.7)
+        basic_score += min(years_exp * 5, 30)
         if cgpa is not None:
-            if cgpa >= 3.5:
-                basic_score += 5
-            elif cgpa < 2.5:
-                basic_score -= 5
-        
+            if cgpa >= 3.5: basic_score += 5
+            elif cgpa < 2.5: basic_score -= 5
         score = round(min(basic_score, 100), 2)
-        
         return score, round(semantic_similarity, 2)
 
     try:
         jd_embed = model.encode(jd_clean)
         resume_embed = model.encode(resume_clean)
-
         semantic_similarity = cosine_similarity(jd_embed.reshape(1, -1), resume_embed.reshape(1, -1))[0][0]
         semantic_similarity = float(np.clip(semantic_similarity, 0, 1))
-
         years_exp_for_model = float(years_exp) if years_exp is not None else 0.0
-
-        # Features for the ML model - now using weighted_keyword_overlap_score
         features = np.concatenate([jd_embed, resume_embed, [years_exp_for_model], [weighted_keyword_overlap_score]])
-
         predicted_score = ml_model.predict([features])[0]
-
-        blended_score = (predicted_score * 0.6) + \
-                        (weighted_jd_coverage_percentage * 0.1) + \
-                        (semantic_similarity * 100 * 0.3)
-
-        if semantic_similarity > 0.7 and years_exp >= 3:
-            blended_score += 5
-        
-        # Adjust score based on CGPA (if available)
+        blended_score = (predicted_score * 0.6) + (weighted_jd_coverage_percentage * 0.1) + (semantic_similarity * 100 * 0.3)
+        if semantic_similarity > 0.7 and years_exp >= 3: blended_score += 5
         if cgpa is not None:
-            if cgpa >= 3.5: # Excellent CGPA
-                blended_score += 3
-            elif cgpa >= 3.0: # Good CGPA
-                blended_score += 1
-            elif cgpa < 2.5: # Lower CGPA, slight penalty
-                blended_score -= 2
-
-
+            if cgpa >= 3.5: blended_score += 3
+            elif cgpa >= 3.0: blended_score += 1
+            elif cgpa < 2.5: blended_score -= 2
         score = float(np.clip(blended_score, 0, 100))
-        
         return round(score, 2), round(semantic_similarity, 2)
-
     except Exception as e:
         st.warning(f"Error during semantic scoring, falling back to basic: {e}")
-        # Simplified fallback for score and feedback if ML prediction fails
-        basic_score = (weighted_jd_coverage_percentage * 0.7) # Use weighted coverage
-        basic_score += min(years_exp * 5, 30) # Add up to 30 for experience
-        
-        # Add a small CGPA bonus/penalty for fallback score
+        basic_score = (weighted_jd_coverage_percentage * 0.7)
+        basic_score += min(years_exp * 5, 30)
         if cgpa is not None:
-            if cgpa >= 3.5:
-                basic_score += 5
-            elif cgpa < 2.5:
-                basic_score -= 5
-
+            if cgpa >= 3.5: basic_score += 5
+            elif cgpa < 2.5: basic_score -= 5
         score = round(min(basic_score, 100), 2)
+        return score, 0.0
 
-        return score, 0.0 # Return 0 for semantic similarity on fallback
-
-
-# --- Email Generation Function ---
 def create_mailto_link(recipient_email, candidate_name, job_title="Job Opportunity", sender_name="Recruiting Team"):
-    """
-    Generates a mailto: link with pre-filled subject and body for inviting a candidate.
-    """
     subject = urllib.parse.quote(f"Invitation for Interview - {job_title} - {candidate_name}")
     body = urllib.parse.quote(f"""Dear {candidate_name},
 
@@ -1067,12 +881,11 @@ Best regards,
 The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
-# --- Function to encapsulate the Resume Screener logic ---
+# --- Resume Screener Page (from screener.py) ---
 def resume_screener_page():
     st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
 
     # Define all expected columns for the DataFrame.
-    # This list is crucial for consistent DataFrame structure across sessions and operations.
     expected_cols = [
         "File Name", "Candidate Name", "Score (%)", "Years Experience", "CGPA (4.0 Scale)",
         "Email", "Phone Number", "Location", "Languages", "Education Details",
@@ -1083,16 +896,12 @@ def resume_screener_page():
     ]
 
     # Initialize full_results_df in session state if it doesn't exist or is not a DataFrame
-    # This ensures the DataFrame always has the correct structure from the start.
     if 'full_results_df' not in st.session_state or not isinstance(st.session_state['full_results_df'], pd.DataFrame):
         st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols)
-        # Ensure correct dtypes for these columns upon initial creation, as they are editable/categorical
         st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
         st.session_state['full_results_df']['Notes'] = st.session_state['full_results_df']['Notes'].astype(str)
         st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df']['Tag'].astype(str)
-    # If it exists but is empty, re-ensure it has the columns (handles cases after "Clear All Data")
     elif st.session_state['full_results_df'].empty:
-        # Check if columns are already present to avoid re-adding if not needed
         if not all(col in st.session_state['full_results_df'].columns for col in expected_cols):
             st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols)
             st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
@@ -1106,14 +915,14 @@ def resume_screener_page():
     with col1:
         jd_text = ""
         job_roles = {"Upload my own": None}
-        if os.path.exists("data"):
-            for fname in os.listdir("data"):
-                if fname.endswith(".txt"):
-                    job_roles[fname.replace(".txt", "").replace("_", " ").title()] = os.path.join("data", fname)
+        if not os.path.exists("data"):
+            os.makedirs("data") # Ensure 'data' directory exists
+        for fname in os.listdir("data"):
+            if fname.endswith(".txt"):
+                job_roles[fname.replace(".txt", "").replace("_", " ").title()] = os.path.join("data", fname)
 
         jd_option = st.selectbox("📌 **Select a Pre-Loaded Job Role or Upload Your Own Job Description**", list(job_roles.keys()))
         
-        # Determine the JD name to be stored in results
         jd_name_for_results = ""
         if jd_option == "Upload my own":
             jd_file = st.file_uploader("Upload Job Description (TXT)", type="txt", help="Upload a .txt file containing the job description.")
@@ -1134,19 +943,17 @@ def resume_screener_page():
                 st.text_area("Job Description Content", jd_text, height=200, disabled=True, label_visibility="collapsed")
 
     with col2:
-        # Store cutoff and min_experience in session state
         cutoff = st.slider("📈 **Minimum Score Cutoff (%)**", 0, 100, 75, help="Candidates scoring below this percentage will be flagged for closer review or considered less suitable.")
-        st.session_state['screening_cutoff_score'] = cutoff # Store in session state
+        st.session_state['screening_cutoff_score'] = cutoff
 
         min_experience = st.slider("💼 **Minimum Experience Required (Years)**", 0, 15, 2, help="Candidates with less than this experience will be noted.")
-        st.session_state['screening_min_experience'] = min_experience # Store in session state
+        st.session_state['screening_min_experience'] = min_experience
 
         max_experience = st.slider("⬆️ **Maximum Experience Allowed (Years)**", 0, 20, 10, help="Candidates with more than this experience might be considered overqualified or outside the target range.")
-        st.session_state['screening_max_experience'] = max_experience # Store in session state
+        st.session_state['screening_max_experience'] = max_experience
 
-        # New CGPA Cutoff Slider
         min_cgpa = st.slider("🎓 **Minimum CGPA Required (4.0 Scale)**", 0.0, 4.0, 2.5, 0.1, help="Candidates with CGPA below this value (normalized to 4.0) will be noted.")
-        st.session_state['screening_min_cgpa'] = min_cgpa # Store in session state
+        st.session_state['screening_min_cgpa'] = min_cgpa
 
         st.markdown("---")
         st.info("Once criteria are set, upload resumes below to begin screening.")
@@ -1155,7 +962,6 @@ def resume_screener_page():
     st.markdown("## 🎯 Skill Prioritization (Optional)")
     st.caption("Assign higher importance to specific skills in the Job Description.")
     
-    # Use the dynamically generated MASTER_SKILLS for selection
     all_master_skills = sorted(list(MASTER_SKILLS))
 
     col_weights_1, col_weights_2 = st.columns(2)
@@ -1168,32 +974,27 @@ def resume_screener_page():
     with col_weights_2:
         medium_priority_skills = st.multiselect(
             "✨ **Medium Priority Skills (Weight x2)**",
-            options=[s for s in all_master_skills if s not in high_priority_skills], # Prevent overlap
+            options=[s for s in all_master_skills if s not in high_priority_skills],
             help="Select skills that are very important, but not as critical as high priority ones."
         )
 
-    # Custom Skill Keywords input
     custom_jd_skills_input = st.text_input(
         "➕ **Add Custom JD Skills (comma-separated)**",
         help="Enter additional skills relevant to the Job Description, e.g., 'Leadership, Cloud Security, Microservices Architecture'. These will be considered in scoring."
     )
     custom_jd_skills_set = {s.strip().lower() for s in custom_jd_skills_input.split(',') if s.strip()}
     
-    # Combine MASTER_SKILLS with custom JD skills for JD processing
     jd_skills_for_processing = MASTER_SKILLS.union(custom_jd_skills_set)
 
     resume_files = st.file_uploader("📄 **Upload Resumes (PDF)**", type="pdf", accept_multiple_files=True, help="Upload one or more PDF resumes for screening.")
 
-
     if jd_text and resume_files:
-        # --- Job Description Keyword Cloud ---
         st.markdown("---")
         st.markdown("## ☁️ Job Description Keyword Cloud")
         st.caption("Visualizing the most frequent and important keywords from the Job Description.")
-        st.info("💡 To filter candidates by these skills, use the 'Filter Candidates by Skill' section below the main results table.") # New instruction
+        st.info("💡 To filter candidates by these skills, use the 'Filter Candidates by Skill' section below the main results table.")
         
-        # Use all_master_skills for cloud generation
-        jd_words_for_cloud_set, _ = extract_relevant_keywords(jd_text, jd_skills_for_processing) # Use combined skills for JD cloud
+        jd_words_for_cloud_set, _ = extract_relevant_keywords(jd_text, jd_skills_for_processing)
         jd_words_for_cloud = " ".join(list(jd_words_for_cloud_set))
 
         if jd_words_for_cloud:
@@ -1223,52 +1024,31 @@ def resume_screener_page():
             exp = extract_years_of_experience(text)
             email = extract_email(text)
             phone = extract_phone_number(text)
-            location = extract_location(text) # Now uses custom city list
+            location = extract_location(text)
             languages = extract_languages(text)
             
-            # Extract structured details
-            education_details_raw = extract_education_details(text)
-            work_history_raw = extract_work_history(text)
-            project_details_raw = extract_project_details(text)
-
-            # Format structured details for display in the DataFrame
-            education_details_formatted = format_education_details(education_details_raw)
-            work_history_formatted = format_work_history(work_history_raw)
-            project_details_formatted = format_project_details(project_details_raw)
+            education_details_formatted = format_education_details(extract_education_details(text))
+            work_history_formatted = format_work_history(extract_work_history(text))
+            project_details_formatted = format_project_details(extract_project_details(text))
 
             candidate_name = extract_name(text) or file.name.replace('.pdf', '').replace('_', ' ').title()
             cgpa = extract_cgpa(text)
 
-            # Calculate Matched Keywords and Missing Skills using the new function
-            resume_raw_skills_set, resume_categorized_skills = extract_relevant_keywords(text, all_master_skills) # Resume skills still against master
-            jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, jd_skills_for_processing) # JD skills against combined set
+            resume_raw_skills_set, resume_categorized_skills = extract_relevant_keywords(text, all_master_skills)
+            jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, jd_skills_for_processing)
 
             matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
             missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
 
-            score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills, jd_skills_for_processing) # Pass to semantic_score
+            score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills, jd_skills_for_processing)
             
-            # Generate the CONCISE AI suggestion for the table
             concise_ai_suggestion = generate_concise_ai_suggestion(
-                candidate_name=candidate_name,
-                score=score,
-                years_exp=exp,
-                semantic_similarity=semantic_similarity,
-                cgpa=cgpa
+                candidate_name=candidate_name, score=score, years_exp=exp, semantic_similarity=semantic_similarity, cgpa=cgpa
             )
-
-            # Generate the DETAILED HR assessment for the top candidate
             detailed_hr_assessment = generate_detailed_hr_assessment(
-                candidate_name=candidate_name,
-                score=score,
-                years_exp=exp,
-                semantic_similarity=semantic_similarity,
-                cgpa=cgpa,
-                jd_text=jd_text,
-                resume_text=text,
-                matched_keywords=matched_keywords,
-                missing_skills=missing_skills,
-                max_exp_cutoff=max_experience
+                candidate_name=candidate_name, score=score, years_exp=exp, semantic_similarity=semantic_similarity,
+                cgpa=cgpa, jd_text=jd_text, resume_text=text, matched_keywords=matched_keywords,
+                missing_skills=missing_skills, max_exp_cutoff=max_experience
             )
 
             results.append({
@@ -1293,45 +1073,56 @@ def resume_screener_page():
                 "Semantic Similarity": semantic_similarity,
                 "Resume Raw Text": text,
                 "JD Used": jd_name_for_results,
-                "Shortlisted": False, # Default for new entries
-                "Notes": "", # Default for new entries
-                "Tag": "" # Will be filled after merge
+                "Shortlisted": False,
+                "Notes": "",
+                "Tag": ""
             })
         
         progress_bar.empty()
         status_text.empty()
 
-        # Create a DataFrame from the newly processed results
-        # Ensure it always has the expected columns, even if results is empty
         newly_processed_df = pd.DataFrame(results, columns=expected_cols)
 
         if not newly_processed_df.empty:
-            # Preserve 'Shortlisted' and 'Notes' from existing data for files that are being re-processed
-            temp_new_df = newly_processed_df.copy()
+            # Merge new results with existing state, preserving user edits for 'Shortlisted' and 'Notes'
+            # Use 'File Name' as the key to merge
             
-            # Find file names that exist in both the new batch and the session state
-            common_file_names_in_new = temp_new_df['File Name'].isin(st.session_state['full_results_df']['File Name'])
-            
-            if common_file_names_in_new.any(): # If there are common files
-                # Get the 'Shortlisted' and 'Notes' for these common files from the session state
-                existing_shortlisted_notes_for_common = st.session_state['full_results_df'][
-                    st.session_state['full_results_df']['File Name'].isin(temp_new_df.loc[common_file_names_in_new, 'File Name'])
-                ][['File Name', 'Shortlisted', 'Notes']].set_index('File Name')
-                
-                # Update temp_new_df with these existing Shortlisted/Notes
-                temp_new_df.set_index('File Name', inplace=True)
-                temp_new_df.update(existing_shortlisted_notes_for_common)
-                temp_new_df.reset_index(inplace=True)
+            # 1. Take the current full_results_df from session state
+            current_full_df = st.session_state['full_results_df'].copy()
 
-            # Identify files in the old session state that are NOT in the newly processed batch
-            unique_old_files_df = st.session_state['full_results_df'][
-                ~st.session_state['full_results_df']['File Name'].isin(temp_new_df['File Name'])
+            # 2. Identify files that are in both the new batch and the current session state
+            common_files = pd.merge(
+                current_full_df[['File Name', 'Shortlisted', 'Notes']],
+                newly_processed_df[['File Name']],
+                on='File Name',
+                how='inner'
+            )
+            
+            # 3. Drop common files from newly_processed_df to avoid duplicates during concat
+            newly_processed_df_unique = newly_processed_df[
+                ~newly_processed_df['File Name'].isin(current_full_df['File Name'])
             ]
-            
-            # Concatenate the (potentially updated) new files with the unique old files
-            st.session_state['full_results_df'] = pd.concat([temp_new_df, unique_old_files_df], ignore_index=True)
-            
-            # Ensure correct dtypes after concatenation, especially for 'Shortlisted'
+
+            # 4. Concatenate the unique new files with the existing full_results_df
+            # This adds genuinely new files
+            st.session_state['full_results_df'] = pd.concat([current_full_df, newly_processed_df_unique], ignore_index=True)
+
+            # 5. Update the screening data for common files (preserving Shortlisted/Notes)
+            # Iterate through common files and update the corresponding rows in full_results_df
+            # This is less efficient than a merge, but ensures specific columns are preserved.
+            for _, row_common in common_files.iterrows():
+                file_name = row_common['File Name']
+                # Get the new screening data for this file
+                new_screening_data = newly_processed_df[newly_processed_df['File Name'] == file_name].iloc[0]
+                
+                # Update all columns except 'Shortlisted' and 'Notes' in the session state DataFrame
+                for col in expected_cols:
+                    if col not in ['Shortlisted', 'Notes', 'File Name']:
+                        st.session_state['full_results_df'].loc[
+                            st.session_state['full_results_df']['File Name'] == file_name, col
+                        ] = new_screening_data[col]
+
+            # Ensure correct dtypes after all operations
             st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
             st.session_state['full_results_df']['Notes'] = st.session_state['full_results_df']['Notes'].astype(str)
             st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df']['Tag'].astype(str)
@@ -1340,17 +1131,12 @@ def resume_screener_page():
         else:
             st.info("No resumes were successfully processed. Please check your uploaded files.")
         
-        # Save results to CSV for analytics.py to use (using the full_results_df from session state)
-        # This should be done after full_results_df is updated
         st.session_state['full_results_df'].to_csv("results.csv", index=False)
 
-
-        # --- Overall Candidate Comparison Chart ---
         st.markdown("## 📊 Candidate Score Comparison")
         st.caption("Visual overview of how each candidate ranks against the job requirements.")
-        if not st.session_state['full_results_df'].empty: # Use full_results_df for chart
+        if not st.session_state['full_results_df'].empty:
             fig, ax = plt.subplots(figsize=(12, 7))
-            # Define colors: Green for top, Yellow for moderate, Red for low
             colors = ['#4CAF50' if s >= cutoff else '#FFC107' if s >= (cutoff * 0.75) else '#F44346' for s in st.session_state['full_results_df']['Score (%)']]
             bars = ax.bar(st.session_state['full_results_df']['Candidate Name'], st.session_state['full_results_df']['Score (%)'], color=colors)
             ax.set_xlabel("Candidate", fontsize=14)
@@ -1370,23 +1156,20 @@ def resume_screener_page():
 
         st.markdown("---")
 
-        # --- TOP CANDIDATE AI RECOMMENDATION (Game Changer Feature) ---
         st.markdown("## 👑 Top Candidate AI Assessment")
         st.caption("A concise, AI-powered assessment for the most suitable candidate.")
         
-        if not st.session_state['full_results_df'].empty: # Use full_results_df
-            top_candidate = st.session_state['full_results_df'].iloc[0] # Get the top candidate (already sorted by score)
+        if not st.session_state['full_results_df'].empty:
+            top_candidate = st.session_state['full_results_df'].iloc[0]
             
-            # Safely format CGPA and Semantic Similarity for display
             cgpa_display = f"{top_candidate['CGPA (4.0 Scale)']:.2f}" if top_candidate['CGPA (4.0 Scale)'] is not None else "N/A"
             semantic_sim_display = f"{top_candidate['Semantic Similarity']:.2f}" if top_candidate['Semantic Similarity'] is not None else "N/A"
 
             st.markdown(f"### **{top_candidate['Candidate Name']}**")
             st.markdown(f"**Score:** {top_candidate['Score (%)']:.2f}% | **Experience:** {top_candidate['Years Experience']:.1f} years | **CGPA:** {cgpa_display} (4.0 Scale) | **Semantic Similarity:** {semantic_sim_display}")
             st.markdown(f"**AI Assessment:**")
-            st.markdown(top_candidate['Detailed HR Assessment']) # Display the detailed HR assessment here
+            st.markdown(top_candidate['Detailed HR Assessment'])
             
-            # Display Categorized Matched Skills for the top candidate
             st.markdown("#### Matched Skills Breakdown:")
             if top_candidate['Matched Keywords (Categorized)']:
                 for category, skills in top_candidate['Matched Keywords (Categorized)'].items():
@@ -1394,38 +1177,33 @@ def resume_screener_page():
             else:
                 st.write("No categorized matched skills found.")
 
-            # Display Categorized Missing Skills for the top candidate
             st.markdown("#### Missing Skills Breakdown (from JD):")
-            # Need to re-calculate missing skills based on JD's categorized skills and candidate's raw skills
-            jd_raw_skills_set_for_top, jd_categorized_skills_for_top = extract_relevant_keywords(jd_text, jd_skills_for_processing) # Use combined skills
-            resume_raw_skills_set_for_top, _ = extract_relevant_keywords(top_candidate['Resume Raw Text'], all_master_skills)
-            
-            missing_skills_for_top = jd_raw_skills_set_for_top.difference(resume_raw_skills_set_for_top)
-            
-            if missing_skills_for_top:
-                missing_categorized = collections.defaultdict(list)
-                for skill in missing_skills_for_top:
-                    found_category = False
-                    for category, skills_in_category in SKILL_CATEGORIES.items():
-                        if skill.lower() in [s.lower() for s in skills_in_category]:
-                            missing_categorized[category].append(skill)
-                            found_category = True
-                            break
-                    if not found_category:
-                        missing_categorized["Uncategorized"].append(skill)
-                
-                for category, skills in missing_categorized.items():
-                    st.write(f"**{category}:** {', '.join(skills)}")
+            if top_candidate['Missing Skills'].strip():
+                missing_skills_list = [s.strip() for s in top_candidate['Missing Skills'].split(',') if s.strip()]
+                if missing_skills_list:
+                    missing_categorized_for_viewer = collections.defaultdict(list)
+                    for skill in missing_skills_list:
+                        found_category = False
+                        for category, skills_in_category in SKILL_CATEGORIES.items():
+                            if skill.lower() in [s.lower() for s in skills_in_category]:
+                                missing_categorized_for_viewer[category].append(skill)
+                                found_category = True
+                                break
+                        if not found_category:
+                            missing_categorized_for_viewer["Uncategorized"].append(skill)
+                    
+                    for category, skills in missing_categorized_for_viewer.items():
+                        st.write(f"**{category}:** {', '.join(skills)}")
+                else:
+                    st.write("No missing skills found for this candidate relative to the JD.")
             else:
                 st.write("No missing skills found for this candidate relative to the JD.")
 
-
-            # Action button for the top candidate
             if top_candidate['Email'] != "Not Found":
                 mailto_link_top = create_mailto_link(
                     recipient_email=top_candidate['Email'],
                     candidate_name=top_candidate['Candidate Name'],
-                    job_title=jd_name_for_results if jd_name_for_results != "Uploaded JD (No file selected)" else "Job Opportunity"
+                    job_title=top_candidate['JD Used'] if top_candidate['JD Used'] != "Uploaded JD (No file selected)" else "Job Opportunity"
                 )
                 st.markdown(f'<a href="{mailto_link_top}" target="_blank"><button style="background-color:#00cec9;color:white;border:none;padding:10px 20px;text-align:center;text-decoration:none;display:inline-block;font-size:16px;margin:4px 2px;cursor:pointer;border-radius:8px;">📧 Invite Top Candidate for Interview</button></a>', unsafe_allow_html=True)
             else:
@@ -1437,75 +1215,37 @@ def resume_screener_page():
         else:
             st.info("No candidates processed yet to determine the top candidate.")
 
-
-        # === AI Recommendation for Shortlisted Candidates (Streamlined) ===
-        # This section now focuses on a quick summary for *all* shortlisted,
-        # with the top one highlighted above.
         st.markdown("## 🌟 AI Shortlisted Candidates Overview")
         st.caption("Candidates automatically shortlisted based on your score, experience, and CGPA criteria.")
 
-        # Updated filtering for AI shortlisted candidates to include CGPA and max experience
         if not st.session_state['full_results_df'].empty:
             ai_shortlisted_candidates = st.session_state['full_results_df'][
                 (st.session_state['full_results_df']['Score (%)'] >= cutoff) & 
                 (st.session_state['full_results_df']['Years Experience'] >= min_experience) &
-                (st.session_state['full_results_df']['Years Experience'] <= max_experience) & # New: Max experience filter
-                ((st.session_state['full_results_df']['CGPA (4.0 Scale)'].isnull()) | (st.session_state['full_results_df']['CGPA (4.0 Scale)'] >= min_cgpa)) # Handle cases where CGPA is not found
+                (st.session_state['full_results_df']['Years Experience'] <= max_experience) &
+                ((st.session_state['full_results_df']['CGPA (4.0 Scale)'].isnull()) | (st.session_state['full_results_df']['CGPA (4.0 Scale)'] >= min_cgpa))
             ]
 
             if not ai_shortlisted_candidates.empty:
                 st.success(f"**{len(ai_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, CGPA ≥ {min_cgpa} or N/A).")
                 
-                # Display a concise table for AI shortlisted candidates
                 display_shortlisted_summary_cols = [
-                    'Candidate Name',
-                    'Score (%)',
-                    'Years Experience',
-                    'CGPA (4.0 Scale)', # Added CGPA
-                    'Semantic Similarity',
-                    'Email', # Include email here for quick reference
-                    'AI Suggestion' # This is the concise AI suggestion
+                    'Candidate Name', 'Score (%)', 'Years Experience', 'CGPA (4.0 Scale)',
+                    'Semantic Similarity', 'Email', 'AI Suggestion'
                 ]
                 
                 st.dataframe(
                     ai_shortlisted_candidates[display_shortlisted_summary_cols],
-                    use_container_width=True,
-                    hide_index=True,
+                    use_container_width=True, hide_index=True,
                     column_config={
-                        "Score (%)": st.column_config.ProgressColumn(
-                            "Score (%)",
-                            help="Matching score against job requirements",
-                            format="%f",
-                            min_value=0,
-                            max_value=100,
-                        ),
-                        "Years Experience": st.column_config.NumberColumn(
-                            "Years Experience",
-                            help="Total years of professional experience",
-                            format="%.1f years",
-                        ),
-                        "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                            "CGPA (4.0 Scale)",
-                            help="Candidate's CGPA normalized to a 4.0 scale",
-                            format="%.2f",
-                            min_value=0.0,
-                            max_value=4.0
-                        ),
-                        "Semantic Similarity": st.column_config.NumberColumn(
-                            "Semantic Similarity",
-                            help="Conceptual similarity between JD and Resume (higher is better)",
-                            format="%.2f",
-                            min_value=0,
-                            max_value=1
-                        ),
-                        "AI Suggestion": st.column_config.Column(
-                            "AI Suggestion",
-                            help="AI's concise overall assessment and recommendation"
-                        )
+                        "Score (%)": st.column_config.ProgressColumn("Score (%)", format="%f", min_value=0, max_value=100),
+                        "Years Experience": st.column_config.NumberColumn("Years Experience", format="%.1f years"),
+                        "CGPA (4.0 Scale)": st.column_config.NumberColumn("CGPA (4.0 Scale)", format="%.2f", min_value=0.0, max_value=4.0),
+                        "Semantic Similarity": st.column_config.NumberColumn("Semantic Similarity", format="%.2f", min_value=0, max_value=1),
+                        "AI Suggestion": st.column_config.Column("AI Suggestion")
                     }
                 )
                 st.info("For individual detailed AI assessments and action steps, please refer to the table below or the Analytics Dashboard.")
-
             else:
                 st.warning(f"No candidates met the defined screening criteria (score cutoff, experience between {min_experience}-{max_experience} years, and minimum CGPA). You might consider adjusting the sliders or reviewing the uploaded resumes/JD.")
         else:
@@ -1513,9 +1253,7 @@ def resume_screener_page():
 
         st.markdown("---")
 
-        # Add a 'Tag' column for quick categorization - UPDATED WITH CGPA and Max Exp
-        # This must be applied to st.session_state['full_results_df'] after it's fully constructed/updated
-        if not st.session_state['full_results_df'].empty: # Only apply if DataFrame is not empty
+        if not st.session_state['full_results_df'].empty:
             st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df'].apply(lambda row: 
                 "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.85 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.5) else (
                 "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.7 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.0) else (
@@ -1526,70 +1264,32 @@ def resume_screener_page():
         st.markdown("## 📋 Comprehensive Candidate Results Table")
         st.caption("Full details for all processed resumes. Use filters below and edit 'Shortlisted' and 'Notes' directly.")
         
-        # --- Interactive Filters for Comprehensive Table ---
         st.markdown("### Filter Options")
         filter_col1, filter_col2, filter_col3 = st.columns(3)
         filter_col4, filter_col5, filter_col6 = st.columns(3)
 
         with filter_col1:
-            score_min, score_max = st.slider(
-                "Score Range (%)",
-                0, 100, (0, 100),
-                key="score_filter_slider",
-                help="Filter candidates by their overall score."
-            )
+            score_min, score_max = st.slider("Score Range (%)", 0, 100, (0, 100), key="score_filter_slider")
         with filter_col2:
-            # Ensure max value for slider is appropriate even if df is empty
             max_exp_for_slider = float(st.session_state['full_results_df']['Years Experience'].max()) if not st.session_state['full_results_df'].empty else 15.0
-            exp_min, exp_max = st.slider(
-                "Experience Range (Years)",
-                0.0, max_exp_for_slider,
-                (0.0, max_exp_for_slider), 0.1,
-                key="exp_filter_slider",
-                help="Filter candidates by their years of experience."
-            )
+            exp_min, exp_max = st.slider("Experience Range (Years)", 0.0, max_exp_for_slider, (0.0, max_exp_for_slider), 0.1, key="exp_filter_slider")
         with filter_col3:
-            cgpa_min, cgpa_max = st.slider(
-                "CGPA Range (4.0 Scale)",
-                0.0, 4.0, (0.0, 4.0), 0.1,
-                key="cgpa_filter_slider",
-                help="Filter candidates by their CGPA (normalized to a 4.0 scale)."
-            )
+            cgpa_min, cgpa_max = st.slider("CGPA Range (4.0 Scale)", 0.0, 4.0, (0.0, 4.0), 0.1, key="cgpa_filter_slider")
         
         with filter_col4:
             all_tags = sorted(st.session_state['full_results_df']['Tag'].unique()) if not st.session_state['full_results_df'].empty else []
-            selected_tags = st.multiselect(
-                "Filter by Tag",
-                options=all_tags,
-                default=all_tags,
-                key="tag_filter_multiselect",
-                help="Select one or more tags to filter candidates."
-            )
+            selected_tags = st.multiselect("Filter by Tag", options=all_tags, default=all_tags, key="tag_filter_multiselect")
         
         with filter_col5:
             all_locations = sorted(st.session_state['full_results_df']['Location'].unique()) if not st.session_state['full_results_df'].empty else []
-            selected_locations = st.multiselect(
-                "Filter by Location",
-                options=all_locations,
-                default=all_locations,
-                key="location_filter_multiselect",
-                help="Select one or more locations to filter candidates."
-            )
+            selected_locations = st.multiselect("Filter by Location", options=all_locations, default=all_locations, key="location_filter_multiselect")
         
         with filter_col6:
-            # Shortlist filter for the main table
             shortlist_filter_options = ["Show All", "Show Shortlisted Only", "Show Non-Shortlisted Only"]
-            selected_shortlist_filter = st.selectbox(
-                "Filter by Shortlist Status",
-                options=shortlist_filter_options,
-                key="shortlist_filter_selectbox",
-                help="Filter the table to show only shortlisted, non-shortlisted, or all candidates."
-            )
+            selected_shortlist_filter = st.selectbox("Filter by Shortlist Status", options=shortlist_filter_options, key="shortlist_filter_selectbox")
 
-        # Apply filters to st.session_state['full_results_df']
         filtered_df_for_editor = st.session_state['full_results_df'].copy()
         
-        # Only apply filters if the DataFrame is not empty
         if not filtered_df_for_editor.empty:
             filtered_df_for_editor = filtered_df_for_editor[
                 (filtered_df_for_editor['Score (%)'] >= score_min) & (filtered_df_for_editor['Score (%)'] <= score_max) &
@@ -1597,39 +1297,20 @@ def resume_screener_page():
                 ((filtered_df_for_editor['CGPA (4.0 Scale)'].isnull()) | ((filtered_df_for_editor['CGPA (4.0 Scale)'] >= cgpa_min) & (filtered_df_for_editor['CGPA (4.0 Scale)'] <= cgpa_max)))
             ]
             
-            if selected_tags:
-                filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Tag'].isin(selected_tags)]
-            
-            if selected_locations:
-                # This needs to handle multiple locations in the 'Location' column
-                filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Location'].apply(lambda x: any(loc in x for loc in selected_locations))]
+            if selected_tags: filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Tag'].isin(selected_tags)]
+            if selected_locations: filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Location'].apply(lambda x: any(loc in x for loc in selected_locations))]
+            if selected_shortlist_filter == "Show Shortlisted Only": filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Shortlisted'] == True]
+            elif selected_shortlist_filter == "Show Non-Shortlisted Only": filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Shortlisted'] == False]
 
-            if selected_shortlist_filter == "Show Shortlisted Only":
-                filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Shortlisted'] == True]
-            elif selected_shortlist_filter == "Show Non-Shortlisted Only":
-                filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Shortlisted'] == False]
-
-
-            # Skill filter (from previous version, kept)
-            jd_raw_skills_set, _ = extract_relevant_keywords(jd_text, jd_skills_for_processing) # Use combined skills
+            jd_raw_skills_set, _ = extract_relevant_keywords(jd_text, jd_skills_for_processing)
             all_unique_jd_skills = sorted(list(jd_raw_skills_set))
-            selected_filter_skills = st.multiselect(
-                "Filter by Specific Skills (from JD)",
-                options=all_unique_jd_skills,
-                key="skill_filter_multiselect",
-                help="Only candidates possessing ALL selected skills will be shown."
-            )
+            selected_filter_skills = st.multiselect("Filter by Specific Skills (from JD)", options=all_unique_jd_skills, key="skill_filter_multiselect")
             if selected_filter_skills:
                 for skill in selected_filter_skills:
                     filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Matched Keywords'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
 
-
-        # Reset Filters button
         if st.button("Reset All Filters", key="reset_filters_button"):
-            # Reset all filter-related session state variables
-            # This will trigger a rerun and reset the UI elements to their defaults
             st.session_state['score_filter_slider'] = (0, 100)
-            # Reset experience slider based on current max if data exists, else default
             current_max_exp = float(st.session_state['full_results_df']['Years Experience'].max()) if not st.session_state['full_results_df'].empty else 15.0
             st.session_state['exp_filter_slider'] = (0.0, current_max_exp)
             st.session_state['cgpa_filter_slider'] = (0.0, 4.0)
@@ -1639,291 +1320,104 @@ def resume_screener_page():
             st.session_state['skill_filter_multiselect'] = []
             st.rerun()
 
-
-        # Define columns to display in the comprehensive table (reordered for user-friendliness)
         comprehensive_cols = [
-            'Candidate Name',
-            'Score (%)',
-            'Tag',
-            'AI Suggestion',
-            'Years Experience',
-            'CGPA (4.0 Scale)',
-            'Semantic Similarity',
-            'Email',
-            'Phone Number',
-            'Location',
-            'Languages',
-            'Matched Keywords',
-            'Missing Skills',
-            'Education Details',
-            'Work History',
-            'Project Details',
-            'JD Used'
+            'File Name', # Included for internal use, will be hidden
+            'Candidate Name', 'Score (%)', 'Tag', 'AI Suggestion', 'Years Experience',
+            'CGPA (4.0 Scale)', 'Semantic Similarity', 'Email', 'Phone Number',
+            'Location', 'Languages', 'Matched Keywords', 'Missing Skills',
+            'Education Details', 'Work History', 'Project Details', 'JD Used'
         ]
         
-        # Ensure 'File Name' is included for internal indexing but can be hidden
         final_display_cols_for_editor = [col for col in comprehensive_cols if col in filtered_df_for_editor.columns]
-        if 'File Name' not in final_display_cols_for_editor:
-            final_display_cols_for_editor.insert(0, 'File Name') # Add it at the beginning for consistency
 
-        # Use st.data_editor for the main table to allow inline editing of 'Shortlisted' and 'Notes'
-        # Ensure that filtered_df_for_editor is not empty before attempting to display it
         if not filtered_df_for_editor.empty:
             edited_df = st.data_editor(
-                filtered_df_for_editor[final_display_cols_for_editor + ['Shortlisted', 'Notes']], # Add editable columns
-                use_container_width=True,
-                hide_index=True,
+                filtered_df_for_editor[final_display_cols_for_editor + ['Shortlisted', 'Notes']],
+                use_container_width=True, hide_index=True,
                 column_config={
-                    "File Name": st.column_config.Column( # Hidden column for internal use
-                        "File Name",
-                        help="Internal identifier for the resume file",
-                        disabled=True, # Make it non-editable
-                        width="hidden" # Hide the column from display
-                    ),
-                    "Score (%)": st.column_config.ProgressColumn(
-                        "Score (%)",
-                        help="Matching score against job requirements",
-                        format="%f",
-                        min_value=0,
-                        max_value=100,
-                    ),
-                    "Years Experience": st.column_config.NumberColumn(
-                        "Years Experience",
-                        help="Total years of professional experience",
-                        format="%.1f years",
-                    ),
-                    "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                        "CGPA (4.0 Scale)",
-                        help="Candidate's CGPA normalized to a 4.0 scale",
-                        format="%.2f", 
-                        min_value=0.0,
-                        max_value=4.0
-                    ),
-                    "Semantic Similarity": st.column_config.NumberColumn(
-                        "Semantic Similarity",
-                        help="Conceptual similarity between JD and Resume (higher is better)",
-                        format="%.2f", 
-                        min_value=0,
-                        max_value=1
-                    ),
-                    "AI Suggestion": st.column_config.Column(
-                        "AI Suggestion",
-                        help="AI's concise overall assessment and recommendation",
-                        width="medium"
-                    ),
-                    "Tag": st.column_config.Column(
-                        "Tag",
-                        help="Quick categorization of candidate fit",
-                        width="small"
-                    ),
-                    "Matched Keywords": st.column_config.Column(
-                        "Matched Keywords",
-                        help="Keywords found in both JD and Resume",
-                        width="large"
-                    ),
-                    "Missing Skills": st.column_config.Column(
-                        "Missing Skills",
-                        help="Key skills from JD not found in Resume",
-                        width="large"
-                    ),
-                    "JD Used": st.column_config.Column(
-                        "JD Used",
-                        help="Job Description used for this screening"
-                    ),
-                    "Phone Number": st.column_config.Column(
-                        "Phone Number",
-                        help="Candidate's phone number extracted from resume"
-                    ),
-                    "Location": st.column_config.Column(
-                        "Location",
-                        help="Candidate's location extracted from resume"
-                    ),
-                    "Languages": st.column_config.Column(
-                        "Languages",
-                        help="Languages spoken by the candidate"
-                    ),
-                    "Education Details": st.column_config.Column(
-                        "Education Details",
-                        help="Structured education history (University, Degree, Major, Year)",
-                        width="large"
-                    ),
-                    "Work History": st.column_config.Column(
-                        "Work History",
-                        help="Structured work experience (Company, Title, Dates)",
-                        width="large"
-                    ),
-                    "Project Details": st.column_config.Column(
-                        "Project Details",
-                        help="Structured project experience (Title, Description, Technologies)",
-                        width="large"
-                    ),
-                    "Shortlisted": st.column_config.CheckboxColumn( # Editable checkbox
-                        "Shortlist",
-                        help="Manually mark candidates for shortlisting",
-                        default=False,
-                    ),
-                    "Notes": st.column_config.TextColumn( # Editable text area
-                        "Notes",
-                        help="Add personal notes for this candidate",
-                        default="",
-                        max_chars=200,
-                    )
+                    "File Name": st.column_config.Column("File Name", disabled=True, width="hidden"),
+                    "Score (%)": st.column_config.ProgressColumn("Score (%)", format="%f", min_value=0, max_value=100),
+                    "Years Experience": st.column_config.NumberColumn("Years Experience", format="%.1f years"),
+                    "CGPA (4.0 Scale)": st.column_config.NumberColumn("CGPA (4.0 Scale)", format="%.2f", min_value=0.0, max_value=4.0),
+                    "Semantic Similarity": st.column_config.NumberColumn("Semantic Similarity", format="%.2f", min_value=0, max_value=1),
+                    "AI Suggestion": st.column_config.Column("AI Suggestion", width="medium"),
+                    "Tag": st.column_config.Column("Tag", width="small"),
+                    "Matched Keywords": st.column_config.Column("Matched Keywords", width="large"),
+                    "Missing Skills": st.column_config.Column("Missing Skills", width="large"),
+                    "JD Used": st.column_config.Column("JD Used"),
+                    "Phone Number": st.column_config.Column("Phone Number"),
+                    "Location": st.column_config.Column("Location"),
+                    "Languages": st.column_config.Column("Languages"),
+                    "Education Details": st.column_config.Column("Education Details", width="large"),
+                    "Work History": st.column_config.Column("Work History", width="large"),
+                    "Project Details": st.column_config.Column("Project Details", width="large"),
+                    "Shortlisted": st.column_config.CheckboxColumn("Shortlist", default=False),
+                    "Notes": st.column_config.TextColumn("Notes", default="", max_chars=200)
                 },
-                key="comprehensive_table_editor" # Unique key for the data editor
+                key="comprehensive_table_editor"
             )
 
-            # Update the session state DataFrame with the edited data from st.data_editor
-            # This is crucial to persist changes made in the data editor
             if not edited_df.empty:
-                # Now 'File Name' will always be present in edited_df
                 edited_subset = edited_df[['File Name', 'Shortlisted', 'Notes']].set_index('File Name')
-                
                 current_full_df = st.session_state['full_results_df'].set_index('File Name')
-                current_full_df.update(edited_subset) # Update existing rows
+                current_full_df.update(edited_subset)
                 st.session_state['full_results_df'] = current_full_df.reset_index()
         else:
             st.info("No candidates match the current filter criteria. Adjust your filters or upload resumes.")
 
-
-        # --- CSV Download Button for Filtered Results ---
-        if not filtered_df_for_editor.empty: # Only show download if there's data to download
+        if not filtered_df_for_editor.empty:
             csv_data = filtered_df_for_editor.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="⬇️ Download Filtered Results as CSV",
-                data=csv_data,
-                file_name="resume_screening_filtered_results.csv",
-                mime="text/csv",
-                help="Download the currently displayed table data as a CSV file."
+                label="⬇️ Download Filtered Results as CSV", data=csv_data,
+                file_name="resume_screening_filtered_results.csv", mime="text/csv"
             )
         else:
             st.info("No filtered results to download.")
 
-        # --- Shortlisted Candidates Display ---
         st.markdown("---")
         st.markdown("## ⭐ My Manually Shortlisted Candidates")
         st.caption("Candidates you have marked as 'Shortlisted' in the table above.")
 
-        # Filter from the updated session state DataFrame for manually shortlisted candidates
         manually_shortlisted_df = st.session_state['full_results_df'][st.session_state['full_results_df']['Shortlisted'] == True]
 
         if not manually_shortlisted_df.empty:
-            # Re-create final_display_cols for the shortlisted table, ensuring 'File Name' is hidden if present
-            # but not explicitly listed in comprehensive_cols for display.
-            # This ensures consistency with the main table's visible columns.
-            final_display_cols_for_shortlisted = [col for col in comprehensive_cols if col in manually_shortlisted_df.columns]
-
+            final_display_cols_for_shortlisted = [col for col in comprehensive_cols if col in manually_shortlisted_df.columns and col != 'File Name'] # Exclude File Name for display
             st.dataframe(
-                manually_shortlisted_df[final_display_cols_for_shortlisted + ['Notes']], # Display same columns as main table + Notes
-                use_container_width=True,
-                hide_index=True,
+                manually_shortlisted_df[final_display_cols_for_shortlisted + ['Notes']],
+                use_container_width=True, hide_index=True,
                 column_config={
-                    "Score (%)": st.column_config.ProgressColumn(
-                        "Score (%)",
-                        help="Matching score against job requirements",
-                        format="%f",
-                        min_value=0,
-                        max_value=100,
-                    ),
-                    "Years Experience": st.column_config.NumberColumn(
-                        "Years Experience",
-                        help="Total years of professional experience",
-                        format="%.1f years",
-                    ),
-                    "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                        "CGPA (4.0 Scale)",
-                        help="Candidate's CGPA normalized to a 4.0 scale",
-                        format="%.2f", 
-                        min_value=0.0,
-                        max_value=4.0
-                    ),
-                    "Semantic Similarity": st.column_config.NumberColumn(
-                        "Semantic Similarity",
-                        help="Conceptual similarity between JD and Resume (higher is better)",
-                        format="%.2f", 
-                        min_value=0,
-                        max_value=1
-                    ),
-                    "AI Suggestion": st.column_config.Column(
-                        "AI Suggestion",
-                        help="AI's concise overall assessment and recommendation",
-                        width="medium"
-                    ),
-                    "Tag": st.column_config.Column(
-                        "Tag",
-                        help="Quick categorization of candidate fit",
-                        width="small"
-                    ),
-                    "Matched Keywords": st.column_config.Column(
-                        "Matched Keywords",
-                        help="Keywords found in both JD and Resume",
-                        width="large"
-                    ),
-                    "Missing Skills": st.column_config.Column(
-                        "Missing Skills",
-                        help="Key skills from JD not found in Resume",
-                        width="large"
-                    ),
-                    "JD Used": st.column_config.Column(
-                        "JD Used",
-                        help="Job Description used for this screening"
-                    ),
-                    "Phone Number": st.column_config.Column(
-                        "Phone Number",
-                        help="Candidate's phone number extracted from resume"
-                    ),
-                    "Location": st.column_config.Column(
-                        "Location",
-                        help="Candidate's location extracted from resume"
-                    ),
-                    "Languages": st.column_config.Column(
-                        "Languages",
-                        help="Languages spoken by the candidate"
-                    ),
-                    "Education Details": st.column_config.Column(
-                        "Education Details",
-                        help="Structured education history (University, Degree, Major, Year)",
-                        width="large"
-                    ),
-                    "Work History": st.column_config.Column(
-                        "Work History",
-                        help="Structured work experience (Company, Title, Dates)",
-                        width="large"
-                    ),
-                    "Project Details": st.column_config.Column(
-                        "Project Details",
-                        help="Structured project experience (Title, Description, Technologies)",
-                        width="large"
-                    ),
-                    "Notes": st.column_config.TextColumn( # Display notes in shortlisted table
-                        "Notes",
-                        help="Personal notes for this candidate",
-                        width="medium"
-                    )
+                    "Score (%)": st.column_config.ProgressColumn("Score (%)", format="%f", min_value=0, max_value=100),
+                    "Years Experience": st.column_config.NumberColumn("Years Experience", format="%.1f years"),
+                    "CGPA (4.0 Scale)": st.column_config.NumberColumn("CGPA (4.0 Scale)", format="%.2f", min_value=0.0, max_value=4.0),
+                    "Semantic Similarity": st.column_config.NumberColumn("Semantic Similarity", format="%.2f", min_value=0, max_value=1),
+                    "AI Suggestion": st.column_config.Column("AI Suggestion", width="medium"),
+                    "Tag": st.column_config.Column("Tag", width="small"),
+                    "Matched Keywords": st.column_config.Column("Matched Keywords", width="large"),
+                    "Missing Skills": st.column_config.Column("Missing Skills", width="large"),
+                    "JD Used": st.column_config.Column("JD Used"),
+                    "Phone Number": st.column_config.Column("Phone Number"),
+                    "Location": st.column_config.Column("Location"),
+                    "Languages": st.column_config.Column("Languages"),
+                    "Education Details": st.column_config.Column("Education Details", width="large"),
+                    "Work History": st.column_config.Column("Work History", width="large"),
+                    "Project Details": st.column_config.Column("Project Details", width="large"),
+                    "Notes": st.column_config.TextColumn("Notes", width="medium")
                 }
             )
             csv_shortlist_data = manually_shortlisted_df.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="⬇️ Download Manually Shortlisted Candidates as CSV",
-                data=csv_shortlist_data,
-                file_name="manually_shortlisted_candidates.csv",
-                mime="text/csv",
-                help="Download your manually shortlisted candidates as a CSV file."
+                label="⬇️ Download Manually Shortlisted Candidates as CSV", data=csv_shortlist_data,
+                file_name="manually_shortlisted_candidates.csv", mime="text/csv"
             )
         else:
             st.info("No candidates have been manually shortlisted yet. Use the 'Shortlist' checkbox in the 'Comprehensive Candidate Results Table' above to add them.")
 
-        # --- Resume Viewer Section (New) ---
         st.markdown("---")
         st.markdown("## 🔍 Resume Viewer & Detailed Assessment")
         st.caption("Select a candidate to view their raw resume text and full AI assessment.")
         
-        # Get candidate names from the full results DataFrame (not filtered)
         candidate_names_for_viewer = ["Select a Candidate"] + sorted(st.session_state['full_results_df']['Candidate Name'].tolist())
-        selected_candidate_name_for_viewer = st.selectbox(
-            "Choose a candidate to view details:",
-            options=candidate_names_for_viewer,
-            key="resume_viewer_select"
-        )
+        selected_candidate_name_for_viewer = st.selectbox("Choose a candidate to view details:", options=candidate_names_for_viewer, key="resume_viewer_select")
 
         if selected_candidate_name_for_viewer != "Select a Candidate":
             selected_candidate_row = st.session_state['full_results_df'][st.session_state['full_results_df']['Candidate Name'] == selected_candidate_name_for_viewer].iloc[0]
@@ -1934,7 +1428,6 @@ def resume_screener_page():
             st.markdown(f"### Detailed AI Assessment for {selected_candidate_name_for_viewer}")
             st.markdown(selected_candidate_row['Detailed HR Assessment'])
 
-            # Display Categorized Matched Skills for the selected candidate
             st.markdown("#### Matched Skills Breakdown:")
             if selected_candidate_row['Matched Keywords (Categorized)']:
                 for category, skills in selected_candidate_row['Matched Keywords (Categorized)'].items():
@@ -1942,10 +1435,8 @@ def resume_screener_page():
             else:
                 st.write("No categorized matched skills found.")
 
-            # Display Categorized Missing Skills for the selected candidate
             st.markdown("#### Missing Skills Breakdown (from JD):")
-            # This logic is already in the main loop, can reuse the stored values
-            if selected_candidate_row['Missing Skills'].strip(): # Check if string is not empty
+            if selected_candidate_row['Missing Skills'].strip():
                 missing_skills_list = [s.strip() for s in selected_candidate_row['Missing Skills'].split(',') if s.strip()]
                 if missing_skills_list:
                     missing_categorized_for_viewer = collections.defaultdict(list)
@@ -1966,7 +1457,6 @@ def resume_screener_page():
             else:
                 st.write("No missing skills found for this candidate relative to the JD.")
 
-            # Action button for the selected candidate
             if selected_candidate_row['Email'] != "Not Found":
                 mailto_link_selected = create_mailto_link(
                     recipient_email=selected_candidate_row['Email'],
@@ -1981,18 +1471,13 @@ def resume_screener_page():
     else:
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
 
-    # Clear All Processed Data button
-    # This button is placed outside the 'if jd_text and resume_files:' block
-    # so it's always visible and can reset the state even if no files are loaded.
     st.markdown("---")
     if st.button("🗑️ Clear All Processed Data", help="Removes all loaded resumes and screening results from the current session."):
-        # Re-initialize st.session_state['full_results_df'] with empty but correctly typed columns
         st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols)
         st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
         st.session_state['full_results_df']['Notes'] = st.session_state['full_results_df']['Notes'].astype(str)
         st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df']['Tag'].astype(str)
         
-        # Also clear any filter-related session state variables to ensure a clean slate
         for key in ['score_filter_slider', 'exp_filter_slider', 'cgpa_filter_slider',
                     'tag_filter_multiselect', 'location_filter_multiselect',
                     'shortlist_filter_selectbox', 'skill_filter_multiselect',
@@ -2001,5 +1486,312 @@ def resume_screener_page():
                     'resume_viewer_select']:
             if key in st.session_state:
                 del st.session_state[key]
+        st.rerun()
 
-        st.rerun() # Rerun to clear the display and apply the reset state
+# --- Manage JDs Page (Placeholder from manage_jds.py) ---
+def manage_jds_page():
+    st.markdown('<div class="dashboard-header">📁 Manage Job Descriptions</div>', unsafe_allow_html=True)
+    st.write("Here you can add, view, or delete your job description templates.")
+
+    # Ensure 'data' directory exists
+    if not os.path.exists("data"):
+        os.makedirs("data")
+
+    st.subheader("➕ Add New Job Description")
+    with st.form("add_jd_form"):
+        jd_name = st.text_input("Job Description Name (e.g., 'Software Engineer')", key="new_jd_name").strip()
+        jd_content = st.text_area("Job Description Content", height=300, key="new_jd_content").strip()
+        add_jd_button = st.form_submit_button("Add JD")
+
+        if add_jd_button:
+            if not jd_name or not jd_content:
+                st.error("JD Name and Content cannot be empty.")
+            else:
+                file_path = os.path.join("data", f"{jd_name.replace(' ', '_').lower()}.txt")
+                try:
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(jd_content)
+                    st.success(f"Job Description '{jd_name}' added successfully!")
+                    log_activity(f"User '{st.session_state.username}' added new JD: '{jd_name}'.")
+                    st.rerun() # Rerun to update the selectbox
+                except Exception as e:
+                    st.error(f"Error saving JD: {e}")
+
+    st.markdown("---")
+    st.subheader("📋 Existing Job Descriptions")
+    jd_files = [f for f in os.listdir("data") if f.endswith(".txt")]
+    
+    if jd_files:
+        jd_options = [f.replace(".txt", "").replace("_", " ").title() for f in jd_files]
+        selected_jd_to_view = st.selectbox("Select JD to View/Delete:", ["Select a JD"] + jd_options, key="view_delete_jd_select")
+
+        if selected_jd_to_view != "Select a JD":
+            original_file_name = selected_jd_to_view.replace(' ', '_').lower() + ".txt"
+            file_path = os.path.join("data", original_file_name)
+            
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                st.text_area(f"Content of '{selected_jd_to_view}'", content, height=200, disabled=True)
+
+                if st.button(f"🗑️ Delete '{selected_jd_to_view}'", key="delete_jd_button"):
+                    try:
+                        os.remove(file_path)
+                        st.success(f"Job Description '{selected_jd_to_view}' deleted successfully!")
+                        log_activity(f"User '{st.session_state.username}' deleted JD: '{selected_jd_to_view}'.")
+                        st.rerun() # Rerun to update the list
+                    except Exception as e:
+                        st.error(f"Error deleting JD: {e}")
+            else:
+                st.error(f"File not found for '{selected_jd_to_view}'. It might have been moved or deleted externally.")
+    else:
+        st.info("No job descriptions found. Add one using the form above.")
+
+# --- Analytics Dashboard Page (from analytics.py) ---
+def analytics_dashboard_page():
+    st.markdown('<div class="dashboard-header">📊 Screening Analytics</div>', unsafe_allow_html=True)
+
+    if 'full_results_df' not in st.session_state or st.session_state['full_results_df'].empty:
+        st.info("No screening results available for analytics. Please run the Resume Screener first.")
+        return
+
+    df = st.session_state['full_results_df'].copy()
+
+    st.subheader("Overall Screening Performance")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Resumes Processed", df.shape[0])
+    col2.metric("Average Score", f"{df['Score (%)'].mean():.2f}%")
+    col3.metric("Average Experience", f"{df['Years Experience'].mean():.1f} years")
+
+    st.markdown("---")
+
+    st.subheader("Candidate Score Distribution")
+    fig = px.histogram(df, x="Score (%)", nbins=20, title="Distribution of Candidate Scores",
+                       color_discrete_sequence=px.colors.sequential.Teal if not dark_mode else px.colors.sequential.Plasma)
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+
+    st.subheader("Experience vs. Score")
+    fig = px.scatter(df, x="Years Experience", y="Score (%)", color="Tag",
+                     title="Experience vs. Score with Candidate Tag", hover_name="Candidate Name",
+                     color_discrete_map={
+                         "👑 Exceptional Match": "#00cec9",
+                         "🔥 Strong Candidate": "#20B2AA",
+                         "✨ Promising Fit": "#FFD700",
+                         "⚠️ Needs Review": "#FFA500",
+                         "❌ Limited Match": "#FF4500"
+                     })
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+
+    st.subheader("Skill Overlap Analysis")
+    if 'Matched Keywords' in df.columns and not df['Matched Keywords'].empty:
+        all_matched_skills = []
+        for skills_str in df['Matched Keywords'].dropna():
+            all_matched_skills.extend([s.strip() for s in skills_str.split(',') if s.strip()])
+        
+        if all_matched_skills:
+            skill_counts = pd.Series(all_matched_skills).value_counts().head(15)
+            fig_skills = px.bar(skill_counts, x=skill_counts.values, y=skill_counts.index, orientation='h',
+                                title="Top 15 Matched Skills Across All Resumes",
+                                labels={'x': 'Frequency', 'y': 'Skill'},
+                                color_discrete_sequence=px.colors.sequential.Aggrnyl if not dark_mode else px.colors.sequential.Plasma_r)
+            fig_skills.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_skills, use_container_width=True)
+        else:
+            st.info("No matched skills data available for analysis.")
+    else:
+        st.info("No 'Matched Keywords' column found or it's empty for skill analysis.")
+
+    st.markdown("---")
+
+    st.subheader("Missing Skills Analysis (Overall)")
+    if 'Missing Skills' in df.columns and not df['Missing Skills'].empty:
+        all_missing_skills = []
+        for skills_str in df['Missing Skills'].dropna():
+            all_missing_skills.extend([s.strip() for s in skills_str.split(',') if s.strip()])
+        
+        if all_missing_skills:
+            missing_skill_counts = pd.Series(all_missing_skills).value_counts().head(15)
+            fig_missing_skills = px.bar(missing_skill_counts, x=missing_skill_counts.values, y=missing_skill_counts.index, orientation='h',
+                                        title="Top 15 Missing Skills Across All Resumes (from JD)",
+                                        labels={'x': 'Frequency', 'y': 'Skill'},
+                                        color_discrete_sequence=px.colors.sequential.Reds if not dark_mode else px.colors.sequential.Inferno)
+            fig_missing_skills.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_missing_skills, use_container_width=True)
+        else:
+            st.info("No missing skills data available for analysis.")
+    else:
+        st.info("No 'Missing Skills' column found or it's empty for analysis.")
+
+    st.markdown("---")
+
+    st.subheader("Shortlisted Candidates Breakdown")
+    if 'Shortlisted' in df.columns:
+        shortlist_counts = df['Shortlisted'].value_counts().reset_index()
+        shortlist_counts.columns = ['Shortlisted', 'Count']
+        shortlist_counts['Shortlisted'] = shortlist_counts['Shortlisted'].map({True: 'Yes', False: 'No'})
+        
+        fig_shortlist_pie = px.pie(shortlist_counts, values='Count', names='Shortlisted',
+                                   title='Manually Shortlisted Candidates',
+                                   color_discrete_sequence=['#00cec9', '#FF6347'] if not dark_mode else ['#20B2AA', '#E9967A'])
+        st.plotly_chart(fig_shortlist_pie, use_container_width=True)
+    else:
+        st.info("No 'Shortlisted' column found in results for analysis.")
+
+# --- Email Candidates Page (Placeholder from email_sender.py) ---
+def email_candidates_page():
+    st.markdown('<div class="dashboard-header">📤 Email Candidates</div>', unsafe_allow_html=True)
+    st.write("Generate pre-filled email templates for shortlisted candidates.")
+
+    if 'full_results_df' not in st.session_state or st.session_state['full_results_df'].empty:
+        st.info("No candidates available for emailing. Please run the Resume Screener first.")
+        return
+
+    shortlisted_candidates = st.session_state['full_results_df'][st.session_state['full_results_df']['Shortlisted'] == True]
+
+    if shortlisted_candidates.empty:
+        st.info("No candidates have been manually shortlisted. Please go to 'Resume Screener' and mark candidates as 'Shortlisted'.")
+        return
+
+    st.subheader("Select Candidates to Email")
+    
+    selected_candidate_names = st.multiselect(
+        "Choose candidates:",
+        options=shortlisted_candidates['Candidate Name'].tolist(),
+        key="email_candidate_select"
+    )
+
+    if selected_candidate_names:
+        selected_candidates_df = shortlisted_candidates[
+            shortlisted_candidates['Candidate Name'].isin(selected_candidate_names)
+        ]
+
+        st.subheader("Email Template Options")
+        email_subject_template = st.text_input(
+            "Email Subject Template:",
+            value="Invitation for Interview - {JobTitle} - {CandidateName}",
+            help="Use {CandidateName} and {JobTitle} as placeholders."
+        )
+        email_body_template = st.text_area(
+            "Email Body Template:",
+            value="""Dear {CandidateName},
+
+We were very impressed with your profile and would like to invite you for an interview for the {JobTitle} position.
+
+Please reply to this email to schedule a suitable time.
+
+Best regards,
+
+The {SenderName}""",
+            height=250,
+            help="Use {CandidateName}, {JobTitle}, and {SenderName} as placeholders."
+        )
+        sender_name = st.text_input("Your Name/Company Name (for {SenderName}):", value="Recruiting Team")
+
+        st.markdown("---")
+        st.subheader("Generated Email Links")
+
+        for index, row in selected_candidates_df.iterrows():
+            candidate_name = row['Candidate Name']
+            candidate_email = row['Email']
+            job_title_used = row['JD Used'] if row['JD Used'] != "Uploaded JD (No file selected)" else "Job Opportunity"
+
+            if candidate_email == "Not Found":
+                st.warning(f"Email address not found for {candidate_name}. Cannot generate link.")
+                continue
+
+            # Fill placeholders in subject and body
+            subject = email_subject_template.format(CandidateName=candidate_name, JobTitle=job_title_used)
+            body = email_body_template.format(CandidateName=candidate_name, JobTitle=job_title_used, SenderName=sender_name)
+
+            mailto_link = create_mailto_link(candidate_email, candidate_name, job_title_used, sender_name)
+
+            st.markdown(f"**{candidate_name}** ({candidate_email})")
+            st.markdown(f'<a href="{mailto_link}" target="_blank"><button style="background-color:#00cec9;color:white;border:none;padding:8px 15px;text-align:center;text-decoration:none;display:inline-block;font-size:14px;margin:4px 2px;cursor:pointer;border-radius:8px;">📧 Open Email for {candidate_name}</button></a>', unsafe_allow_html=True)
+            st.code(f"Subject: {subject}\n\nBody:\n{body}", language="text")
+            st.markdown("---")
+        
+        if st.button("Log Email Action", key="log_email_action_button"):
+            log_activity(f"Generated email links for {len(selected_candidate_names)} candidates.")
+            st.success("Email action logged!")
+
+# --- Search Resumes Page (Placeholder from search.py) ---
+def search_resumes_page():
+    st.markdown('<div class="dashboard-header">🔍 Search Resumes</div>', unsafe_allow_html=True)
+    st.write("Search through all processed resumes using keywords.")
+
+    if 'full_results_df' not in st.session_state or st.session_state['full_results_df'].empty:
+        st.info("No resumes available to search. Please run the Resume Screener first.")
+        return
+
+    df = st.session_state['full_results_df'].copy()
+
+    search_query = st.text_input("Enter keywords to search (e.g., 'Python developer AWS')", key="search_query_input")
+    
+    if search_query:
+        search_results = pd.DataFrame(columns=df.columns)
+        query_lower = search_query.lower()
+
+        for index, row in df.iterrows():
+            # Search in Candidate Name, Matched Keywords, Missing Skills, and Resume Raw Text
+            search_text = f"{row['Candidate Name']} {row['Matched Keywords']} {row['Missing Skills']} {row['Resume Raw Text']}".lower()
+            if query_lower in search_text:
+                search_results = pd.concat([search_results, pd.DataFrame([row])], ignore_index=True)
+        
+        if not search_results.empty:
+            st.subheader(f"Search Results for '{search_query}'")
+            st.dataframe(search_results[[
+                'Candidate Name', 'Score (%)', 'Years Experience', 'Matched Keywords', 'Missing Skills', 'AI Suggestion'
+            ]], use_container_width=True, hide_index=True)
+            log_activity(f"User '{st.session_state.username}' searched for '{search_query}'. Found {len(search_results)} results.")
+        else:
+            st.info(f"No resumes found matching '{search_query}'.")
+    else:
+        st.info("Enter keywords in the search bar to find relevant resumes.")
+
+# --- Candidate Notes Page (Placeholder from notes.py) ---
+def candidate_notes_page():
+    st.markdown('<div class="dashboard-header">📝 Candidate Notes</div>', unsafe_allow_html=True)
+    st.write("Add and manage personal notes for each candidate.")
+
+    if 'full_results_df' not in st.session_state or st.session_state['full_results_df'].empty:
+        st.info("No candidates available to add notes. Please run the Resume Screener first.")
+        return
+
+    df = st.session_state['full_results_df'].copy()
+
+    candidate_names = ["Select a Candidate"] + sorted(df['Candidate Name'].tolist())
+    selected_candidate_for_notes = st.selectbox(
+        "Select a candidate to add/edit notes:",
+        options=candidate_names,
+        key="select_candidate_for_notes"
+    )
+
+    if selected_candidate_for_notes != "Select a Candidate":
+        # Find the current notes for the selected candidate
+        current_notes_row = df[df['Candidate Name'] == selected_candidate_for_notes].iloc[0]
+        current_notes = current_notes_row['Notes']
+        file_name_of_candidate = current_notes_row['File Name']
+
+        st.subheader(f"Notes for {selected_candidate_for_notes}")
+        new_notes = st.text_area("Edit Notes:", value=current_notes, height=200, key="notes_text_area")
+
+        if st.button("Save Notes", key="save_notes_button"):
+            # Update the notes in the session state DataFrame
+            st.session_state['full_results_df'].loc[
+                st.session_state['full_results_df']['File Name'] == file_name_of_candidate, 'Notes'
+            ] = new_notes
+            st.success(f"Notes for {selected_candidate_for_notes} saved successfully!")
+            log_activity(f"User '{st.session_state.username}' updated notes for '{selected_candidate_for_notes}'.")
+            st.rerun() # Rerun to reflect changes if needed
+        
+        st.markdown("---")
+        st.subheader("All Notes Overview")
+        # Display a table of all candidates with their notes
+        notes_df = df[['Candidate Name', 'Notes', 'Shortlisted', 'Tag']].copy()
+        st.dataframe(notes_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("Select a candidate from the dropdown to manage their notes.")
