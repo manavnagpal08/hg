@@ -1284,8 +1284,18 @@ def resume_screener_page():
 
         # Initialize or update the full_results_df in session state
         if 'full_results_df' not in st.session_state:
-            st.session_state['full_results_df'] = df
-        else:
+            # Define an empty DataFrame with all expected columns
+            empty_df_cols = [
+                "File Name", "Candidate Name", "Score (%)", "Years Experience", "CGPA (4.0 Scale)",
+                "Email", "Phone Number", "Location", "Languages", "Education Details",
+                "Work History", "Project Details", "AI Suggestion", "Detailed HR Assessment",
+                "Matched Keywords", "Missing Skills", "Matched Keywords (Categorized)",
+                "Missing Skills (Categorized)", "Semantic Similarity", "Resume Raw Text",
+                "JD Used", "Shortlisted", "Notes"
+            ]
+            st.session_state['full_results_df'] = pd.DataFrame(columns=empty_df_cols)
+
+        if not df.empty: # Only proceed with merging if new results are available
             # Merge new results with existing state, preserving user edits for 'Shortlisted' and 'Notes'
             existing_df = st.session_state['full_results_df'].set_index('File Name')
             new_df_indexed = df.set_index('File Name')
@@ -1295,15 +1305,20 @@ def resume_screener_page():
             # and fill other columns/new rows from new_df_indexed.
             combined_df = new_df_indexed.combine_first(existing_df)
             st.session_state['full_results_df'] = combined_df.reset_index()
+        # Else, if df is empty, full_results_df remains as is (either empty or previous state)
+        
+        # Save results to CSV for analytics.py to use (using the full_results_df from session state)
+        st.session_state['full_results_df'].to_csv("results.csv", index=False)
+
 
         # --- Overall Candidate Comparison Chart ---
         st.markdown("## 📊 Candidate Score Comparison")
         st.caption("Visual overview of how each candidate ranks against the job requirements.")
-        if not df.empty:
+        if not st.session_state['full_results_df'].empty: # Use full_results_df for chart
             fig, ax = plt.subplots(figsize=(12, 7))
             # Define colors: Green for top, Yellow for moderate, Red for low
-            colors = ['#4CAF50' if s >= cutoff else '#FFC107' if s >= (cutoff * 0.75) else '#F44346' for s in df['Score (%)']]
-            bars = ax.bar(df['Candidate Name'], df['Score (%)'], color=colors)
+            colors = ['#4CAF50' if s >= cutoff else '#FFC107' if s >= (cutoff * 0.75) else '#F44346' for s in st.session_state['full_results_df']['Score (%)']]
+            bars = ax.bar(st.session_state['full_results_df']['Candidate Name'], st.session_state['full_results_df']['Score (%)'], color=colors)
             ax.set_xlabel("Candidate", fontsize=14)
             ax.set_ylabel("Score (%)", fontsize=14)
             ax.set_title("Resume Screening Scores Across Candidates", fontsize=16, fontweight='bold')
@@ -1325,8 +1340,8 @@ def resume_screener_page():
         st.markdown("## 👑 Top Candidate AI Assessment")
         st.caption("A concise, AI-powered assessment for the most suitable candidate.")
         
-        if not df.empty:
-            top_candidate = df.iloc[0] # Get the top candidate (already sorted by score)
+        if not st.session_state['full_results_df'].empty: # Use full_results_df
+            top_candidate = st.session_state['full_results_df'].iloc[0] # Get the top candidate (already sorted by score)
             
             # Safely format CGPA and Semantic Similarity for display
             cgpa_display = f"{top_candidate['CGPA (4.0 Scale)']:.2f}" if top_candidate['CGPA (4.0 Scale)'] is not None else "N/A"
@@ -1705,7 +1720,7 @@ def resume_screener_page():
         # This is crucial to persist changes made in the data editor
         # We need to merge edited_df back into the original full_results_df in session_state
         # to ensure that changes to 'Shortlisted' and 'Notes' persist even if filters change.
-        if not edited_df.empty:
+        if not edited_df.empty: # Add this check
             # Create a temporary DataFrame from the edited_df with only 'File Name', 'Shortlisted', 'Notes'
             # to merge back into the main session state DataFrame.
             edited_subset = edited_df[['File Name', 'Shortlisted', 'Notes']].set_index('File Name')
