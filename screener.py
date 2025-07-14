@@ -1,4 +1,4 @@
-# Version 1.19 - Enhanced Table UI, More Filters, and Shortlist Feature
+# Version 1.20 - Robust Session State Management and Error Handling
 import streamlit as st
 import pdfplumber
 import pandas as pd
@@ -1071,9 +1071,8 @@ The {sender_name}""")
 def resume_screener_page():
     st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
 
-    # Define all expected columns for the DataFrame
-    # This list is used for initializing the session state DataFrame
-    # and for creating new DataFrames from processed results.
+    # Define all expected columns for the DataFrame.
+    # This list is crucial for consistent DataFrame structure across sessions and operations.
     expected_cols = [
         "File Name", "Candidate Name", "Score (%)", "Years Experience", "CGPA (4.0 Scale)",
         "Email", "Phone Number", "Location", "Languages", "Education Details",
@@ -1083,19 +1082,22 @@ def resume_screener_page():
         "JD Used", "Shortlisted", "Notes", "Tag"
     ]
 
-    # Initialize full_results_df in session state if it doesn't exist or is somehow malformed
-    if 'full_results_df' not in st.session_state or not isinstance(st.session_state['full_results_df'], pd.DataFrame) or 'File Name' not in st.session_state['full_results_df'].columns:
+    # Initialize full_results_df in session state if it doesn't exist or is not a DataFrame
+    # This ensures the DataFrame always has the correct structure from the start.
+    if 'full_results_df' not in st.session_state or not isinstance(st.session_state['full_results_df'], pd.DataFrame):
         st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols)
-        # Ensure correct dtypes for these columns upon initial creation
+        # Ensure correct dtypes for these columns upon initial creation, as they are editable/categorical
         st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
         st.session_state['full_results_df']['Notes'] = st.session_state['full_results_df']['Notes'].astype(str)
         st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df']['Tag'].astype(str)
-    # If it exists but is empty, ensure it has the columns, this handles reruns where data might be cleared
+    # If it exists but is empty, re-ensure it has the columns (handles cases after "Clear All Data")
     elif st.session_state['full_results_df'].empty:
-        st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols)
-        st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
-        st.session_state['full_results_df']['Notes'] = st.session_state['full_results_df']['Notes'].astype(str)
-        st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df']['Tag'].astype(str)
+        # Check if columns are already present to avoid re-adding if not needed
+        if not all(col in st.session_state['full_results_df'].columns for col in expected_cols):
+            st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols)
+            st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
+            st.session_state['full_results_df']['Notes'] = st.session_state['full_results_df']['Notes'].astype(str)
+            st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df']['Tag'].astype(str)
 
     # --- Job Description and Controls Section ---
     st.markdown("## ⚙️ Define Job Requirements & Screening Criteria")
@@ -1206,7 +1208,6 @@ def resume_screener_page():
         st.markdown("---")
 
         results = []
-        resume_text_map = {}
         progress_bar = st.progress(0)
         status_text = st.empty()
 
@@ -1291,49 +1292,42 @@ def resume_screener_page():
                 "Missing Skills (Categorized)": dict(jd_categorized_skills),
                 "Semantic Similarity": semantic_similarity,
                 "Resume Raw Text": text,
-                "JD Used": jd_name_for_results
+                "JD Used": jd_name_for_results,
+                "Shortlisted": False, # Default for new entries
+                "Notes": "", # Default for new entries
+                "Tag": "" # Will be filled after merge
             })
-            resume_text_map[file.name] = text
         
         progress_bar.empty()
         status_text.empty()
-
 
         # Create a DataFrame from the newly processed results
         # Ensure it always has the expected columns, even if results is empty
         newly_processed_df = pd.DataFrame(results, columns=expected_cols)
 
         if not newly_processed_df.empty:
-            # Ensure 'Shortlisted' and 'Notes' columns have correct dtypes in the new df
-            newly_processed_df['Shortlisted'] = newly_processed_df['Shortlisted'].astype(bool)
-            newly_processed_df['Notes'] = newly_processed_df['Notes'].astype(str)
-            newly_processed_df['Tag'] = newly_processed_df['Tag'].astype(str) # Ensure Tag is string type
-
-            current_full_df = st.session_state['full_results_df'].copy()
-
-            # Set 'File Name' as index for easier merging/updating
-            current_full_df_indexed = current_full_df.set_index('File Name')
+            # Merge new results with existing state, preserving user edits for 'Shortlisted' and 'Notes'
+            # Use a left merge to keep all existing session data, then update with new processed data
+            # For existing 'File Name' entries, new data from 'newly_processed_df' will overwrite old data,
+            # except for 'Shortlisted' and 'Notes' which are user-editable.
+            
+            # First, update the existing rows in session_state['full_results_df'] with new screening data
+            # For columns that are NOT 'Shortlisted' or 'Notes'.
+            cols_to_update = [col for col in newly_processed_df.columns if col not in ['Shortlisted', 'Notes']]
+            
+            # Align indices for update
+            st.session_state['full_results_df'] = st.session_state['full_results_df'].set_index('File Name')
             newly_processed_df_indexed = newly_processed_df.set_index('File Name')
 
-            # Identify which files are new and which are updates
-            files_to_add = newly_processed_df_indexed[~newly_processed_df_indexed.index.isin(current_full_df_indexed.index)]
-            files_to_update = newly_processed_df_indexed[newly_processed_df_indexed.index.isin(current_full_df_indexed.index)]
+            # Update existing entries with fresh data (except Shortlisted/Notes)
+            st.session_state['full_results_df'].update(newly_processed_df_indexed[cols_to_update])
 
-            updated_master_df = current_full_df_indexed.copy()
+            # Add new entries (files that were not previously in full_results_df)
+            new_files_df = newly_processed_df_indexed[~newly_processed_df_indexed.index.isin(st.session_state['full_results_df'].index)]
+            if not new_files_df.empty:
+                st.session_state['full_results_df'] = pd.concat([st.session_state['full_results_df'], new_files_df])
 
-            # Get the columns to update (all except 'Shortlisted' and 'Notes')
-            cols_to_update = [col for col in newly_processed_df_indexed.columns if col not in ['Shortlisted', 'Notes']]
-            
-            # Update existing rows with new data for non-editable columns
-            if not files_to_update.empty:
-                updated_master_df.update(files_to_update[cols_to_update])
-
-            # Add new files
-            if not files_to_add.empty:
-                updated_master_df = pd.concat([updated_master_df, files_to_add])
-
-            # Reset index and sort
-            st.session_state['full_results_df'] = updated_master_df.reset_index()
+            st.session_state['full_results_df'] = st.session_state['full_results_df'].reset_index()
             st.session_state['full_results_df'] = st.session_state['full_results_df'].sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
         else:
             st.info("No resumes were successfully processed. Please check your uploaded files.")
@@ -1443,68 +1437,71 @@ def resume_screener_page():
         st.caption("Candidates automatically shortlisted based on your score, experience, and CGPA criteria.")
 
         # Updated filtering for AI shortlisted candidates to include CGPA and max experience
-        ai_shortlisted_candidates = st.session_state['full_results_df'][
-            (st.session_state['full_results_df']['Score (%)'] >= cutoff) & 
-            (st.session_state['full_results_df']['Years Experience'] >= min_experience) &
-            (st.session_state['full_results_df']['Years Experience'] <= max_experience) & # New: Max experience filter
-            ((st.session_state['full_results_df']['CGPA (4.0 Scale)'].isnull()) | (st.session_state['full_results_df']['CGPA (4.0 Scale)'] >= min_cgpa)) # Handle cases where CGPA is not found
-        ]
-
-        if not ai_shortlisted_candidates.empty:
-            st.success(f"**{len(ai_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, CGPA ≥ {min_cgpa} or N/A).")
-            
-            # Display a concise table for AI shortlisted candidates
-            display_shortlisted_summary_cols = [
-                'Candidate Name',
-                'Score (%)',
-                'Years Experience',
-                'CGPA (4.0 Scale)', # Added CGPA
-                'Semantic Similarity',
-                'Email', # Include email here for quick reference
-                'AI Suggestion' # This is the concise AI suggestion
+        if not st.session_state['full_results_df'].empty:
+            ai_shortlisted_candidates = st.session_state['full_results_df'][
+                (st.session_state['full_results_df']['Score (%)'] >= cutoff) & 
+                (st.session_state['full_results_df']['Years Experience'] >= min_experience) &
+                (st.session_state['full_results_df']['Years Experience'] <= max_experience) & # New: Max experience filter
+                ((st.session_state['full_results_df']['CGPA (4.0 Scale)'].isnull()) | (st.session_state['full_results_df']['CGPA (4.0 Scale)'] >= min_cgpa)) # Handle cases where CGPA is not found
             ]
-            
-            st.dataframe(
-                ai_shortlisted_candidates[display_shortlisted_summary_cols],
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Score (%)": st.column_config.ProgressColumn(
-                        "Score (%)",
-                        help="Matching score against job requirements",
-                        format="%f",
-                        min_value=0,
-                        max_value=100,
-                    ),
-                    "Years Experience": st.column_config.NumberColumn(
-                        "Years Experience",
-                        help="Total years of professional experience",
-                        format="%.1f years",
-                    ),
-                    "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                        "CGPA (4.0 Scale)",
-                        help="Candidate's CGPA normalized to a 4.0 scale",
-                        format="%.2f",
-                        min_value=0.0,
-                        max_value=4.0
-                    ),
-                    "Semantic Similarity": st.column_config.NumberColumn(
-                        "Semantic Similarity",
-                        help="Conceptual similarity between JD and Resume (higher is better)",
-                        format="%.2f",
-                        min_value=0,
-                        max_value=1
-                    ),
-                    "AI Suggestion": st.column_config.Column(
-                        "AI Suggestion",
-                        help="AI's concise overall assessment and recommendation"
-                    )
-                }
-            )
-            st.info("For individual detailed AI assessments and action steps, please refer to the table below or the Analytics Dashboard.")
 
+            if not ai_shortlisted_candidates.empty:
+                st.success(f"**{len(ai_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, CGPA ≥ {min_cgpa} or N/A).")
+                
+                # Display a concise table for AI shortlisted candidates
+                display_shortlisted_summary_cols = [
+                    'Candidate Name',
+                    'Score (%)',
+                    'Years Experience',
+                    'CGPA (4.0 Scale)', # Added CGPA
+                    'Semantic Similarity',
+                    'Email', # Include email here for quick reference
+                    'AI Suggestion' # This is the concise AI suggestion
+                ]
+                
+                st.dataframe(
+                    ai_shortlisted_candidates[display_shortlisted_summary_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Score (%)": st.column_config.ProgressColumn(
+                            "Score (%)",
+                            help="Matching score against job requirements",
+                            format="%f",
+                            min_value=0,
+                            max_value=100,
+                        ),
+                        "Years Experience": st.column_config.NumberColumn(
+                            "Years Experience",
+                            help="Total years of professional experience",
+                            format="%.1f years",
+                        ),
+                        "CGPA (4.0 Scale)": st.column_config.NumberColumn(
+                            "CGPA (4.0 Scale)",
+                            help="Candidate's CGPA normalized to a 4.0 scale",
+                            format="%.2f",
+                            min_value=0.0,
+                            max_value=4.0
+                        ),
+                        "Semantic Similarity": st.column_config.NumberColumn(
+                            "Semantic Similarity",
+                            help="Conceptual similarity between JD and Resume (higher is better)",
+                            format="%.2f",
+                            min_value=0,
+                            max_value=1
+                        ),
+                        "AI Suggestion": st.column_config.Column(
+                            "AI Suggestion",
+                            help="AI's concise overall assessment and recommendation"
+                        )
+                    }
+                )
+                st.info("For individual detailed AI assessments and action steps, please refer to the table below or the Analytics Dashboard.")
+
+            else:
+                st.warning(f"No candidates met the defined screening criteria (score cutoff, experience between {min_experience}-{max_experience} years, and minimum CGPA). You might consider adjusting the sliders or reviewing the uploaded resumes/JD.")
         else:
-            st.warning(f"No candidates met the defined screening criteria (score cutoff, experience between {min_experience}-{max_experience} years, and minimum CGPA). You might consider adjusting the sliders or reviewing the uploaded resumes/JD.")
+            st.info("No candidates processed yet for AI shortlisting.")
 
         st.markdown("---")
 
@@ -1762,7 +1759,7 @@ def resume_screener_page():
             # This is crucial to persist changes made in the data editor
             # We need to merge edited_df back into the original full_results_df in session_state
             # to ensure that changes to 'Shortlisted' and 'Notes' persist even if filters change.
-            if not edited_df.empty: # This check is now redundant because of the outer if, but harmless
+            if not edited_df.empty:
                 # Create a temporary DataFrame from the edited_df with only 'File Name', 'Shortlisted', 'Notes'
                 # to merge back into the main session state DataFrame.
                 edited_subset = edited_df[['File Name', 'Shortlisted', 'Notes']].set_index('File Name')
@@ -1929,7 +1926,6 @@ def resume_screener_page():
 
             # Display Categorized Missing Skills for the selected candidate
             st.markdown("#### Missing Skills Breakdown (from JD):")
-            # Need to re-calculate missing skills based on JD's categorized skills and candidate's raw skills
             # This logic is already in the main loop, can reuse the stored values
             if selected_candidate_row['Missing Skills'].strip(): # Check if string is not empty
                 missing_skills_list = [s.strip() for s in selected_candidate_row['Missing Skills'].split(',') if s.strip()]
@@ -1968,9 +1964,24 @@ def resume_screener_page():
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
 
     # Clear All Processed Data button
+    # This button is placed outside the 'if jd_text and resume_files:' block
+    # so it's always visible and can reset the state even if no files are loaded.
+    st.markdown("---")
     if st.button("🗑️ Clear All Processed Data", help="Removes all loaded resumes and screening results from the current session."):
-        st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols) # Re-initialize with columns
+        # Re-initialize st.session_state['full_results_df'] with empty but correctly typed columns
+        st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols)
         st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
         st.session_state['full_results_df']['Notes'] = st.session_state['full_results_df']['Notes'].astype(str)
         st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df']['Tag'].astype(str)
-        st.rerun() # Rerun to clear the display
+        
+        # Also clear any filter-related session state variables to ensure a clean slate
+        for key in ['score_filter_slider', 'exp_filter_slider', 'cgpa_filter_slider',
+                    'tag_filter_multiselect', 'location_filter_multiselect',
+                    'shortlist_filter_selectbox', 'skill_filter_multiselect',
+                    'screening_cutoff_score', 'screening_min_experience',
+                    'screening_max_experience', 'screening_min_cgpa',
+                    'resume_viewer_select']:
+            if key in st.session_state:
+                del st.session_state[key]
+
+        st.rerun() # Rerun to clear the display and apply the reset state
