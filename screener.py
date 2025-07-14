@@ -1302,9 +1302,6 @@ def resume_screener_page():
             st.session_state['editable_df']['Shortlist'] = False
             st.session_state['editable_df']['Note'] = ""
         
-        # Ensure the 'File Name' is the index for data_editor to work correctly with updates
-        st.session_state['editable_df'] = st.session_state['editable_df'].set_index('File Name')
-
         # Save results to CSV for analytics.py to use (using the current run's data, not editable)
         current_run_df.to_csv("results.csv", index=False)
 
