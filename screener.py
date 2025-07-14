@@ -1,4 +1,4 @@
-# Version 1.17 - Enhanced Table UI, More Filters, and Shortlist Feature
+# Version 1.18 - Enhanced Table UI, More Filters, and Shortlist Feature
 import streamlit as st
 import pdfplumber
 import pandas as pd
@@ -938,7 +938,7 @@ def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_s
     return final_assessment
 
 
-def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills):
+def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills, jd_skills_filter_set): # Added jd_skills_filter_set
     """
     Calculates a semantic score using an ML model and provides additional details.
     Falls back to smart_score if the ML model is not loaded or prediction fails.
@@ -953,7 +953,7 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
 
     # Extract raw skills for scoring
     resume_raw_skills, _ = extract_relevant_keywords(resume_clean, MASTER_SKILLS)
-    jd_raw_skills, _ = extract_relevant_keywords(jd_clean, MASTER_SKILLS)
+    jd_raw_skills, _ = extract_relevant_keywords(jd_clean, jd_skills_filter_set) # Use the passed filter set for JD
 
     # Calculate weighted keyword overlap
     weighted_keyword_overlap_score = 0
@@ -1144,6 +1144,16 @@ def resume_screener_page():
             help="Select skills that are very important, but not as critical as high priority ones."
         )
 
+    # Custom Skill Keywords input
+    custom_jd_skills_input = st.text_input(
+        "➕ **Add Custom JD Skills (comma-separated)**",
+        help="Enter additional skills relevant to the Job Description, e.g., 'Leadership, Cloud Security, Microservices Architecture'. These will be considered in scoring."
+    )
+    custom_jd_skills_set = {s.strip().lower() for s in custom_jd_skills_input.split(',') if s.strip()}
+    
+    # Combine MASTER_SKILLS with custom JD skills for JD processing
+    jd_skills_for_processing = MASTER_SKILLS.union(custom_jd_skills_set)
+
     resume_files = st.file_uploader("📄 **Upload Resumes (PDF)**", type="pdf", accept_multiple_files=True, help="Upload one or more PDF resumes for screening.")
 
     df = pd.DataFrame()
@@ -1156,7 +1166,7 @@ def resume_screener_page():
         st.info("💡 To filter candidates by these skills, use the 'Filter Candidates by Skill' section below the main results table.") # New instruction
         
         # Use all_master_skills for cloud generation
-        jd_words_for_cloud_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
+        jd_words_for_cloud_set, _ = extract_relevant_keywords(jd_text, jd_skills_for_processing) # Use combined skills for JD cloud
         jd_words_for_cloud = " ".join(list(jd_words_for_cloud_set))
 
         if jd_words_for_cloud:
@@ -1204,13 +1214,13 @@ def resume_screener_page():
             cgpa = extract_cgpa(text)
 
             # Calculate Matched Keywords and Missing Skills using the new function
-            resume_raw_skills_set, resume_categorized_skills = extract_relevant_keywords(text, all_master_skills)
-            jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, all_master_skills)
+            resume_raw_skills_set, resume_categorized_skills = extract_relevant_keywords(text, all_master_skills) # Resume skills still against master
+            jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, jd_skills_for_processing) # JD skills against combined set
 
             matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
             missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
 
-            score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills)
+            score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills, jd_skills_for_processing) # Pass to semantic_score
             
             # Generate the CONCISE AI suggestion for the table
             concise_ai_suggestion = generate_concise_ai_suggestion(
@@ -1266,11 +1276,25 @@ def resume_screener_page():
 
         df = pd.DataFrame(results).sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
 
-        st.session_state['screening_results'] = results
-        
-        # Save results to CSV for analytics.py to use
-        df.to_csv("results.csv", index=False)
+        # Add 'Shortlisted' and 'Notes' columns if they don't exist
+        if 'Shortlisted' not in df.columns:
+            df['Shortlisted'] = False
+        if 'Notes' not in df.columns:
+            df['Notes'] = ""
 
+        # Initialize or update the full_results_df in session state
+        if 'full_results_df' not in st.session_state:
+            st.session_state['full_results_df'] = df
+        else:
+            # Merge new results with existing state, preserving user edits for 'Shortlisted' and 'Notes'
+            existing_df = st.session_state['full_results_df'].set_index('File Name')
+            new_df_indexed = df.set_index('File Name')
+
+            # Use combine_first to prioritize existing user edits
+            # This will keep 'Shortlisted' and 'Notes' from existing_df if they exist for a given File Name
+            # and fill other columns/new rows from new_df_indexed.
+            combined_df = new_df_indexed.combine_first(existing_df)
+            st.session_state['full_results_df'] = combined_df.reset_index()
 
         # --- Overall Candidate Comparison Chart ---
         st.markdown("## 📊 Candidate Score Comparison")
@@ -1324,10 +1348,10 @@ def resume_screener_page():
             # Display Categorized Missing Skills for the top candidate
             st.markdown("#### Missing Skills Breakdown (from JD):")
             # Need to re-calculate missing skills based on JD's categorized skills and candidate's raw skills
-            jd_raw_skills_set, jd_categorized_skills_for_top = extract_relevant_keywords(jd_text, all_master_skills)
+            jd_raw_skills_set_for_top, jd_categorized_skills_for_top = extract_relevant_keywords(jd_text, jd_skills_for_processing) # Use combined skills
             resume_raw_skills_set_for_top, _ = extract_relevant_keywords(top_candidate['Resume Raw Text'], all_master_skills)
             
-            missing_skills_for_top = jd_raw_skills_set.difference(resume_raw_skills_set_for_top)
+            missing_skills_for_top = jd_raw_skills_set_for_top.difference(resume_raw_skills_set_for_top)
             
             if missing_skills_for_top:
                 missing_categorized = collections.defaultdict(list)
@@ -1368,21 +1392,21 @@ def resume_screener_page():
         # === AI Recommendation for Shortlisted Candidates (Streamlined) ===
         # This section now focuses on a quick summary for *all* shortlisted,
         # with the top one highlighted above.
-        st.markdown("## 🌟 Shortlisted Candidates Overview")
-        st.caption("Candidates meeting your score, experience, and CGPA criteria.")
+        st.markdown("## 🌟 AI Shortlisted Candidates Overview")
+        st.caption("Candidates automatically shortlisted based on your score, experience, and CGPA criteria.")
 
-        # Updated filtering for shortlisted candidates to include CGPA and max experience
-        shortlisted_candidates = df[
-            (df['Score (%)'] >= cutoff) & 
-            (df['Years Experience'] >= min_experience) &
-            (df['Years Experience'] <= max_experience) & # New: Max experience filter
-            ((df['CGPA (4.0 Scale)'].isnull()) | (df['CGPA (4.0 Scale)'] >= min_cgpa)) # Handle cases where CGPA is not found
+        # Updated filtering for AI shortlisted candidates to include CGPA and max experience
+        ai_shortlisted_candidates = st.session_state['full_results_df'][
+            (st.session_state['full_results_df']['Score (%)'] >= cutoff) & 
+            (st.session_state['full_results_df']['Years Experience'] >= min_experience) &
+            (st.session_state['full_results_df']['Years Experience'] <= max_experience) & # New: Max experience filter
+            ((st.session_state['full_results_df']['CGPA (4.0 Scale)'].isnull()) | (st.session_state['full_results_df']['CGPA (4.0 Scale)'] >= min_cgpa)) # Handle cases where CGPA is not found
         ]
 
-        if not shortlisted_candidates.empty:
-            st.success(f"**{len(shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, CGPA ≥ {min_cgpa} or N/A).")
+        if not ai_shortlisted_candidates.empty:
+            st.success(f"**{len(ai_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, CGPA ≥ {min_cgpa} or N/A).")
             
-            # Display a concise table for shortlisted candidates
+            # Display a concise table for AI shortlisted candidates
             display_shortlisted_summary_cols = [
                 'Candidate Name',
                 'Score (%)',
@@ -1394,7 +1418,7 @@ def resume_screener_page():
             ]
             
             st.dataframe(
-                shortlisted_candidates[display_shortlisted_summary_cols],
+                ai_shortlisted_candidates[display_shortlisted_summary_cols],
                 use_container_width=True,
                 hide_index=True,
                 column_config={
@@ -1430,7 +1454,7 @@ def resume_screener_page():
                     )
                 }
             )
-            st.info("For individual detailed AI assessments and action steps, please refer to the table above or the Analytics Dashboard.")
+            st.info("For individual detailed AI assessments and action steps, please refer to the table below or the Analytics Dashboard.")
 
         else:
             st.warning(f"No candidates met the defined screening criteria (score cutoff, experience between {min_experience}-{max_experience} years, and minimum CGPA). You might consider adjusting the sliders or reviewing the uploaded resumes/JD.")
@@ -1438,7 +1462,7 @@ def resume_screener_page():
         st.markdown("---")
 
         # Add a 'Tag' column for quick categorization - UPDATED WITH CGPA and Max Exp
-        df['Tag'] = df.apply(lambda row: 
+        st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df'].apply(lambda row: 
             "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.85 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.5) else (
             "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.7 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.0) else (
             "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 and row['Years Experience'] <= max_experience and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 2.5) else (
@@ -1446,10 +1470,10 @@ def resume_screener_page():
             "❌ Limited Match"))), axis=1)
 
         st.markdown("## 📋 Comprehensive Candidate Results Table")
-        st.caption("Full details for all processed resumes.")
+        st.caption("Full details for all processed resumes. Use filters below and edit 'Shortlisted' and 'Notes' directly.")
         
         # --- Interactive Filters for Comprehensive Table ---
-        st.markdown("### Filter & Shortlist Options")
+        st.markdown("### Filter Options")
         filter_col1, filter_col2, filter_col3 = st.columns(3)
         filter_col4, filter_col5, filter_col6 = st.columns(3)
 
@@ -1457,94 +1481,103 @@ def resume_screener_page():
             score_min, score_max = st.slider(
                 "Score Range (%)",
                 0, 100, (0, 100),
+                key="score_filter_slider",
                 help="Filter candidates by their overall score."
             )
         with filter_col2:
             exp_min, exp_max = st.slider(
                 "Experience Range (Years)",
-                0.0, float(df['Years Experience'].max() if not df.empty else 15.0),
-                (0.0, float(df['Years Experience'].max() if not df.empty else 15.0)), 0.1,
+                0.0, float(st.session_state['full_results_df']['Years Experience'].max() if not st.session_state['full_results_df'].empty else 15.0),
+                (0.0, float(st.session_state['full_results_df']['Years Experience'].max() if not st.session_state['full_results_df'].empty else 15.0)), 0.1,
+                key="exp_filter_slider",
                 help="Filter candidates by their years of experience."
             )
         with filter_col3:
             cgpa_min, cgpa_max = st.slider(
                 "CGPA Range (4.0 Scale)",
                 0.0, 4.0, (0.0, 4.0), 0.1,
+                key="cgpa_filter_slider",
                 help="Filter candidates by their CGPA (normalized to a 4.0 scale)."
             )
         
         with filter_col4:
-            all_tags = sorted(df['Tag'].unique()) if not df.empty else []
+            all_tags = sorted(st.session_state['full_results_df']['Tag'].unique()) if not st.session_state['full_results_df'].empty else []
             selected_tags = st.multiselect(
                 "Filter by Tag",
                 options=all_tags,
                 default=all_tags,
+                key="tag_filter_multiselect",
                 help="Select one or more tags to filter candidates."
             )
         
         with filter_col5:
-            all_locations = sorted(df['Location'].unique()) if not df.empty else []
+            all_locations = sorted(st.session_state['full_results_df']['Location'].unique()) if not st.session_state['full_results_df'].empty else []
             selected_locations = st.multiselect(
                 "Filter by Location",
                 options=all_locations,
                 default=all_locations,
+                key="location_filter_multiselect",
                 help="Select one or more locations to filter candidates."
             )
-
+        
         with filter_col6:
-            # Shortlist candidates by name
-            if 'shortlisted_candidates_names' not in st.session_state:
-                st.session_state['shortlisted_candidates_names'] = []
-
-            all_candidate_names = sorted(df['Candidate Name'].tolist()) if not df.empty else []
-            selected_shortlist_names = st.multiselect(
-                "Manually Shortlist Candidates",
-                options=all_candidate_names,
-                default=st.session_state['shortlisted_candidates_names'],
-                help="Select candidates to add to your manual shortlist."
+            # Shortlist filter for the main table
+            shortlist_filter_options = ["Show All", "Show Shortlisted Only", "Show Non-Shortlisted Only"]
+            selected_shortlist_filter = st.selectbox(
+                "Filter by Shortlist Status",
+                options=shortlist_filter_options,
+                key="shortlist_filter_selectbox",
+                help="Filter the table to show only shortlisted, non-shortlisted, or all candidates."
             )
-            
-            # Update session state based on multiselect
-            st.session_state['shortlisted_candidates_names'] = selected_shortlist_names
 
-            if st.button("Clear Manual Shortlist"):
-                st.session_state['shortlisted_candidates_names'] = []
-                st.rerun() # Rerun to clear the multiselect and table
-
-        # Apply filters
-        filtered_df = df.copy()
-        filtered_df = filtered_df[
-            (filtered_df['Score (%)'] >= score_min) & (filtered_df['Score (%)'] <= score_max) &
-            (filtered_df['Years Experience'] >= exp_min) & (filtered_df['Years Experience'] <= exp_max) &
-            ((filtered_df['CGPA (4.0 Scale)'].isnull()) | ((filtered_df['CGPA (4.0 Scale)'] >= cgpa_min) & (filtered_df['CGPA (4.0 Scale)'] <= cgpa_max)))
+        # Apply filters to st.session_state['full_results_df']
+        filtered_df_for_editor = st.session_state['full_results_df'].copy()
+        
+        filtered_df_for_editor = filtered_df_for_editor[
+            (filtered_df_for_editor['Score (%)'] >= score_min) & (filtered_df_for_editor['Score (%)'] <= score_max) &
+            (filtered_df_for_editor['Years Experience'] >= exp_min) & (filtered_df_for_editor['Years Experience'] <= exp_max) &
+            ((filtered_df_for_editor['CGPA (4.0 Scale)'].isnull()) | ((filtered_df_for_editor['CGPA (4.0 Scale)'] >= cgpa_min) & (filtered_df_for_editor['CGPA (4.0 Scale)'] <= cgpa_max)))
         ]
         
         if selected_tags:
-            filtered_df = filtered_df[filtered_df['Tag'].isin(selected_tags)]
+            filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Tag'].isin(selected_tags)]
         
         if selected_locations:
             # This needs to handle multiple locations in the 'Location' column
-            filtered_df = filtered_df[filtered_df['Location'].apply(lambda x: any(loc in x for loc in selected_locations))]
+            filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Location'].apply(lambda x: any(loc in x for loc in selected_locations))]
+
+        if selected_shortlist_filter == "Show Shortlisted Only":
+            filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Shortlisted'] == True]
+        elif selected_shortlist_filter == "Show Non-Shortlisted Only":
+            filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Shortlisted'] == False]
 
 
         # Skill filter (from previous version, kept)
-        jd_raw_skills_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
+        jd_raw_skills_set, _ = extract_relevant_keywords(jd_text, jd_skills_for_processing) # Use combined skills
         all_unique_jd_skills = sorted(list(jd_raw_skills_set))
         selected_filter_skills = st.multiselect(
             "Filter by Specific Skills (from JD)",
             options=all_unique_jd_skills,
+            key="skill_filter_multiselect",
             help="Only candidates possessing ALL selected skills will be shown."
         )
         if selected_filter_skills:
             for skill in selected_filter_skills:
-                filtered_df = filtered_df[filtered_df['Matched Keywords'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
+                filtered_df_for_editor = filtered_df_for_editor[filtered_df_for_editor['Matched Keywords'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
 
 
         # Reset Filters button
-        if st.button("Reset All Filters"):
+        if st.button("Reset All Filters", key="reset_filters_button"):
             # Reset all filter-related session state variables
-            st.session_state['shortlisted_candidates_names'] = [] # Clear shortlist too
-            st.rerun() # Rerun to apply resets
+            # This will trigger a rerun and reset the UI elements to their defaults
+            st.session_state['score_filter_slider'] = (0, 100)
+            st.session_state['exp_filter_slider'] = (0.0, float(st.session_state['full_results_df']['Years Experience'].max() if not st.session_state['full_results_df'].empty else 15.0))
+            st.session_state['cgpa_filter_slider'] = (0.0, 4.0)
+            st.session_state['tag_filter_multiselect'] = all_tags
+            st.session_state['location_filter_multiselect'] = all_locations
+            st.session_state['shortlist_filter_selectbox'] = "Show All"
+            st.session_state['skill_filter_multiselect'] = []
+            st.rerun()
 
 
         # Define columns to display in the comprehensive table (reordered for user-friendliness)
@@ -1568,10 +1601,11 @@ def resume_screener_page():
             'JD Used'
         ]
         
-        final_display_cols = [col for col in comprehensive_cols if col in filtered_df.columns]
+        final_display_cols = [col for col in comprehensive_cols if col in filtered_df_for_editor.columns]
 
-        st.dataframe(
-            filtered_df[final_display_cols],
+        # Use st.data_editor for the main table to allow inline editing of 'Shortlisted' and 'Notes'
+        edited_df = st.data_editor(
+            filtered_df_for_editor[final_display_cols + ['Shortlisted', 'Notes']], # Add editable columns
             use_container_width=True,
             hide_index=True,
             column_config={
@@ -1651,12 +1685,39 @@ def resume_screener_page():
                     "Project Details",
                     help="Structured project experience (Title, Description, Technologies)",
                     width="large"
+                ),
+                "Shortlisted": st.column_config.CheckboxColumn( # Editable checkbox
+                    "Shortlist",
+                    help="Manually mark candidates for shortlisting",
+                    default=False,
+                ),
+                "Notes": st.column_config.TextColumn( # Editable text area
+                    "Notes",
+                    help="Add personal notes for this candidate",
+                    default="",
+                    max_chars=200,
                 )
-            }
+            },
+            key="comprehensive_table_editor" # Unique key for the data editor
         )
 
-        # --- CSV Download Button ---
-        csv_data = filtered_df.to_csv(index=False).encode('utf-8')
+        # Update the session state DataFrame with the edited data from st.data_editor
+        # This is crucial to persist changes made in the data editor
+        # We need to merge edited_df back into the original full_results_df in session_state
+        # to ensure that changes to 'Shortlisted' and 'Notes' persist even if filters change.
+        if not edited_df.empty:
+            # Create a temporary DataFrame from the edited_df with only 'File Name', 'Shortlisted', 'Notes'
+            # to merge back into the main session state DataFrame.
+            edited_subset = edited_df[['File Name', 'Shortlisted', 'Notes']].set_index('File Name')
+            
+            # Update the corresponding rows in the full_results_df
+            current_full_df = st.session_state['full_results_df'].set_index('File Name')
+            current_full_df.update(edited_subset) # Update existing rows
+            st.session_state['full_results_df'] = current_full_df.reset_index()
+
+
+        # --- CSV Download Button for Filtered Results ---
+        csv_data = filtered_df_for_editor.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="⬇️ Download Filtered Results as CSV",
             data=csv_data,
@@ -1667,109 +1728,178 @@ def resume_screener_page():
 
         # --- Shortlisted Candidates Display ---
         st.markdown("---")
-        st.markdown("## ⭐ My Shortlisted Candidates")
-        st.caption("Candidates you have manually added to your shortlist.")
+        st.markdown("## ⭐ My Manually Shortlisted Candidates")
+        st.caption("Candidates you have marked as 'Shortlisted' in the table above.")
 
-        if st.session_state['shortlisted_candidates_names']:
-            shortlisted_df = df[df['Candidate Name'].isin(st.session_state['shortlisted_candidates_names'])]
-            if not shortlisted_df.empty:
-                st.dataframe(
-                    shortlisted_df[final_display_cols], # Display same columns as main table
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Score (%)": st.column_config.ProgressColumn(
-                            "Score (%)",
-                            help="Matching score against job requirements",
-                            format="%f",
-                            min_value=0,
-                            max_value=100,
-                        ),
-                        "Years Experience": st.column_config.NumberColumn(
-                            "Years Experience",
-                            help="Total years of professional experience",
-                            format="%.1f years",
-                        ),
-                        "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                            "CGPA (4.0 Scale)",
-                            help="Candidate's CGPA normalized to a 4.0 scale",
-                            format="%.2f", 
-                            min_value=0.0,
-                            max_value=4.0
-                        ),
-                        "Semantic Similarity": st.column_config.NumberColumn(
-                            "Semantic Similarity",
-                            help="Conceptual similarity between JD and Resume (higher is better)",
-                            format="%.2f", 
-                            min_value=0,
-                            max_value=1
-                        ),
-                        "AI Suggestion": st.column_config.Column(
-                            "AI Suggestion",
-                            help="AI's concise overall assessment and recommendation",
-                            width="medium"
-                        ),
-                        "Tag": st.column_config.Column(
-                            "Tag",
-                            help="Quick categorization of candidate fit",
-                            width="small"
-                        ),
-                        "Matched Keywords": st.column_config.Column(
-                            "Matched Keywords",
-                            help="Keywords found in both JD and Resume",
-                            width="large"
-                        ),
-                        "Missing Skills": st.column_config.Column(
-                            "Missing Skills",
-                            help="Key skills from JD not found in Resume",
-                            width="large"
-                        ),
-                        "JD Used": st.column_config.Column(
-                            "JD Used",
-                            help="Job Description used for this screening"
-                        ),
-                        "Phone Number": st.column_config.Column(
-                            "Phone Number",
-                            help="Candidate's phone number extracted from resume"
-                        ),
-                        "Location": st.column_config.Column(
-                            "Location",
-                            help="Candidate's location extracted from resume"
-                        ),
-                        "Languages": st.column_config.Column(
-                            "Languages",
-                            help="Languages spoken by the candidate"
-                        ),
-                        "Education Details": st.column_config.Column(
-                            "Education Details",
-                            help="Structured education history (University, Degree, Major, Year)",
-                            width="large"
-                        ),
-                        "Work History": st.column_config.Column(
-                            "Work History",
-                            help="Structured work experience (Company, Title, Dates)",
-                            width="large"
-                        ),
-                        "Project Details": st.column_config.Column(
-                            "Project Details",
-                            help="Structured project experience (Title, Description, Technologies)",
-                            width="large"
-                        )
-                    }
-                )
-                csv_shortlist_data = shortlisted_df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="⬇️ Download Shortlisted Candidates as CSV",
-                    data=csv_shortlist_data,
-                    file_name="shortlisted_candidates.csv",
-                    mime="text/csv",
-                    help="Download your manually shortlisted candidates as a CSV file."
-                )
-            else:
-                st.info("No candidates in your manual shortlist.")
+        # Filter from the updated session state DataFrame for manually shortlisted candidates
+        manually_shortlisted_df = st.session_state['full_results_df'][st.session_state['full_results_df']['Shortlisted'] == True]
+
+        if not manually_shortlisted_df.empty:
+            st.dataframe(
+                manually_shortlisted_df[final_display_cols + ['Notes']], # Display same columns as main table + Notes
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Score (%)": st.column_config.ProgressColumn(
+                        "Score (%)",
+                        help="Matching score against job requirements",
+                        format="%f",
+                        min_value=0,
+                        max_value=100,
+                    ),
+                    "Years Experience": st.column_config.NumberColumn(
+                        "Years Experience",
+                        help="Total years of professional experience",
+                        format="%.1f years",
+                    ),
+                    "CGPA (4.0 Scale)": st.column_config.NumberColumn(
+                        "CGPA (4.0 Scale)",
+                        help="Candidate's CGPA normalized to a 4.0 scale",
+                        format="%.2f", 
+                        min_value=0.0,
+                        max_value=4.0
+                    ),
+                    "Semantic Similarity": st.column_config.NumberColumn(
+                        "Semantic Similarity",
+                        help="Conceptual similarity between JD and Resume (higher is better)",
+                        format="%.2f", 
+                        min_value=0,
+                        max_value=1
+                    ),
+                    "AI Suggestion": st.column_config.Column(
+                        "AI Suggestion",
+                        help="AI's concise overall assessment and recommendation",
+                        width="medium"
+                    ),
+                    "Tag": st.column_config.Column(
+                        "Tag",
+                        help="Quick categorization of candidate fit",
+                        width="small"
+                    ),
+                    "Matched Keywords": st.column_config.Column(
+                        "Matched Keywords",
+                        help="Keywords found in both JD and Resume",
+                        width="large"
+                    ),
+                    "Missing Skills": st.column_config.Column(
+                        "Missing Skills",
+                        help="Key skills from JD not found in Resume",
+                        width="large"
+                    ),
+                    "JD Used": st.column_config.Column(
+                        "JD Used",
+                        help="Job Description used for this screening"
+                    ),
+                    "Phone Number": st.column_config.Column(
+                        "Phone Number",
+                        help="Candidate's phone number extracted from resume"
+                    ),
+                    "Location": st.column_config.Column(
+                        "Location",
+                        help="Candidate's location extracted from resume"
+                    ),
+                    "Languages": st.column_config.Column(
+                        "Languages",
+                        help="Languages spoken by the candidate"
+                    ),
+                    "Education Details": st.column_config.Column(
+                        "Education Details",
+                        help="Structured education history (University, Degree, Major, Year)",
+                        width="large"
+                    ),
+                    "Work History": st.column_config.Column(
+                        "Work History",
+                        help="Structured work experience (Company, Title, Dates)",
+                        width="large"
+                    ),
+                    "Project Details": st.column_config.Column(
+                        "Project Details",
+                        help="Structured project experience (Title, Description, Technologies)",
+                        width="large"
+                    ),
+                    "Notes": st.column_config.TextColumn( # Display notes in shortlisted table
+                        "Notes",
+                        help="Personal notes for this candidate",
+                        width="medium"
+                    )
+                }
+            )
+            csv_shortlist_data = manually_shortlisted_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="⬇️ Download Manually Shortlisted Candidates as CSV",
+                data=csv_shortlist_data,
+                file_name="manually_shortlisted_candidates.csv",
+                mime="text/csv",
+                help="Download your manually shortlisted candidates as a CSV file."
+            )
         else:
-            st.info("No candidates have been manually shortlisted yet. Use the 'Manually Shortlist Candidates' dropdown above to add them.")
+            st.info("No candidates have been manually shortlisted yet. Use the 'Shortlist' checkbox in the 'Comprehensive Candidate Results Table' above to add them.")
 
+        # --- Resume Viewer Section (New) ---
+        st.markdown("---")
+        st.markdown("## 🔍 Resume Viewer & Detailed Assessment")
+        st.caption("Select a candidate to view their raw resume text and full AI assessment.")
+        
+        # Get candidate names from the full results DataFrame (not filtered)
+        candidate_names_for_viewer = ["Select a Candidate"] + sorted(st.session_state['full_results_df']['Candidate Name'].tolist())
+        selected_candidate_name_for_viewer = st.selectbox(
+            "Choose a candidate to view details:",
+            options=candidate_names_for_viewer,
+            key="resume_viewer_select"
+        )
+
+        if selected_candidate_name_for_viewer != "Select a Candidate":
+            selected_candidate_row = st.session_state['full_results_df'][st.session_state['full_results_df']['Candidate Name'] == selected_candidate_name_for_viewer].iloc[0]
+            
+            st.markdown(f"### Raw Resume Text for {selected_candidate_name_for_viewer}")
+            st.text_area("Resume Content", selected_candidate_row['Resume Raw Text'], height=400, disabled=True)
+            
+            st.markdown(f"### Detailed AI Assessment for {selected_candidate_name_for_viewer}")
+            st.markdown(selected_candidate_row['Detailed HR Assessment'])
+
+            # Display Categorized Matched Skills for the selected candidate
+            st.markdown("#### Matched Skills Breakdown:")
+            if selected_candidate_row['Matched Keywords (Categorized)']:
+                for category, skills in selected_candidate_row['Matched Keywords (Categorized)'].items():
+                    st.write(f"**{category}:** {', '.join(skills)}")
+            else:
+                st.write("No categorized matched skills found.")
+
+            # Display Categorized Missing Skills for the selected candidate
+            st.markdown("#### Missing Skills Breakdown (from JD):")
+            # Need to re-calculate missing skills based on JD's categorized skills and candidate's raw skills
+            # This logic is already in the main loop, can reuse the stored values
+            if selected_candidate_row['Missing Skills'].strip(): # Check if string is not empty
+                missing_skills_list = [s.strip() for s in selected_candidate_row['Missing Skills'].split(',') if s.strip()]
+                if missing_skills_list:
+                    missing_categorized_for_viewer = collections.defaultdict(list)
+                    for skill in missing_skills_list:
+                        found_category = False
+                        for category, skills_in_category in SKILL_CATEGORIES.items():
+                            if skill.lower() in [s.lower() for s in skills_in_category]:
+                                missing_categorized_for_viewer[category].append(skill)
+                                found_category = True
+                                break
+                        if not found_category:
+                            missing_categorized_for_viewer["Uncategorized"].append(skill)
+                    
+                    for category, skills in missing_categorized_for_viewer.items():
+                        st.write(f"**{category}:** {', '.join(skills)}")
+                else:
+                    st.write("No missing skills found for this candidate relative to the JD.")
+            else:
+                st.write("No missing skills found for this candidate relative to the JD.")
+
+            # Action button for the selected candidate
+            if selected_candidate_row['Email'] != "Not Found":
+                mailto_link_selected = create_mailto_link(
+                    recipient_email=selected_candidate_row['Email'],
+                    candidate_name=selected_candidate_row['Candidate Name'],
+                    job_title=selected_candidate_row['JD Used'] if selected_candidate_row['JD Used'] != "Uploaded JD (No file selected)" else "Job Opportunity"
+                )
+                st.markdown(f'<a href="{mailto_link_selected}" target="_blank"><button style="background-color:#00cec9;color:white;border:none;padding:10px 20px;text-align:center;text-decoration:none;display:inline-block;font-size:16px;margin:4px 2px;cursor:pointer;border-radius:8px;">📧 Invite Selected Candidate for Interview</button></a>', unsafe_allow_html=True)
+            else:
+                st.info(f"Email address not found for {selected_candidate_name_for_viewer}. Cannot send automated invitation.")
 
         st.info("Remember to check the Analytics Dashboard for in-depth visualizations of skill overlaps, gaps, and other metrics!")
     else:
