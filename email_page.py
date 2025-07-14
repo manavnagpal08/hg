@@ -12,6 +12,17 @@ def send_email_to_candidate():
     st.markdown("## 📤 Email Candidates")
     st.info("Prepare and send emails to shortlisted candidates based on screening results.")
 
+    # --- DEBUGGING: Display current state of comprehensive_df ---
+    st.markdown("---")
+    st.subheader("Debugging: Current Screening Data State")
+    if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+        st.write("`st.session_state['comprehensive_df']` is not empty. First 5 rows:")
+        st.dataframe(st.session_state['comprehensive_df'].head())
+    else:
+        st.write("`st.session_state['comprehensive_df']` is empty or not found.")
+    st.markdown("---")
+    # --- END DEBUGGING ---
+
     # Check if screening results are available in session state
     # CORRECTED: Use 'comprehensive_df' as the source for screening results
     if 'comprehensive_df' not in st.session_state or st.session_state['comprehensive_df'].empty:
