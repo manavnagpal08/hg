@@ -1,0 +1,20 @@
+{
+  "Job Title": "Junior Accounts Officer (Ref: 42)",
+  "Company": "Government Inc. 42",
+  "Job Summary": "A Government Research Institute seeks a Junior Accounts Officer to assist in managing financial records and ensuring compliance with government accounting norms.",
+  "Key Responsibilities": [
+    "Assist in maintaining general ledger and preparing trial balances.",
+    "Process bills, vouchers, and manage petty cash.",
+    "Support budget monitoring and expenditure tracking.",
+    "Ensure adherence to General Financial Rules (GFR).",
+    "Assist with internal and external audits.",
+    "Prepare basic financial reports for departmental use."
+  ],
+  "Qualifications": [
+    "B.Com/M.Com degree.",
+    "0-2 years of experience in accounting, preferably in a government or public sector entity.",
+    "Basic knowledge of GFR.",
+    "Proficiency in MS Excel and accounting software.",
+    "Strong attention to detail."
+  ]
+}

@@ -1,0 +1,36 @@
+Job Title: Cybersecurity Engineer
+
+About Us:
+We are a leading company in information security and cyber defense looking for passionate and skilled individuals to join our team. We value innovation, collaboration, and continuous learning, striving to protect organizational assets from evolving cyber threats.
+
+The Role:
+As a Cybersecurity Engineer, you will be responsible for implementing and managing robust security controls, monitoring for security incidents and vulnerabilities, and responding to and mitigating cyber attacks. You will work closely with security operations center (SOC) and engineering teams to maintain a strong security posture and ensure data integrity. This role requires a strong commitment to proactive defense and meticulous analysis.
+
+Key Responsibilities:
+- Design, configure, and manage security systems including firewalls, IDS/IPS, and endpoint protection.
+- Conduct regular vulnerability assessments, penetration testing, and security audits.
+- Lead incident response efforts, analyze threat intelligence, and implement preventative measures.
+- Collaborate effectively with cross-functional teams (e.g., engineering, product, marketing).
+- Ensure high quality, adherence to best practices, and timely delivery of projects/tasks.
+- Continuously learn and stay updated with industry trends, emerging technologies, and relevant regulations.
+
+Required Skills and Qualifications:
+- Bachelor's or Master's degree in Cybersecurity, Computer Science, or Information Security or equivalent practical experience.
+- 4+ years of proven professional experience in Cybersecurity Engineer or a closely related role.
+- Strong proficiency in Network Security, Incident Response, Vulnerability Management, SIEM.
+- Demonstrated experience with Firewalls, Endpoint Security, Cloud Security (AWS/Azure/GCP), Scripting (Python).
+- Excellent analytical, problem-solving, and critical thinking skills.
+- Superior communication (written and verbal) and interpersonal abilities.
+
+Preferred Qualifications:
+- Experience with Security Frameworks (NIST, ISO 27001), Ethical Hacking, Threat Modeling, Compliance Audits.
+- Relevant industry certifications (e.g., PMP, AWS, CFA, SHRM).
+- Ability to thrive in a fast-paced, dynamic, and evolving environment.
+- A strong portfolio or demonstrable projects (where applicable).
+
+Benefits:
+- Competitive salary and comprehensive benefits package (health, dental, vision).
+- Generous paid time off and flexible work arrangements.
+- Opportunities for continuous professional growth, training, and career development.
+- A collaborative, inclusive, and supportive work environment.
+- defending against sophisticated cyber threats in a critical environment.

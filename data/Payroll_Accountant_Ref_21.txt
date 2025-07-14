@@ -1,0 +1,20 @@
+{
+  "Job Title": "Payroll Accountant (Ref: 21)",
+  "Company": "People Global 21",
+  "Job Summary": "Hiring a Payroll Accountant to manage end-to-end payroll processing for our diverse client base, ensuring accuracy and compliance.",
+  "Key Responsibilities": [
+    "Process multi-client payroll accurately and timely, including salaries, bonuses, and deductions.",
+    "Ensure strict compliance with all statutory payroll regulations (PF, ESI, Professional Tax, Income Tax, LWF).",
+    "Reconcile payroll accounts, resolve discrepancies, and prepare payroll journal entries.",
+    "Prepare and submit various payroll reports to management and statutory authorities.",
+    "Handle employee queries related to payroll, deductions, and tax implications.",
+    "Stay updated on changes in Indian labor laws and tax regulations affecting payroll."
+  ],
+  "Qualifications": [
+    "Bachelor's degree in Accounting, Commerce, or Human Resources.",
+    "2-4 years of dedicated experience in payroll processing.",
+    "Familiarity with payroll software (e.g., Zoho Payroll, GreytHR, Saral PayPack).",
+    "Strong knowledge of Indian labor laws, income tax, and social security regulations related to payroll.",
+    "Excellent attention to detail and confidentiality."
+  ]
+}

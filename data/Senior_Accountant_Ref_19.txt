@@ -1,0 +1,20 @@
+{
+  "Job Title": "Senior Accountant (Ref: 19)",
+  "Company": "Global Capital 19",
+  "Job Summary": "An experienced Senior Accountant is needed to oversee daily accounting operations, lead financial reporting, and provide mentorship to junior staff.",
+  "Key Responsibilities": [
+    "Lead and manage the full month-end and year-end closing processes, ensuring accuracy and timely completion.",
+    "Prepare and review comprehensive financial statements, including consolidated reports.",
+    "Perform complex account reconciliations, variance analysis, and provide insightful commentary on financial performance.",
+    "Ensure strict compliance with accounting standards (GAAP/IFRS) and regulatory requirements.",
+    "Mentor, train, and guide junior accounting staff, fostering their professional development.",
+    "Collaborate with cross-functional teams to improve accounting processes and internal controls."
+  ],
+  "Qualifications": [
+    "Bachelor's degree in Accounting; Master's degree or CA (Chartered Accountant) qualification preferred.",
+    "4-6 years of progressive and relevant accounting experience.",
+    "Expertise in large-scale ERP systems (e.g., Oracle Financials, SAP) and advanced Excel skills.",
+    "Proven ability to manage multiple tasks, prioritize effectively, and meet tight deadlines.",
+    "Strong leadership, communication (verbal and written), and interpersonal skills."
+  ]
+}
