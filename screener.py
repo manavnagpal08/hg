@@ -1071,6 +1071,32 @@ The {sender_name}""")
 def resume_screener_page():
     st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
 
+    # Define all expected columns for the DataFrame
+    # This list is used for initializing the session state DataFrame
+    # and for creating new DataFrames from processed results.
+    expected_cols = [
+        "File Name", "Candidate Name", "Score (%)", "Years Experience", "CGPA (4.0 Scale)",
+        "Email", "Phone Number", "Location", "Languages", "Education Details",
+        "Work History", "Project Details", "AI Suggestion", "Detailed HR Assessment",
+        "Matched Keywords", "Missing Skills", "Matched Keywords (Categorized)",
+        "Missing Skills (Categorized)", "Semantic Similarity", "Resume Raw Text",
+        "JD Used", "Shortlisted", "Notes", "Tag"
+    ]
+
+    # Initialize full_results_df in session state if it doesn't exist or is somehow malformed
+    if 'full_results_df' not in st.session_state or not isinstance(st.session_state['full_results_df'], pd.DataFrame) or 'File Name' not in st.session_state['full_results_df'].columns:
+        st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols)
+        # Ensure correct dtypes for these columns upon initial creation
+        st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
+        st.session_state['full_results_df']['Notes'] = st.session_state['full_results_df']['Notes'].astype(str)
+        st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df']['Tag'].astype(str)
+    # If it exists but is empty, ensure it has the columns, this handles reruns where data might be cleared
+    elif st.session_state['full_results_df'].empty:
+        st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols)
+        st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
+        st.session_state['full_results_df']['Notes'] = st.session_state['full_results_df']['Notes'].astype(str)
+        st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df']['Tag'].astype(str)
+
     # --- Job Description and Controls Section ---
     st.markdown("## ⚙️ Define Job Requirements & Screening Criteria")
     col1, col2 = st.columns([2, 1])
@@ -1155,19 +1181,6 @@ def resume_screener_page():
     jd_skills_for_processing = MASTER_SKILLS.union(custom_jd_skills_set)
 
     resume_files = st.file_uploader("📄 **Upload Resumes (PDF)**", type="pdf", accept_multiple_files=True, help="Upload one or more PDF resumes for screening.")
-
-    # Initialize full_results_df in session state if it doesn't exist
-    if 'full_results_df' not in st.session_state:
-        # Define all expected columns for the DataFrame
-        expected_cols = [
-            "File Name", "Candidate Name", "Score (%)", "Years Experience", "CGPA (4.0 Scale)",
-            "Email", "Phone Number", "Location", "Languages", "Education Details",
-            "Work History", "Project Details", "AI Suggestion", "Detailed HR Assessment",
-            "Matched Keywords", "Missing Skills", "Matched Keywords (Categorized)",
-            "Missing Skills (Categorized)", "Semantic Similarity", "Resume Raw Text",
-            "JD Used", "Shortlisted", "Notes", "Tag" # "Tag" column added here
-        ]
-        st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols)
 
 
     if jd_text and resume_files:
@@ -1286,27 +1299,47 @@ def resume_screener_page():
         status_text.empty()
 
 
-        df = pd.DataFrame(results).sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
+        # Create a DataFrame from the newly processed results
+        # Ensure it always has the expected columns, even if results is empty
+        newly_processed_df = pd.DataFrame(results, columns=expected_cols)
 
-        # Add 'Shortlisted' and 'Notes' columns if they don't exist in the newly processed df
-        if 'Shortlisted' not in df.columns:
-            df['Shortlisted'] = False
-        if 'Notes' not in df.columns:
-            df['Notes'] = ""
+        if not newly_processed_df.empty:
+            # Ensure 'Shortlisted' and 'Notes' columns have correct dtypes in the new df
+            newly_processed_df['Shortlisted'] = newly_processed_df['Shortlisted'].astype(bool)
+            newly_processed_df['Notes'] = newly_processed_df['Notes'].astype(str)
+            newly_processed_df['Tag'] = newly_processed_df['Tag'].astype(str) # Ensure Tag is string type
 
-        if not df.empty: # Only proceed with merging if new results are available
-            # Merge new results with existing state, preserving user edits for 'Shortlisted' and 'Notes'
-            existing_df = st.session_state['full_results_df'].set_index('File Name')
-            new_df_indexed = df.set_index('File Name')
+            current_full_df = st.session_state['full_results_df'].copy()
 
-            # Use combine_first to prioritize existing user edits
-            # This will keep 'Shortlisted' and 'Notes' from existing_df if they exist for a given File Name
-            # and fill other columns/new rows from new_df_indexed.
-            combined_df = new_df_indexed.combine_first(existing_df)
-            st.session_state['full_results_df'] = combined_df.reset_index()
-        # Else, if df is empty, full_results_df remains as is (either empty or previous state)
+            # Set 'File Name' as index for easier merging/updating
+            current_full_df_indexed = current_full_df.set_index('File Name')
+            newly_processed_df_indexed = newly_processed_df.set_index('File Name')
+
+            # Identify which files are new and which are updates
+            files_to_add = newly_processed_df_indexed[~newly_processed_df_indexed.index.isin(current_full_df_indexed.index)]
+            files_to_update = newly_processed_df_indexed[newly_processed_df_indexed.index.isin(current_full_df_indexed.index)]
+
+            updated_master_df = current_full_df_indexed.copy()
+
+            # Get the columns to update (all except 'Shortlisted' and 'Notes')
+            cols_to_update = [col for col in newly_processed_df_indexed.columns if col not in ['Shortlisted', 'Notes']]
+            
+            # Update existing rows with new data for non-editable columns
+            if not files_to_update.empty:
+                updated_master_df.update(files_to_update[cols_to_update])
+
+            # Add new files
+            if not files_to_add.empty:
+                updated_master_df = pd.concat([updated_master_df, files_to_add])
+
+            # Reset index and sort
+            st.session_state['full_results_df'] = updated_master_df.reset_index()
+            st.session_state['full_results_df'] = st.session_state['full_results_df'].sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
+        else:
+            st.info("No resumes were successfully processed. Please check your uploaded files.")
         
         # Save results to CSV for analytics.py to use (using the full_results_df from session state)
+        # This should be done after full_results_df is updated
         st.session_state['full_results_df'].to_csv("results.csv", index=False)
 
 
@@ -1476,12 +1509,14 @@ def resume_screener_page():
         st.markdown("---")
 
         # Add a 'Tag' column for quick categorization - UPDATED WITH CGPA and Max Exp
-        st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df'].apply(lambda row: 
-            "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.85 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.5) else (
-            "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.7 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.0) else (
-            "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 and row['Years Experience'] <= max_experience and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 2.5) else (
-            "⚠️ Needs Review" if row['Score (%)'] >= 40 else 
-            "❌ Limited Match"))), axis=1)
+        # This must be applied to st.session_state['full_results_df'] after it's fully constructed/updated
+        if not st.session_state['full_results_df'].empty: # Only apply if DataFrame is not empty
+            st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df'].apply(lambda row: 
+                "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.85 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.5) else (
+                "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.7 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.0) else (
+                "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 and row['Years Experience'] <= max_experience and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 2.5) else (
+                "⚠️ Needs Review" if row['Score (%)'] >= 40 else 
+                "❌ Limited Match"))), axis=1)
 
         st.markdown("## 📋 Comprehensive Candidate Results Table")
         st.caption("Full details for all processed resumes. Use filters below and edit 'Shortlisted' and 'Notes' directly.")
@@ -1931,3 +1966,11 @@ def resume_screener_page():
         st.info("Remember to check the Analytics Dashboard for in-depth visualizations of skill overlaps, gaps, and other metrics!")
     else:
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
+
+    # Clear All Processed Data button
+    if st.button("🗑️ Clear All Processed Data", help="Removes all loaded resumes and screening results from the current session."):
+        st.session_state['full_results_df'] = pd.DataFrame(columns=expected_cols) # Re-initialize with columns
+        st.session_state['full_results_df']['Shortlisted'] = st.session_state['full_results_df']['Shortlisted'].astype(bool)
+        st.session_state['full_results_df']['Notes'] = st.session_state['full_results_df']['Notes'].astype(str)
+        st.session_state['full_results_df']['Tag'] = st.session_state['full_results_df']['Tag'].astype(str)
+        st.rerun() # Rerun to clear the display
