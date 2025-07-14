@@ -15,7 +15,6 @@ from login import (
     is_current_user_admin
 )
 
-
 # Import the feedback page function
 from feedback import feedback_and_help_page # NEW: Import feedback page
 
@@ -243,16 +242,20 @@ if tab == "🏠 Dashboard":
     # Initialize cutoff_score and min_exp_required with default values to prevent NameError
     cutoff_score = st.session_state.get('screening_cutoff_score', 75)
     min_exp_required = st.session_state.get('screening_min_experience', 2)
+    max_exp_allowed = st.session_state.get('screening_max_experience', 10) # Added max experience
+    min_cgpa_required = st.session_state.get('screening_min_cgpa', 2.5) # Added min CGPA
 
     # Load results from session state
-    if 'screening_results' in st.session_state and st.session_state['screening_results']:
+    if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
         try:
-            df_results = pd.DataFrame(st.session_state['screening_results'])
+            df_results = st.session_state['comprehensive_df'].copy() # Use .copy() to avoid modifying original
             resume_count = df_results["File Name"].nunique()
             
             shortlisted_df = df_results[
                 (df_results["Score (%)"] >= cutoff_score) &
-                (df_results["Years Experience"] >= min_exp_required)
+                (df_results["Years Experience"] >= min_exp_required) &
+                (df_results["Years Experience"] <= max_exp_allowed) & # Apply max experience filter
+                ((df_results['CGPA (4.0 Scale)'].isnull()) | (df_results['CGPA (4.0 Scale)'] >= min_cgpa_required)) # Apply CGPA filter
             ].copy()
             shortlisted = shortlisted_df.shape[0]
             avg_score = df_results["Score (%)"].mean()
@@ -270,7 +273,7 @@ if tab == "🏠 Dashboard":
 
     metric_cols[0].metric("Resumes Screened", resume_count, help="Total unique resumes processed in this session.")
     metric_cols[1].metric("Job Descriptions", jd_count, help="Number of job descriptions available.")
-    metric_cols[2].metric("Shortlisted Candidates", shortlisted, help=f"Candidates meeting Score >= {cutoff_score}% and Exp >= {min_exp_required} yrs.")
+    metric_cols[2].metric("Shortlisted Candidates", shortlisted, help=f"Candidates meeting Score ≥ {cutoff_score}%, Exp {min_exp_required}-{max_exp_allowed} yrs, CGPA ≥ {min_cgpa_required} or N/A.")
     metric_cols[3].metric("Average Score", f"{avg_score:.1f}%", help="Average matching score of all screened resumes.")
 
     st.markdown("---")
@@ -318,12 +321,14 @@ if tab == "🏠 Dashboard":
     # Optional: Dashboard Insights (Conditionally displayed)
     if not df_results.empty:
         try:
-            df_results['Tag'] = df_results.apply(lambda row:
-                "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row.get('Semantic Similarity', 0) >= 0.85 else (
-                "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row.get('Semantic Similarity', 0) >= 0.7 else (
-                "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 else (
-                "⚠️ Needs Review" if row['Score (%)'] >= 40 else
-                "❌ Limited Match"))), axis=1)
+            # Ensure 'Tag' column is present before trying to use it for charts
+            if 'Tag' not in df_results.columns:
+                df_results['Tag'] = df_results.apply(lambda row:
+                    "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row.get('Semantic Similarity', 0) >= 0.85 else (
+                    "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row.get('Semantic Similarity', 0) >= 0.7 else (
+                    "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 else (
+                    "⚠️ Needs Review" if row['Score (%)'] >= 40 else
+                    "❌ Limited Match"))), axis=1)
 
             col_g1, col_g2 = st.columns(2)
 
@@ -413,8 +418,8 @@ if tab == "🏠 Dashboard":
 
     if st.session_state.dashboard_widgets['Top Performing JDs']:
         st.subheader("Top Performing Job Descriptions")
-        if 'screening_results' in st.session_state and st.session_state['screening_results']:
-            df_all_results = pd.DataFrame(st.session_state['screening_results'])
+        if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+            df_all_results = st.session_state['comprehensive_df'].copy()
             
             # --- START FIX: Ensure 'JD Used' column exists for display ---
             if 'JD Used' not in df_all_results.columns:
@@ -424,17 +429,19 @@ if tab == "🏠 Dashboard":
             # --- END FIX ---
 
             if 'JD Used' in df_all_results.columns: # Re-check after potential mock addition
-                # Filter for shortlisted candidates
+                # Filter for shortlisted candidates based on session state criteria
                 shortlisted_per_jd = df_all_results[
                     (df_all_results["Score (%)"] >= cutoff_score) &
-                    (df_all_results["Years Experience"] >= min_exp_required)
+                    (df_all_results["Years Experience"] >= min_exp_required) &
+                    (df_all_results["Years Experience"] <= max_exp_allowed) & # Apply max experience filter
+                    ((df_all_results['CGPA (4.0 Scale)'].isnull()) | (df_all_results['CGPA (4.0 Scale)'] >= min_cgpa_required)) # Apply CGPA filter
                 ]['JD Used'].value_counts().reset_index()
                 shortlisted_per_jd.columns = ['Job Description', 'Shortlisted Count']
                 
                 if not shortlisted_per_jd.empty:
                     st.dataframe(shortlisted_per_jd, use_container_width=True, hide_index=True)
                 else:
-                    st.info("No shortlisted candidates found for any JD yet.")
+                    st.info("No shortlisted candidates found for any JD yet based on current criteria.")
             else:
                 st.info("Still unable to determine top performing JDs. 'JD Used' column is missing even after fallback.")
         else:
@@ -552,16 +559,16 @@ elif tab == "🧠 Resume Screener":
         from screener import resume_screener_page
         resume_screener_page()
         # Example of logging an activity after screening (you'd integrate this inside screener.py)
-        if 'screening_results' in st.session_state and st.session_state['screening_results']:
+        if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
             # This logic should ideally be inside screener.py when a new screening is completed
             # For demonstration, we'll log if new results appear
-            if st.session_state.get('last_screen_log_count', 0) < len(st.session_state['screening_results']):
-                log_activity(f"Performed resume screening for {len(st.session_state['screening_results'])} candidates.")
-                st.session_state.last_screen_log_count = len(st.session_state['screening_results'])
+            if st.session_state.get('last_screen_log_count', 0) < len(st.session_state['comprehensive_df']):
+                log_activity(f"Performed resume screening for {len(st.session_state['comprehensive_df'])} candidates.")
+                st.session_state.last_screen_log_count = len(st.session_state['comprehensive_df'])
 
             # Example: Triggering a pending approval for a high-scoring candidate
             # This would be more sophisticated in screener.py, checking specific criteria
-            for result in st.session_state['screening_results']:
+            for result in st.session_state['comprehensive_df'].to_dict('records'): # Iterate over records
                 if result['Score (%)'] >= 90 and result['Candidate Name'] not in [app['candidate_name'] for app in st.session_state.get('pending_approvals', []) if app['status'] == 'pending']:
                     if 'pending_approvals' not in st.session_state:
                         st.session_state.pending_approvals = []
