@@ -7,7 +7,7 @@ import os
 import json
 import datetime # Import datetime for timestamps
 import plotly.express as px # Re-added plotly.express for interactive graphs
-import statsmodels.api as sm # Added this import for OLS trendline
+import statsmodels.api as sm # Added this import for OLS trendline in analytics
 import collections # For defaultdict in skill categorization
 
 # Import the page functions from their respective files
@@ -18,7 +18,13 @@ from login import (
 )
 
 # Import the feedback page function
-from feedback import feedback_and_help_page # NEW: Import feedback page
+from feedback import feedback_and_help_page
+
+# Import the screener page function
+from screener import resume_screener_page
+
+# Import the email sender function
+from email_sender import send_email_to_candidate
 
 # --- Helper for Activity Logging ---
 def log_activity(message):
@@ -31,7 +37,7 @@ def log_activity(message):
     st.session_state.activity_log = st.session_state.activity_log[:50]
 
 # --- Page Config ---
-st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="�")
+st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
 
 # --- Dark Mode Toggle ---
 dark_mode = st.sidebar.toggle("🌙 Dark Mode", key="dark_mode_main")
@@ -230,12 +236,9 @@ if "tab_override" in st.session_state:
     del st.session_state.tab_override
 
 # ======================
-# Analytics Dashboard Page Function (Moved from analytics.py)
+# Analytics Dashboard Page Function
 # ======================
 def analytics_dashboard_page():
-    # --- Page Styling ---
-    # st.set_page_config(layout="wide", page_title="Resume Screening Analytics") # Removed: should be in main.py
-
     st.markdown("""
     <style>
     .analytics-box {
@@ -266,32 +269,26 @@ def analytics_dashboard_page():
     st.markdown('<div class="analytics-box">', unsafe_allow_html=True)
     st.markdown("## 📊 Screening Analytics Dashboard")
 
-    # --- Load Data ---
-    # Removed @st.cache_data to ensure current session data is always loaded
     def load_screening_data():
         """Loads screening results only from session state."""
-        # Corrected: Load from 'comprehensive_df'
         if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
             try:
                 st.info("✅ Loaded screening results from current session.")
-                return st.session_state['comprehensive_df'].copy() # Return a copy
+                return st.session_state['comprehensive_df'].copy()
             except Exception as e:
                 st.error(f"Error loading results from session state: {e}")
-                return pd.DataFrame() # Return empty DataFrame on error
+                return pd.DataFrame()
         else:
             st.warning("⚠️ No screening data found in current session. Please run the screener first.")
-            return pd.DataFrame() # Return empty DataFrame if no session data found
+            return pd.DataFrame()
 
     df = load_screening_data()
 
-    # Check if DataFrame is still empty after loading attempts
     if df.empty:
         st.info("No data available for analytics. Please screen some resumes first.")
         st.stop()
 
-    # --- Essential Column Check ---
     essential_core_columns = ['Score (%)', 'Years Experience', 'File Name', 'Candidate Name']
-
     missing_essential_columns = [col for col in essential_core_columns if col not in df.columns]
 
     if missing_essential_columns:
@@ -299,7 +296,6 @@ def analytics_dashboard_page():
                  " Please ensure your screening process generates at least these required data fields.")
         st.stop()
 
-    # --- Filters Section ---
     st.markdown("### 🔍 Filter Results")
     filter_cols = st.columns(3)
 
@@ -330,12 +326,11 @@ def analytics_dashboard_page():
             "Set Shortlisting Cutoff Score (%)",
             min_value=0,
             max_value=100,
-            value=80, # Default value for this analytics-specific slider
+            value=80,
             step=1,
             key="shortlist_filter"
         )
 
-    # Apply filters
     filtered_df = df[
         (df['Score (%)'] >= score_range[0]) & (df['Score (%)'] <= score_range[1]) &
         (df['Years Experience'] >= exp_range[0]) & (df['Years Experience'] <= exp_range[1])
@@ -345,10 +340,8 @@ def analytics_dashboard_page():
         st.warning("No data matches the selected filters. Please adjust your criteria.")
         st.stop()
 
-    # Add Shortlisted/Not Shortlisted column to filtered_df for plotting
     filtered_df['Shortlisted'] = filtered_df['Score (%)'].apply(lambda x: f"Yes (Score >= {shortlist_threshold}%)" if x >= shortlist_threshold else "No")
 
-    # --- Metrics ---
     st.markdown("### 📈 Key Metrics")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Avg. Score", f"{filtered_df['Score (%)'].mean():.2f}%")
@@ -359,7 +352,6 @@ def analytics_dashboard_page():
 
     st.divider()
 
-    # --- Detailed Candidate Table ---
     st.markdown("### 📋 Filtered Candidates List")
     display_cols_for_table = ['File Name', 'Candidate Name', 'Score (%)', 'Years Experience', 'Shortlisted']
 
@@ -397,7 +389,6 @@ def analytics_dashboard_page():
         use_container_width=True
     )
 
-    # --- Download Filtered Data ---
     @st.cache_data
     def convert_df_to_csv(df_to_convert):
         return df_to_convert.to_csv(index=False).encode('utf-8')
@@ -413,12 +404,12 @@ def analytics_dashboard_page():
 
     st.divider()
 
-    # --- Visualizations ---
     st.markdown("### 📊 Visualizations")
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
         "Score Distribution", "Experience Distribution", "Shortlist Breakdown",
         "Score vs. Experience", "Skill Clouds", "CGPA Distribution",
-        "Score vs. CGPA", "Experience vs. CGPA"
+        "Score vs. CGPA", "Experience vs. CGPA", "Skills by Category",
+        "Location Distribution"
     ])
 
     with tab1:
@@ -428,7 +419,7 @@ def analytics_dashboard_page():
         ax_hist.set_xlabel("Score (%)")
         ax_hist.set_ylabel("Number of Candidates")
         st.pyplot(fig_hist)
-        plt.close(fig_hist) # Close the figure to free up memory
+        plt.close(fig_hist)
 
     with tab2:
         st.markdown("#### Experience Distribution")
@@ -437,7 +428,7 @@ def analytics_dashboard_page():
         ax_exp.set_xlabel("Years of Experience")
         ax_exp.set_ylabel("Number of Candidates")
         st.pyplot(fig_exp)
-        plt.close(fig_exp) # Close the figure to free up memory
+        plt.close(fig_exp)
 
     with tab3:
         st.markdown("#### Shortlist Breakdown")
@@ -450,7 +441,6 @@ def analytics_dashboard_page():
                 color_discrete_sequence=px.colors.qualitative.Pastel
             )
             st.plotly_chart(fig_pie, use_container_width=True)
-            # Plotly figures are automatically closed by Streamlit, so no plt.close() needed.
         else:
             st.info("Not enough data to generate Shortlist Breakdown.")
 
@@ -468,8 +458,6 @@ def analytics_dashboard_page():
             color_discrete_map={f"Yes (Score >= {shortlist_threshold}%)": "green", "No": "red"}
         )
         st.plotly_chart(fig_scatter, use_container_width=True)
-        # Plotly figures are automatically closed by Streamlit, so no plt.close() needed.
-
 
     with tab5:
         col_wc1, col_wc2 = st.columns(2)
@@ -486,7 +474,7 @@ def analytics_dashboard_page():
                     ax_wc.imshow(wc, interpolation='bilinear')
                     ax_wc.axis('off')
                     st.pyplot(fig_wc)
-                    plt.close(fig_wc) # Close the figure
+                    plt.close(fig_wc)
                 else:
                     st.info("No common skills to display in the WordCloud for filtered data.")
             else:
@@ -500,14 +488,14 @@ def analytics_dashboard_page():
                     for s in str(row).split(',') if s.strip()
                 ])
                 if not all_missing.empty:
-                    sns.set_style("whitegrid") # Apply style before creating figure
+                    sns.set_style("whitegrid")
                     fig_ms, ax_ms = plt.subplots(figsize=(8, 4))
                     top_missing = all_missing.value_counts().head(10)
                     sns.barplot(x=top_missing.values, y=top_missing.index, ax=ax_ms, palette="coolwarm")
                     ax_ms.set_xlabel("Count")
                     ax_ms.set_ylabel("Missing Skill")
                     st.pyplot(fig_ms)
-                    plt.close(fig_ms) # Close the figure
+                    plt.close(fig_ms)
                 else:
                     st.info("No top missing skills to display for filtered data.")
             else:
@@ -564,21 +552,17 @@ def analytics_dashboard_page():
         else:
             st.info("No CGPA data available for this visualization.")
 
-    # New tabs for Skill Categories and Location Distribution
-    tab_skills_cat, tab_location_dist = st.tabs(["Skills by Category", "Location Distribution"])
-
-    with tab_skills_cat:
+    with tab9:
         st.markdown("#### 🧠 Skills by Category")
         if 'Matched Keywords (Categorized)' in filtered_df.columns and not filtered_df['Matched Keywords (Categorized)'].empty:
-            # Flatten the dictionary of categorized skills into a list of (category, skill) tuples
-            all_categorized_skills = collections.defaultdict(int)
+            all_categorized_skills_counts = collections.defaultdict(int)
             for categorized_dict in filtered_df['Matched Keywords (Categorized)'].dropna():
                 if isinstance(categorized_dict, dict):
                     for category, skills_list in categorized_dict.items():
-                        all_categorized_skills[category] += len(skills_list)
+                        all_categorized_skills_counts[category] += len(skills_list)
             
-            if all_categorized_skills:
-                skills_cat_df = pd.DataFrame(all_categorized_skills.items(), columns=['Category', 'Count']).sort_values('Count', ascending=False)
+            if all_categorized_skills_counts:
+                skills_cat_df = pd.DataFrame(all_categorized_skills_counts.items(), columns=['Category', 'Count']).sort_values('Count', ascending=False)
                 fig_skills_cat = px.bar(
                     skills_cat_df,
                     x='Count',
@@ -595,10 +579,9 @@ def analytics_dashboard_page():
         else:
             st.info("No 'Matched Keywords (Categorized)' data available or column not found.")
 
-    with tab_location_dist:
+    with tab10:
         st.markdown("#### 📍 Candidate Location Distribution")
         if 'Location' in filtered_df.columns and not filtered_df['Location'].empty:
-            # Handle multiple locations per candidate (if comma-separated)
             all_locations = []
             for loc_str in filtered_df['Location'].dropna():
                 all_locations.extend([loc.strip() for loc in loc_str.split(',') if loc.strip() and loc.strip().lower() != 'not found'])
@@ -905,19 +888,6 @@ if tab == "🏠 Dashboard":
                 st.dataframe(reviewed_df[['candidate_name', 'score', 'experience', 'status']], use_container_width=True, hide_index=True)
 
 
-    # Removed Activity Feed as per user request
-    # if st.session_state.dashboard_widgets['Activity Feed']:
-    #     st.subheader("Recent Activity Feed")
-    #     if st.session_state.get('activity_log'):
-    #         # Display only the last 10 activities for brevity on dashboard
-    #         for activity in st.session_state.activity_log[:10]:
-    #             st.markdown(f"- <small>{activity}</small>", unsafe_allow_html=True)
-    #         if len(st.session_state.activity_log) > 10:
-    #             st.info(f"Showing last 10 activities. Total activities: {len(st.session_state.activity_log)}. Scroll up to customize widget display.")
-    #     else:
-    #         st.info("No recent activity.")
-
-
 # ======================
 # ⚙️ Admin Tools Section
 # ======================
@@ -953,96 +923,21 @@ elif tab == "⚙️ Admin Tools":
 # ======================
 # Page Routing via function calls (remaining pages)
 # ======================
-# Placeholder for screener.py, email_sender.py, analytics.py, manage_jds.py, search.py, notes.py
-# You need to ensure these files exist and define the respective page functions.
-# For demonstration, these will print a message if the files are not available.
-
 elif tab == "🧠 Resume Screener":
     try:
-        # The content of screener.py is now effectively part of main.py
-        # You would call the functions defined in the screener.py (if they were in a separate file)
-        # Since it's now integrated, we'll assume the functions are defined above or below this point.
-        # For this specific scenario, let's assume the functions are defined within main.py
-        # and we are calling the main function for the screener page.
-        # If the screener logic is directly in the main script, you might not need a separate call here.
-        # However, to maintain modularity as per previous discussions, we'll keep the function call.
-        
-        # NOTE: The actual resume_screener_page function needs to be defined in this file (main.py)
-        # or imported from a separate file. Assuming it's defined in main.py for this context.
-        # For the purpose of this response, I'm assuming the resume_screener_page function
-        # is available in the context of main.py, as it was provided in the previous turn.
-        # If it's not, you'll need to paste the content of screener.py into main.py.
-        
-        # Calling the function that contains the screener logic
-        # (This function was provided in a previous turn and should be present in main.py)
-        # from screener import resume_screener_page # This import is no longer needed if integrated
-        # resume_screener_page() # Call the integrated function
-
-        # Since the user explicitly provided the screener code in the previous turn,
-        # and it's quite large, I will not paste it again here.
-        # The assumption is that `resume_screener_page` exists in this `main.py` file.
-        # If it's still in a separate `screener.py` file, the import and call is correct.
-        # If the user wants it fully integrated, the content of screener.py needs to be
-        # literally pasted into main.py and the import removed.
-
-        # For the current context, I will assume the `resume_screener_page` function
-        # is defined within this `main.py` file, as the user is asking to integrate.
-        # However, to avoid repeating the large code block, I'll just keep the structure.
-
-        # If you have the `resume_screener_page` function defined above in this `main.py`
-        # then you would simply call it like this:
-        # resume_screener_page()
-
-        # For this turn, I will assume the user has already pasted the `screener.py` content
-        # into `main.py` and the `resume_screener_page` function is now part of `main.py`.
-        # Therefore, the `from screener import resume_screener_page` line should be removed
-        # if the code is truly integrated.
-        # I will keep the `try-except` block for robustness.
-
-        # Placeholder for the actual call to the integrated screener page function
-        # (Assuming the function definition exists within this main.py)
-        # If it's not defined, you will need to paste the code from screener.py here.
-        st.write("Loading Resume Screener...") # Placeholder message
-        # You would call the actual function here if it's defined in this file.
-        # For example:
-        # resume_screener_page() # This line would be active if the function is defined above.
-
-        # The previous turn's `screener.py` content was quite long.
-        # To avoid re-pasting it, I'll assume it's correctly integrated.
-        # Let's ensure the `resume_screener_page` function is indeed defined in this `main.py`.
-        # I will add a minimal placeholder for `resume_screener_page` if it's not there,
-        # but the user needs to paste the full content of `screener.py` into `main.py`
-        # if they want a single file.
-
-        # Since the user explicitly mentioned "pasted analytics.py implement in this also",
-        # it implies they want the code to be *literally* in this file.
-        # I will now add the full `resume_screener_page` function at the top of this file
-        # to ensure it's self-contained.
-
-        # I will move the `resume_screener_page` definition to the top of the file
-        # to ensure it's available when called.
-        # (This is a mental note for the full code generation, not part of this response's text.)
-
-        # After defining `resume_screener_page` at the top, this block will simply call it.
-        # For now, assuming it's available:
-        # This part of the code should be replaced by the actual call to the screener function
-        # once the screener.py content is fully integrated into main.py.
-        # For this turn, I'm just correcting the analytics part.
-        # The user will need to ensure resume_screener_page is defined.
-
-        # Let's assume the `resume_screener_page` function is now defined in `main.py`
-        # (as it was in the previous turn's `screener.py` content).
-        # So, we just call it.
-        from screener import resume_screener_page # Keep this import if screener is still separate
-        resume_screener_page()
-
+        resume_screener_page() # Call the imported function
+        # The logging and pending approval logic here should ideally be handled within resume_screener_page itself
+        # after a successful screening operation. For now, keeping it here for demonstration.
         if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
-            if st.session_state.get('last_screen_log_count', 0) < len(st.session_state['comprehensive_df']):
-                log_activity(f"Performed resume screening for {len(st.session_state['comprehensive_df'])} candidates.")
-                st.session_state.last_screen_log_count = len(st.session_state['comprehensive_df'])
+            # Log activity only if new data was added to comprehensive_df
+            current_df_len = len(st.session_state['comprehensive_df'])
+            if st.session_state.get('last_screen_log_count', 0) < current_df_len:
+                log_activity(f"Performed resume screening for {current_df_len} candidates.")
+                st.session_state.last_screen_log_count = current_df_len
 
+            # Example: Triggering a pending approval for a high-scoring candidate
             for result in st.session_state['comprehensive_df'].to_dict('records'):
-                if result['Score (%)'] >= 90 and result['Candidate Name'] not in [app['candidate_name'] for app in st.session_state.get('pending_approvals', []) if app['status'] == 'pending']:
+                if result.get('Score (%)', 0) >= 90 and result['Candidate Name'] not in [app['candidate_name'] for app in st.session_state.get('pending_approvals', []) if app['status'] == 'pending']:
                     if 'pending_approvals' not in st.session_state:
                         st.session_state.pending_approvals = []
                     st.session_state.pending_approvals.append({
@@ -1057,7 +952,7 @@ elif tab == "🧠 Resume Screener":
                     st.toast(f"Candidate {result['Candidate Name']} sent for approval!")
 
     except ImportError:
-        st.info("`screener.py` not found or function not defined. Please create it.")
+        st.error("`screener.py` not found or `resume_screener_page` function not defined. Please ensure 'screener.py' exists and contains the 'resume_screener_page' function.")
     except Exception as e:
         st.error(f"Error loading Resume Screener: {e}")
 
@@ -1071,15 +966,13 @@ elif tab == "📁 Manage JDs":
         st.error(f"Error loading Manage JDs: {e}")
 
 elif tab == "📊 Screening Analytics":
-    # Call the integrated analytics dashboard function
     analytics_dashboard_page()
 
 elif tab == "📤 Email Candidates":
     try:
-        from email_sender import send_email_to_candidate
-        send_email_to_candidate()
+        send_email_to_candidate() # Call the imported function
     except ImportError:
-        st.info("`email_sender.py` not found or function not defined. Please create it.")
+        st.error("`email_sender.py` not found or `send_email_to_candidate` function not defined. Please ensure 'email_sender.py' exists and contains the 'send_email_to_candidate' function.")
     except Exception as e:
         st.error(f"Error loading Email Candidates: {e}")
 
@@ -1112,4 +1005,3 @@ elif tab == "🚪 Logout":
     st.session_state.pop('username', None)
     st.success("✅ Logged out.")
     st.rerun()
-
