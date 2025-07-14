@@ -8,6 +8,7 @@ import json
 import datetime # Import datetime for timestamps
 import plotly.express as px # Re-added plotly.express for interactive graphs
 import statsmodels.api as sm # Added this import for OLS trendline
+import collections # For defaultdict in skill categorization
 
 # Import the page functions from their respective files
 from login import (
@@ -414,7 +415,11 @@ def analytics_dashboard_page():
 
     # --- Visualizations ---
     st.markdown("### 📊 Visualizations")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Score Distribution", "Experience Distribution", "Shortlist Breakdown", "Score vs. Experience", "Skill Clouds"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "Score Distribution", "Experience Distribution", "Shortlist Breakdown",
+        "Score vs. Experience", "Skill Clouds", "CGPA Distribution",
+        "Score vs. CGPA", "Experience vs. CGPA"
+    ])
 
     with tab1:
         st.markdown("#### Score Distribution")
@@ -507,6 +512,116 @@ def analytics_dashboard_page():
                     st.info("No top missing skills to display for filtered data.")
             else:
                 st.info("No 'Missing Skills' data available or column not found.")
+
+    with tab6:
+        st.markdown("#### 🎓 CGPA Distribution")
+        if 'CGPA (4.0 Scale)' in filtered_df.columns and not filtered_df['CGPA (4.0 Scale)'].isnull().all():
+            fig_cgpa_hist = px.histogram(
+                filtered_df.dropna(subset=['CGPA (4.0 Scale)']),
+                x='CGPA (4.0 Scale)',
+                nbins=10,
+                title='Distribution of CGPA (Normalized to 4.0 Scale)',
+                labels={'CGPA (4.0 Scale)': 'CGPA'},
+                color_discrete_sequence=[px.colors.qualitative.Plotly[0]] if not dark_mode else [px.colors.qualitative.Dark2[0]]
+            )
+            st.plotly_chart(fig_cgpa_hist, use_container_width=True)
+        else:
+            st.info("No CGPA data available for this visualization.")
+
+    with tab7:
+        st.markdown("#### 📈 Score vs. CGPA")
+        if 'CGPA (4.0 Scale)' in filtered_df.columns and not filtered_df['CGPA (4.0 Scale)'].isnull().all():
+            fig_score_cgpa = px.scatter(
+                filtered_df.dropna(subset=['CGPA (4.0 Scale)']),
+                x='CGPA (4.0 Scale)',
+                y='Score (%)',
+                hover_name='Candidate Name',
+                color='Shortlisted',
+                title='Candidate Score vs. CGPA',
+                labels={'CGPA (4.0 Scale)': 'CGPA (4.0 Scale)', 'Score (%)': 'Matching Score (%)'},
+                trendline="ols",
+                color_discrete_map={f"Yes (Score >= {shortlist_threshold}%)": "green", "No": "red"}
+            )
+            st.plotly_chart(fig_score_cgpa, use_container_width=True)
+        else:
+            st.info("No CGPA data available for this visualization.")
+
+    with tab8:
+        st.markdown("#### 📊 Experience vs. CGPA")
+        if 'CGPA (4.0 Scale)' in filtered_df.columns and not filtered_df['CGPA (4.0 Scale)'].isnull().all():
+            fig_exp_cgpa = px.scatter(
+                filtered_df.dropna(subset=['CGPA (4.0 Scale)']),
+                x='Years Experience',
+                y='CGPA (4.0 Scale)',
+                hover_name='Candidate Name',
+                color='Shortlisted',
+                title='Years Experience vs. CGPA',
+                labels={'Years Experience': 'Years of Experience', 'CGPA (4.0 Scale)': 'CGPA (4.0 Scale)'},
+                trendline="ols",
+                color_discrete_map={f"Yes (Score >= {shortlist_threshold}%)": "green", "No": "red"}
+            )
+            st.plotly_chart(fig_exp_cgpa, use_container_width=True)
+        else:
+            st.info("No CGPA data available for this visualization.")
+
+    # New tabs for Skill Categories and Location Distribution
+    tab_skills_cat, tab_location_dist = st.tabs(["Skills by Category", "Location Distribution"])
+
+    with tab_skills_cat:
+        st.markdown("#### 🧠 Skills by Category")
+        if 'Matched Keywords (Categorized)' in filtered_df.columns and not filtered_df['Matched Keywords (Categorized)'].empty:
+            # Flatten the dictionary of categorized skills into a list of (category, skill) tuples
+            all_categorized_skills = collections.defaultdict(int)
+            for categorized_dict in filtered_df['Matched Keywords (Categorized)'].dropna():
+                if isinstance(categorized_dict, dict):
+                    for category, skills_list in categorized_dict.items():
+                        all_categorized_skills[category] += len(skills_list)
+            
+            if all_categorized_skills:
+                skills_cat_df = pd.DataFrame(all_categorized_skills.items(), columns=['Category', 'Count']).sort_values('Count', ascending=False)
+                fig_skills_cat = px.bar(
+                    skills_cat_df,
+                    x='Count',
+                    y='Category',
+                    orientation='h',
+                    title='Total Matched Skills by Category',
+                    labels={'Count': 'Number of Matched Skills', 'Category': 'Skill Category'},
+                    color='Count',
+                    color_continuous_scale=px.colors.sequential.Teal if not dark_mode else px.colors.sequential.Plasma
+                )
+                st.plotly_chart(fig_skills_cat, use_container_width=True)
+            else:
+                st.info("No categorized skill data available for this visualization.")
+        else:
+            st.info("No 'Matched Keywords (Categorized)' data available or column not found.")
+
+    with tab_location_dist:
+        st.markdown("#### 📍 Candidate Location Distribution")
+        if 'Location' in filtered_df.columns and not filtered_df['Location'].empty:
+            # Handle multiple locations per candidate (if comma-separated)
+            all_locations = []
+            for loc_str in filtered_df['Location'].dropna():
+                all_locations.extend([loc.strip() for loc in loc_str.split(',') if loc.strip() and loc.strip().lower() != 'not found'])
+            
+            if all_locations:
+                location_counts = pd.Series(all_locations).value_counts().reset_index()
+                location_counts.columns = ['Location', 'Count']
+                fig_location = px.bar(
+                    location_counts,
+                    x='Count',
+                    y='Location',
+                    orientation='h',
+                    title='Candidate Distribution by Location',
+                    labels={'Count': 'Number of Candidates', 'Location': 'Location'},
+                    color='Count',
+                    color_continuous_scale=px.colors.sequential.Viridis if not dark_mode else px.colors.sequential.Cividis
+                )
+                st.plotly_chart(fig_location, use_container_width=True)
+            else:
+                st.info("No valid location data available for this visualization.")
+        else:
+            st.info("No 'Location' data available or column not found.")
+
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -997,4 +1112,4 @@ elif tab == "🚪 Logout":
     st.session_state.pop('username', None)
     st.success("✅ Logged out.")
     st.rerun()
-
+�
