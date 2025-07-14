@@ -1,4 +1,4 @@
-# Version 1.14 - Custom City List for Location Extraction (Revised)
+# Version 1.15 - Improved Name Extraction (Filtering "LinkedIn")
 import streamlit as st
 import pdfplumber
 import pandas as pd
@@ -382,17 +382,26 @@ def extract_name(text):
     """
     Attempts to extract a name from the first few lines of the resume text.
     This is a heuristic and might not be perfect for all resume formats.
+    Filters out common non-name terms like "LinkedIn".
     """
     lines = text.strip().split('\n')
     if not lines:
         return None
 
+    # Define terms to explicitly exclude from being identified as a name
+    EXCLUDE_NAME_TERMS = {"linkedin", "github", "portfolio", "resume", "cv", "profile", "contact", "email", "phone"}
+
     potential_name_lines = []
     # Consider the first 5 lines for name extraction
     for line in lines[:5]:
         line = line.strip()
+        line_lower = line.lower()
+
         # Filter out lines that clearly contain email, phone, or too many words
-        if not re.search(r'[@\d\.\-]', line) and len(line.split()) <= 4:
+        # Also, filter out lines that contain any of the EXCLUDE_NAME_TERMS
+        if not re.search(r'[@\d\.\-]', line) and \
+           len(line.split()) <= 4 and \
+           not any(term in line_lower for term in EXCLUDE_NAME_TERMS):
             # Heuristic: Check if the line is mostly capitalized words (like a name)
             if line.isupper() or (line and line[0].isupper() and all(word[0].isupper() or not word.isalpha() for word in line.split())):
                 potential_name_lines.append(line)
