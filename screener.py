@@ -1,4 +1,4 @@
-# Version 1.15 - Improved Name Extraction (Filtering "LinkedIn")
+# Version 1.16 - Improved Table UI and CSV Download
 import streamlit as st
 import pdfplumber
 import pandas as pd
@@ -1471,26 +1471,25 @@ def resume_screener_page():
                 filtered_df = filtered_df[filtered_df['Matched Keywords'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
 
 
-        # Define columns to display in the comprehensive table
+        # Define columns to display in the comprehensive table (reordered for user-friendliness)
         comprehensive_cols = [
             'Candidate Name',
             'Score (%)',
+            'Tag', # Moved up for quick assessment
+            'AI Suggestion', # Moved up for quick summary
             'Years Experience',
             'CGPA (4.0 Scale)',
+            'Semantic Similarity',
             'Email',
             'Phone Number',
             'Location',
             'Languages',
+            'Matched Keywords',
+            'Missing Skills',
             'Education Details',
             'Work History',
             'Project Details',
-            'Semantic Similarity',
-            'Tag',
-            'AI Suggestion',
-            'Matched Keywords',
-            'Missing Skills',
             'JD Used'
-            # 'Resume Raw Text' # Removed from default display to keep table manageable, can be viewed in Analytics
         ]
         
         # Ensure all columns exist before trying to display them
@@ -1516,28 +1515,36 @@ def resume_screener_page():
                 "CGPA (4.0 Scale)": st.column_config.NumberColumn(
                     "CGPA (4.0 Scale)",
                     help="Candidate's CGPA normalized to a 4.0 scale",
-                    format="%.2f", # Use .2f for float, Streamlit handles None gracefully here
+                    format="%.2f", 
                     min_value=0.0,
                     max_value=4.0
                 ),
                 "Semantic Similarity": st.column_config.NumberColumn(
                     "Semantic Similarity",
                     help="Conceptual similarity between JD and Resume (higher is better)",
-                    format="%.2f", # Use .2f for float, Streamlit handles None gracefully here
+                    format="%.2f", 
                     min_value=0,
                     max_value=1
                 ),
                 "AI Suggestion": st.column_config.Column(
                     "AI Suggestion",
-                    help="AI's concise overall assessment and recommendation"
+                    help="AI's concise overall assessment and recommendation",
+                    width="medium" # Suggest a medium width for this column
+                ),
+                "Tag": st.column_config.Column(
+                    "Tag",
+                    help="Quick categorization of candidate fit",
+                    width="small" # Keep tag column concise
                 ),
                 "Matched Keywords": st.column_config.Column(
                     "Matched Keywords",
-                    help="Keywords found in both JD and Resume"
+                    help="Keywords found in both JD and Resume",
+                    width="large" # Allow more space for keywords
                 ),
                 "Missing Skills": st.column_config.Column(
                     "Missing Skills",
-                    help="Key skills from JD not found in Resume"
+                    help="Key skills from JD not found in Resume",
+                    width="large" # Allow more space for missing skills
                 ),
                 "JD Used": st.column_config.Column(
                     "JD Used",
@@ -1557,17 +1564,30 @@ def resume_screener_page():
                 ),
                 "Education Details": st.column_config.Column(
                     "Education Details",
-                    help="Structured education history (University, Degree, Major, Year)"
+                    help="Structured education history (University, Degree, Major, Year)",
+                    width="large" # Allow more space for education
                 ),
                 "Work History": st.column_config.Column(
                     "Work History",
-                    help="Structured work experience (Company, Title, Dates)"
+                    help="Structured work experience (Company, Title, Dates)",
+                    width="large" # Allow more space for work history
                 ),
                 "Project Details": st.column_config.Column(
                     "Project Details",
-                    help="Structured project experience (Title, Description, Technologies)"
+                    help="Structured project experience (Title, Description, Technologies)",
+                    width="large" # Allow more space for project details
                 )
             }
+        )
+
+        # --- CSV Download Button ---
+        csv_data = filtered_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="⬇️ Download All Results as CSV",
+            data=csv_data,
+            file_name="resume_screening_results.csv",
+            mime="text/csv",
+            help="Download the current table data as a CSV file."
         )
 
         st.info("Remember to check the Analytics Dashboard for in-depth visualizations of skill overlaps, gaps, and other metrics!")
