@@ -12,20 +12,6 @@ import plotly.express as px
 import statsmodels.api as sm
 import collections
 
-# Removed imports from streamlit-extras as requested
-
-# Import the page functions from their respective files
-# NOTE: These imports are now moved into their respective 'elif tab == "Page Name":' blocks
-# to prevent ImportErrors if the files are not perfectly structured or contain top-level execution.
-# from login import (
-#     login_section, load_users, admin_registration_section,
-#     admin_password_reset_section, admin_disable_enable_user_section,
-#     is_current_user_admin
-# )
-# from feedback import feedback_and_help_page
-# from screener import resume_screener_page
-# from email_sender import send_email_to_candidate
-
 # File to store user credentials
 USER_DB_FILE = "users.json"
 # Define your admin usernames here as a tuple of strings
@@ -904,45 +890,15 @@ elif tab == "📝 Candidate Notes":
     except Exception as e:
         st.error(f"Error loading Candidate Notes: {e}")
 
-# --- New Reports Page ---
+# --- Import and Call the new Reports Page ---
 elif tab == "📈 Reports":
-    st.markdown('<div class="dashboard-header">📈 Custom Reports</div>', unsafe_allow_html=True)
-    st.write("This section will allow you to generate custom reports based on your screening data.")
-    st.info("Feature under development. Stay tuned for advanced reporting capabilities!")
-    
-    st.markdown("### Generate Report")
-    report_type = st.selectbox("Select Report Type", ["Candidate Summary", "JD Performance", "Skill Gap Analysis"], key="report_type_select")
-    
-    if report_type == "Candidate Summary":
-        st.write("Generate a summary of candidate performance across various metrics.")
-        if st.button("Generate Candidate Summary Report"):
-            st.success("Candidate Summary Report generated! (Mock data)")
-            # In a real app, you'd fetch and display data here
-            st.dataframe(pd.DataFrame({
-                "Candidate": ["Alice", "Bob", "Charlie"],
-                "Score": [92, 78, 85],
-                "Experience": [5, 3, 7],
-                "Shortlisted": ["Yes", "No", "Yes"]
-            }))
-    elif report_type == "JD Performance":
-        st.write("Analyze how well different Job Descriptions are attracting suitable candidates.")
-        if st.button("Generate JD Performance Report"):
-            st.success("JD Performance Report generated! (Mock data)")
-            st.dataframe(pd.DataFrame({
-                "JD": ["Software Engineer", "Data Scientist", "Product Manager"],
-                "Total Resumes": [50, 30, 20],
-                "Shortlisted": [15, 10, 8],
-                "Avg. Score": [88, 75, 82]
-            }))
-    elif report_type == "Skill Gap Analysis":
-        st.write("Identify common skill gaps among your candidate pool relative to your JDs.")
-        if st.button("Generate Skill Gap Analysis Report"):
-            st.success("Skill Gap Analysis Report generated! (Mock data)")
-            st.dataframe(pd.DataFrame({
-                "Missing Skill": ["Cloud Computing", "Leadership", "Advanced SQL"],
-                "Frequency": [25, 18, 12],
-                "Impact": ["High", "Medium", "Low"]
-            }))
+    try:
+        from report import custom_reports_page
+        custom_reports_page()
+    except ImportError:
+        st.error("`report.py` not found or `custom_reports_page` function not defined. Please ensure 'report.py' exists and contains the 'custom_reports_page' function.")
+    except Exception as e:
+        st.error(f"Error loading Custom Reports page: {e}")
 
 
 elif tab == "❓ Feedback & Help":
