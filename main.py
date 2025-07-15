@@ -457,12 +457,24 @@ h1, h2, h3, h4, h5, h6 {{
     0% {{ transform: translateX(-40px); opacity: 0; }}
     100% {{ transform: translateX(0); opacity: 1; }}
 }}
+/* New animation for greeting */
+@keyframes slideInDownFadeIn {{
+    0% {{ opacity: 0; transform: translateY(-20px); }}
+    100% {{ opacity: 1; transform: translateY(0); }}
+}}
+.greeting-message {{
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: {'#00cec9' if dark_mode else '#00cec9'};
+    margin-bottom: 1.5rem;
+    animation: slideInDownFadeIn 0.7s ease-out;
+}}
 .stMetric {{
     background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
     border-radius: 10px;
     padding: 1rem;
     margin-bottom: 1rem;
-    box_shadow: 0 4px 12px rgba(0,0,0,{'0.2' if dark_mode else '0.05'});
+    box-shadow: 0 4px 12px rgba(0,0,0,{'0.2' if dark_mode else '0.05'});
     transition: transform 0.2s ease;
 }}
 .stMetric:hover {{
@@ -610,6 +622,11 @@ tab = st.sidebar.radio("📍 Navigate", navigation_options, index=navigation_opt
 
 if "tab_override" in st.session_state:
     del st.session_state.tab_override
+
+# --- Display "Hello, Username!" on all pages after login ---
+if st.session_state.get("authenticated") and st.session_state.get("username"):
+    st.markdown(f'<div class="greeting-message">Hello, {st.session_state.username}! 👋</div>', unsafe_allow_html=True)
+
 
 # ======================
 # Analytics Dashboard Page Function
