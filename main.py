@@ -590,7 +590,10 @@ if 'comprehensive_df' not in st.session_state:
 # --- Navigation Control ---
 navigation_options = [
     "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
-    "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes", "❓ Feedback & Help"
+    "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes",
+    "📈 Advanced Tools", # New page
+    "🤝 Collaboration Hub", # New page
+    "❓ Feedback & Help"
 ]
 
 if is_admin: # Only add Admin Tools if the user is an admin
@@ -1315,6 +1318,16 @@ elif tab == "📁 Manage JDs":
 
 elif tab == "📊 Screening Analytics":
     analytics_dashboard_page()
+
+elif tab == "📈 Advanced Tools": # New page: Advanced Tools
+    st.markdown('<div class="dashboard-header">📈 Advanced Tools</div>', unsafe_allow_html=True)
+    st.info("Feature Coming Soon: This section will provide advanced tools for HR professionals.")
+    st.write("Stay tuned for powerful functionalities like predictive analytics, skill gap analysis, and more!")
+
+elif tab == "🤝 Collaboration Hub": # New page: Collaboration Hub
+    st.markdown('<div class="dashboard-header">🤝 Collaboration Hub</div>', unsafe_allow_html=True)
+    st.info("Feature Coming Soon: This section will enable seamless collaboration among your HR team.")
+    st.write("Expect features like shared candidate pipelines, team notes, and real-time communication.")
 
 elif tab == "📤 Email Candidates":
     try:
