@@ -13,7 +13,8 @@ import statsmodels.api as sm
 import collections
 
 # Import from streamlit-extras for enhanced UI
-from streamlit_extras.st_lottie import st_lottie
+# CORRECTED IMPORT PATH for st_lottie
+from streamlit_extras.lottie import st_lottie 
 from streamlit_extras.st_btn_select import st_btn_select
 # No need for switch_page or add_vertical_space if not explicitly used for navigation logic here
 
