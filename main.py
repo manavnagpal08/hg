@@ -12,11 +12,7 @@ import plotly.express as px
 import statsmodels.api as sm
 import collections
 
-# Import from streamlit-extras for enhanced UI
-# CORRECTED IMPORT PATH for st_lottie
-from streamlit_extras.lottie import st_lottie 
-from streamlit_extras.st_btn_select import st_btn_select
-# No need for switch_page or add_vertical_space if not explicitly used for navigation logic here
+# Removed imports from streamlit-extras as requested
 
 # Import the page functions from their respective files
 # Make sure these files (login.py, feedback.py, screener.py, email_sender.py) exist
@@ -173,27 +169,52 @@ h1, h2, h3, h4, h5, h6 {{
 .stRadio > label {{
     color: {'#E0E0E0' if dark_mode else '#333333'};
 }}
-.stRadio div[role="radiogroup"] label {{
-    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
-    border-radius: 8px;
-    padding: 0.5rem 1rem;
-    margin: 0.2rem;
+
+/* Custom styling for st.sidebar.radio to make it look like buttons */
+.stSidebar .stRadio div[role="radiogroup"] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem; /* Space between buttons */
+}
+.stSidebar .stRadio div[role="radiogroup"] label {
+    background-color: {'#2D2D2D' if dark_mode else '#F0F2F6'};
     color: {'#E0E0E0' if dark_mode else '#333333'};
-    transition: background-color 0.2s ease;
-}}
-.stRadio div[role="radiogroup"] label:hover {{
-    background-color: {'#4A4A4A' if dark_mode else '#e0e2e6'};
-}}
-.stRadio div[role="radiogroup"] label[data-baseweb="radio"] span:first-child {{
-    background-color: {'#00cec9' if dark_mode else '#00cec9'} !important;
-    border-color: {'#00cec9' if dark_mode else '#00cec9'} !important;
-}}
-.stCheckbox span {{
+    border-radius: 12px;
+    padding: 0.8rem 1rem;
+    font-weight: 600;
+    border: none;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0,0,0,{'0.1' if dark_mode else '0.03'});
+    width: 100%; /* Make buttons take full width */
+    text-align: left; /* Align text to left */
+    cursor: pointer;
+    display: flex; /* Use flex to align content and hide default radio */
+    align-items: center;
+}
+.stSidebar .stRadio div[role="radiogroup"] label span:first-child {
+    display: none; /* Hide the default radio circle */
+}
+.stSidebar .stRadio div[role="radiogroup"] label:hover {
+    background-color: {'#3A3A3A' if dark_mode else '#E6E6E6'};
+    transform: translateX(5px);
+}
+/* Style for the selected radio button (using input:checked + div) */
+.stSidebar .stRadio div[role="radiogroup"] input:checked + div {
+    background-color: #00cec9;
+    color: white;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    transform: translateX(0);
+}
+/* Ensure the text inside the radio button is styled correctly */
+.stSidebar .stRadio div[role="radiogroup"] label p {
+    font-weight: 600; /* Make sidebar navigation labels bolder */
     color: {'#E0E0E0' if dark_mode else '#333333'};
-}}
-.stCheckbox div[data-testid="stCheckbox"] svg {{
-    fill: {'#00cec9' if dark_mode else '#00cec9'};
-}}
+}
+.stSidebar .stRadio div[role="radiogroup"] input:checked + div p {
+    color: white; /* Text color for selected button */
+}
+
+
 /* Custom styling for the dataframes */
 .stDataFrame {{
     border-radius: 10px;
@@ -214,48 +235,6 @@ h1, h2, h3, h4, h5, h6 {{
 }}
 .stDataFrame tbody tr:nth-child(even) {{
     background-color: {'#2D2D2D' if dark_mode else '#FFFFFF'};
-}}
-
-/* Sidebar specific styling */
-.stSidebar > div:first-child {{
-    background-color: {'#222222' if dark_mode else '#FFFFFF'}; /* Sidebar background */
-    border-right: 1px solid {'#333' if dark_mode else '#E0E0E0'};
-    padding-top: 2rem;
-    animation: slideInLeftSidebar 0.5s ease-out;
-}}
-@keyframes slideInLeftSidebar {{
-    0% {{ transform: translateX(-100%); opacity: 0; }}
-    100% {{ transform: translateX(0); opacity: 1; }}
-}}
-
-/* st_btn_select styling (overrides default stRadio in sidebar) */
-.st-emotion-cache-1jmve0k {{ /* This targets the container of st_btn_select */
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem; /* Space between buttons */
-}}
-.st-emotion-cache-1jmve0k button {{ /* This targets the buttons inside st_btn_select */
-    background-color: {'#2D2D2D' if dark_mode else '#F0F2F6'};
-    color: {'#E0E0E0' if dark_mode else '#333333'};
-    border-radius: 12px;
-    padding: 0.8rem 1rem;
-    font-weight: 600;
-    border: none;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 8px rgba(0,0,0,{'0.1' if dark_mode else '0.03'});
-    width: 100%; /* Make buttons take full width */
-    text-align: left; /* Align text to left */
-    cursor: pointer;
-}}
-.st-emotion-cache-1jmve0k button:hover {{
-    background-color: {'#3A3A3A' if dark_mode else '#E6E6E6'};
-    transform: translateX(5px);
-}}
-.st-emotion-cache-1jmve0k button.selected {{ /* Style for the selected button */
-    background-color: #00cec9;
-    color: white;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-    transform: translateX(0); /* No extra slide for selected */
 }}
 
 
@@ -319,10 +298,10 @@ else:
 st.sidebar.image("logo.png", width=200) # Placeholder logo
 st.sidebar.title("🧠 ScreenerPro")
 
-# Add a Lottie animation to the sidebar
-lottie_coding = "https://lottie.host/178553d1-e5d8-4f24-9b16-9213e4b7b322/0Bw0lXyvVl.json"
-with st.sidebar:
-    st_lottie(lottie_coding, height=150, key="lottie_sidebar")
+# Removed Lottie animation as requested
+# lottie_coding = "https://lottie.host/178553d1-e5d8-4f24-9b16-9213e4b7b322/0Bw0lXyvVl.json"
+# with st.sidebar:
+#     st_lottie(lottie_coding, height=150, key="lottie_sidebar")
 
 # --- Auth ---
 if not login_section():
@@ -341,7 +320,7 @@ is_admin = is_current_user_admin()
 if 'comprehensive_df' not in st.session_state:
     st.session_state['comprehensive_df'] = pd.DataFrame()
 
-# --- Navigation Control (using st_btn_select) ---
+# --- Navigation Control (using st.sidebar.radio with custom CSS) ---
 navigation_options = [
     "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
     "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes", "❓ Feedback & Help"
@@ -352,34 +331,13 @@ if is_admin: # Only add Admin Tools if the user is an admin
 
 navigation_options.append("🚪 Logout") # Always add Logout last
 
-# Use st_btn_select for enhanced sidebar navigation
-tab = st_btn_select(navigation_options,
-                     default_index=navigation_options.index(st.session_state.get("tab_override", "🏠 Dashboard")),
-                     key="sidebar_navigation_buttons",
-                     css_styles={ # Custom styles for the buttons
-                         "buttons": {
-                             "background-color": "#2D2D2D" if dark_mode else "#F0F2F6",
-                             "color": "#E0E0E0" if dark_mode else "#333333",
-                             "border-radius": "12px",
-                             "padding": "0.8rem 1rem",
-                             "font-weight": "600",
-                             "border": "none",
-                             "transition": "all 0.2s ease",
-                             "box-shadow": "0 2px 8px rgba(0,0,0,0.1)" if dark_mode else "0 2px 8px rgba(0,0,0,0.03)",
-                             "width": "100%",
-                             "text-align": "left",
-                             "cursor": "pointer",
-                         },
-                         "active": {
-                             "background-color": "#00cec9",
-                             "color": "white",
-                             "box-shadow": "0 4px 12px rgba(0,0,0,0.2)",
-                         },
-                         "hover": {
-                             "background-color": "#3A3A3A" if dark_mode else "#E6E6E6",
-                             "transform": "translateX(5px)",
-                         }
-                     })
+default_tab = st.session_state.get("tab_override", "🏠 Dashboard")
+
+if default_tab not in navigation_options: # Handle cases where default_tab might be Admin Tools for non-admins
+    default_tab = "🏠 Dashboard"
+
+# Reverted to st.sidebar.radio and applied custom CSS for button-like appearance
+tab = st.sidebar.radio("📍 Navigate", navigation_options, index=navigation_options.index(default_tab))
 
 if "tab_override" in st.session_state:
     del st.session_state.tab_override
