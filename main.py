@@ -12,34 +12,43 @@ import plotly.express as px
 import statsmodels.api as sm
 import collections
 
-# Firebase imports
-import firebase_admin
-from firebase_admin import credentials, initialize_app, firestore, get_app
+# Firebase imports (Client-side alternative using REST if Admin SDK fails)
+import requests
 
-# --- Firebase Initialization (Safe Check) ---
-import firebase_admin
-from firebase_admin import credentials, initialize_app, firestore
+# --- Firebase REST Setup ---
+# Replace this with your actual Firestore REST endpoint and Web API Key
+FIREBASE_WEB_API_KEY = "AIzaSyDjC7tdmpEkpsipgf9r1c3HlTO7C7BZ6Mw"
+FIREBASE_PROJECT_ID = "screenerproapp"
+FIREBASE_FIRESTORE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
 
-try:
-    # Set environment variable for Application Default Credentials
-    key_path = os.path.abspath("config/firebase-key.json")
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key_path
+def save_session_data_to_firestore_rest(username, session_data):
+    try:
+        if not username:
+            st.warning("No username found. Please log in.")
+            return
 
-    if not firebase_admin._apps:
-        cred = credentials.ApplicationDefault()
-        initialize_app(cred)
+        doc_path = f"artifacts/default-app-id/users/{username}/session_data/current_session"
+        url = f"{FIREBASE_FIRESTORE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
 
-    db = firestore.client()
-    st.session_state.db = db
-except Exception as e:
-    st.warning(f"🔥 Firebase init failed: {e}")
-    st.session_state.db = None
+        # Convert session_data to Firestore document fields
+        data = {
+            "fields": {
+                key: {"stringValue": str(value)} for key, value in session_data.items()
+            }
+        }
 
-# All remaining original code follows from here
+        res = requests.patch(url, json=data)
+        if res.status_code in [200, 201]:
+            st.success("✅ Session data saved using REST API.")
+        else:
+            st.error(f"❌ REST Save failed: {res.status_code}, {res.text}")
+    except Exception as e:
+        st.error(f"🔥 REST Firebase error: {e}")
 
 # File to store user credentials
 USER_DB_FILE = "users.json"
 ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2")
+
 
 # [...rest of your main.py code remains unchanged...]
 
