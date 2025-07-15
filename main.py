@@ -1020,9 +1020,9 @@ elif tab == "⚙️ Admin Tools":
                 for user, data in users_data.items():
                     hashed_pass = data.get("password", data) if isinstance(data, dict) else data
                     status = data.get("status", "N/A") if isinstance(data, dict) else "N/A"
-                    company = data.get("company", "N/A") # Get company data here
-                    display_users.append([user, hashed_pass, status, company]) # Add company to the list
-                st.dataframe(pd.DataFrame(display_users, columns=["Email/Username", "Hashed Password (DO NOT EXPOSE)", "Status", "Company"]), use_container_width=True) # Update columns list
+                    company = data.get("company", "N/A") # <--- Get company data here
+                    display_users.append([user, hashed_pass, status, company]) # <--- Add company to the list
+                st.dataframe(pd.DataFrame(display_users, columns=["Email/Username", "Hashed Password (DO NOT EXPOSE)", "Status", "Company"]), use_container_width=True) # <--- Update columns list
             else:
                 st.info("No users registered yet.")
         except Exception as e:
