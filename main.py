@@ -15,16 +15,16 @@ import collections
 # Removed imports from streamlit-extras as requested
 
 # Import the page functions from their respective files
-# Make sure these files (login.py, feedback.py, screener.py, email_sender.py) exist
-# in the same directory and define the respective functions.
-from login import (
-    login_section, load_users, admin_registration_section,
-    admin_password_reset_section, admin_disable_enable_user_section,
-    is_current_user_admin
-)
-from feedback import feedback_and_help_page
-from screener import resume_screener_page
-from email_sender import send_email_to_candidate
+# NOTE: These imports are now moved into their respective 'elif tab == "Page Name":' blocks
+# to prevent ImportErrors if the files are not perfectly structured or contain top-level execution.
+# from login import (
+#     login_section, load_users, admin_registration_section,
+#     admin_password_reset_section, admin_disable_enable_user_section,
+#     is_current_user_admin
+# )
+# from feedback import feedback_and_help_page
+# from screener import resume_screener_page
+# from email_sender import send_email_to_candidate
 
 # File to store user credentials
 USER_DB_FILE = "users.json"
@@ -42,7 +42,7 @@ def log_activity(message):
     st.session_state.activity_log = st.session_state.activity_log[:50]
 
 # --- Page Config ---
-st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="�")
+st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
 
 # --- Dark Mode Toggle ---
 dark_mode = st.sidebar.toggle("🌙 Dark Mode", key="dark_mode_main")
@@ -69,6 +69,9 @@ st.sidebar.image("logo.png", width=200) # Placeholder logo
 st.sidebar.title("🧠 ScreenerPro")
 
 # --- Auth ---
+# Import login_section and is_current_user_admin here as they are used before page routing
+from login import login_section, is_current_user_admin, load_users
+
 if not login_section():
     st.stop()
 else:
@@ -111,7 +114,7 @@ if 'comprehensive_df' not in st.session_state:
 # --- Navigation Control (using st.sidebar.radio with custom CSS) ---
 navigation_options = [
     "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
-    "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes", "❓ Feedback & Help"
+    "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes", "📈 Reports", "❓ Feedback & Help"
 ]
 
 if is_admin: # Only add Admin Tools if the user is an admin
@@ -796,6 +799,8 @@ elif tab == "⚙️ Admin Tools":
     if is_admin:
         st.write("Welcome, Administrator! Here you can manage user accounts.")
         st.markdown("---")
+        # Import admin functions here
+        from login import admin_registration_section, admin_password_reset_section, admin_disable_enable_user_section
         admin_registration_section() # Create New User Form
         st.markdown("---")
         admin_password_reset_section() # Reset User Password Form
@@ -826,6 +831,8 @@ elif tab == "⚙️ Admin Tools":
 # ======================
 elif tab == "🧠 Resume Screener":
     try:
+        # Import the screener page function (assuming it's in a separate file)
+        from screener import resume_screener_page
         resume_screener_page() # Call the imported function
         # The logging and pending approval logic here should ideally be handled within resume_screener_page itself
         # after a successful screening operation. For now, keeping it here for demonstration.
@@ -871,6 +878,8 @@ elif tab == "📊 Screening Analytics":
 
 elif tab == "📤 Email Candidates":
     try:
+        # Import the email sender function (assuming it's in a separate file)
+        from email_sender import send_email_to_candidate
         send_email_to_candidate() # Call the imported function
     except ImportError:
         st.error("`email_sender.py` not found or `send_email_to_candidate` function not defined. Please ensure 'email_sender.py' exists and contains the 'send_email_to_candidate' function.")
@@ -895,10 +904,58 @@ elif tab == "📝 Candidate Notes":
     except Exception as e:
         st.error(f"Error loading Candidate Notes: {e}")
 
+# --- New Reports Page ---
+elif tab == "📈 Reports":
+    st.markdown('<div class="dashboard-header">📈 Custom Reports</div>', unsafe_allow_html=True)
+    st.write("This section will allow you to generate custom reports based on your screening data.")
+    st.info("Feature under development. Stay tuned for advanced reporting capabilities!")
+    
+    st.markdown("### Generate Report")
+    report_type = st.selectbox("Select Report Type", ["Candidate Summary", "JD Performance", "Skill Gap Analysis"], key="report_type_select")
+    
+    if report_type == "Candidate Summary":
+        st.write("Generate a summary of candidate performance across various metrics.")
+        if st.button("Generate Candidate Summary Report"):
+            st.success("Candidate Summary Report generated! (Mock data)")
+            # In a real app, you'd fetch and display data here
+            st.dataframe(pd.DataFrame({
+                "Candidate": ["Alice", "Bob", "Charlie"],
+                "Score": [92, 78, 85],
+                "Experience": [5, 3, 7],
+                "Shortlisted": ["Yes", "No", "Yes"]
+            }))
+    elif report_type == "JD Performance":
+        st.write("Analyze how well different Job Descriptions are attracting suitable candidates.")
+        if st.button("Generate JD Performance Report"):
+            st.success("JD Performance Report generated! (Mock data)")
+            st.dataframe(pd.DataFrame({
+                "JD": ["Software Engineer", "Data Scientist", "Product Manager"],
+                "Total Resumes": [50, 30, 20],
+                "Shortlisted": [15, 10, 8],
+                "Avg. Score": [88, 75, 82]
+            }))
+    elif report_type == "Skill Gap Analysis":
+        st.write("Identify common skill gaps among your candidate pool relative to your JDs.")
+        if st.button("Generate Skill Gap Analysis Report"):
+            st.success("Skill Gap Analysis Report generated! (Mock data)")
+            st.dataframe(pd.DataFrame({
+                "Missing Skill": ["Cloud Computing", "Leadership", "Advanced SQL"],
+                "Frequency": [25, 18, 12],
+                "Impact": ["High", "Medium", "Low"]
+            }))
+
+
 elif tab == "❓ Feedback & Help":
-    if 'user_email' not in st.session_state:
-        st.session_state['user_email'] = st.session_state.get('username', 'anonymous_user')
-    feedback_and_help_page()
+    try:
+        # Import the feedback page function
+        from feedback import feedback_and_help_page
+        if 'user_email' not in st.session_state:
+            st.session_state['user_email'] = st.session_state.get('username', 'anonymous_user')
+        feedback_and_help_page()
+    except ImportError:
+        st.error("`feedback.py` not found or `feedback_and_help_page` function not defined. Please ensure 'feedback.py' exists and contains the 'feedback_and_help_page' function.")
+    except Exception as e:
+        st.error(f"Error loading Feedback & Help: {e}")
 
 elif tab == "🚪 Logout":
     log_activity(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out.")
