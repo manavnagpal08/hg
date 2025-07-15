@@ -1421,4 +1421,4 @@ elif tab == "🚪 Logout":
     st.session_state.pop('username', None)
     st.success("✅ Logged out.")
     st.rerun()
-�
+
