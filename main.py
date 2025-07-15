@@ -22,7 +22,7 @@ try:
         firebase_admin.get_app()  # Check if already initialized
     except ValueError:
         # Not initialized yet, so initialize with your service account
-        service_account_key_path = 'config/screenerproapp-firebase-adminsdk-fbsvc-d1af80d154.json'
+        service_account_key_path = 'config/screenerproapp-firebase-adminsdk-fbsvc-85c227bdcf.json'
         if os.path.exists(service_account_key_path):
             cred = credentials.Certificate(service_account_key_path)
             initialize_app(cred)
