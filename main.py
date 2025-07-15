@@ -1377,10 +1377,9 @@ elif tab == "📊 Screening Analytics":
     analytics_dashboard_page()
 
 elif tab == "📈 Advanced Tools": # New page: Advanced Tools
-    st.markdown('<div class="dashboard-header">📈 Advanced Tools</div>', unsafe_allow_html=True)
-    st.info("Feature Coming Soon: This section will provide advanced tools for HR professionals.")
-    st.write("Stay tuned for powerful functionalities like predictive analytics, skill gap analysis, and more!")
-
+    # Import the advanced tools page function
+    from advanced import advanced_tools_page
+    advanced_tools_page()
 elif tab == "🤝 Collaboration Hub": # New page: Collaboration Hub
     # Import and call the collaboration hub page function
     from collaboration import collaboration_hub_page
