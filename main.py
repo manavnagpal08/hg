@@ -14,18 +14,12 @@ import collections
 import requests # Added for REST API calls
 
 # --- Firebase REST Setup ---
-# IMPORTANT: Replace "AIzaSyDkYourRealAPIKey12345" with your actual Firebase Web API Key
+# IMPORTANT: Replace "YOUR_FIREBASE_WEB_API_KEY" with your actual Firebase Web API Key
 # You can find this in your Firebase project settings -> Project settings -> General -> Web API Key
-FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'AIzaSyDjC7tdmpEkpsipgf9r1c3HlTO7C7BZ6Mw') # Ensure this is your actual key
+FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'AIzaSyDkYourRealAPIKey12345') # Ensure this is your actual key
 # Use __app_id from the Canvas environment for the project ID if available, otherwise use a default
 FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
-FIREBASE_FIRESTORE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
-
-
-# --- Removed Firebase Admin SDK Initialization ---
-# The previous code here that imported firebase_admin and called initialize_app
-# has been removed to ensure only the REST API is used.
-# This resolves the 'invalid_grant: Invalid JWT Signature' error.
+FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
 
 
 # File to store user credentials
@@ -113,7 +107,6 @@ def admin_registration_section():
             st.error("Please fill in all fields.")
         elif not is_valid_email(new_username): # Email format validation
             st.error("Please enter a valid email address for the username.")
-            st.error("Please enter a valid email address for the username.")
         else:
             users = load_users()
             if new_username in users:
@@ -177,6 +170,47 @@ def admin_disable_enable_user_section():
 
 
 # --- Firebase Data Persistence Functions (REST API) ---
+def to_firestore_format(data: dict) -> dict:
+    """Converts a Python dictionary to Firestore REST API 'fields' format."""
+    fields = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            fields[key] = {"stringValue": value}
+        elif isinstance(value, int):
+            fields[key] = {"integerValue": str(value)} # Firestore expects string for integerValue
+        elif isinstance(value, float):
+            fields[key] = {"doubleValue": value}
+        elif isinstance(value, bool):
+            fields[key] = {"booleanValue": value}
+        elif isinstance(value, datetime):
+            fields[key] = {"timestampValue": value.isoformat() + "Z"} # ISO 8601 with 'Z' for UTC
+        elif isinstance(value, list):
+            # For lists, convert each item and wrap in arrayValue
+            array_values = []
+            for item in value:
+                if isinstance(item, str):
+                    array_values.append({"stringValue": item})
+                elif isinstance(item, int):
+                    array_values.append({"integerValue": str(item)})
+                elif isinstance(item, float):
+                    array_values.append({"doubleValue": item})
+                elif isinstance(item, bool):
+                    array_values.append({"booleanValue": item})
+                elif isinstance(item, dict): # Handle nested dicts in lists
+                    array_values.append({"mapValue": {"fields": to_firestore_format(item)['fields']}})
+                # Add more types as needed for list elements
+            fields[key] = {"arrayValue": {"values": array_values}}
+        elif isinstance(value, dict):
+            # For nested dictionaries (maps), recursively convert
+            fields[key] = {"mapValue": {"fields": to_firestore_format(value)['fields']}}
+        elif value is None:
+            fields[key] = {"nullValue": None}
+        else:
+            # Fallback for other types, try to stringify
+            fields[key] = {"stringValue": str(value)}
+    return {"fields": fields}
+
+
 def save_session_data_to_firestore_rest(username):
     """
     Saves comprehensive session data (including comprehensive_df) to Firestore
@@ -190,7 +224,7 @@ def save_session_data_to_firestore_rest(username):
         # Define the document path for user-specific session data
         # This path aligns with private data rules: /artifacts/{appId}/users/{userId}/session_data_rest/current_session
         doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{username}/session_data_rest/current_session"
-        url = f"{FIREBASE_FIRESTORE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
+        url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
 
         data_to_save = {}
         if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
@@ -204,7 +238,7 @@ def save_session_data_to_firestore_rest(username):
                 df_for_save['Shortlisted'] = df_for_save['Score (%)'].apply(
                     lambda x: f"Yes (Score >= {shortlist_threshold}%)" if x >= shortlist_threshold else "No"
                 )
-                log_activity("Derived 'Shortlisted' column for saving as it was missing.")
+                log_activity_main("Derived 'Shortlisted' column for saving as it was missing.")
 
             # Filter out 'Resume Raw Text' as it can be very large and is not needed for analytics.
             df_for_save = df_for_save.drop(columns=['Resume Raw Text'], errors='ignore')
@@ -225,27 +259,55 @@ def save_session_data_to_firestore_rest(username):
             return
 
         # Convert Python dictionary to Firestore's REST API format (Fields object)
-        firestore_data = {
-            "fields": {
-                key: {"stringValue": str(value)} if isinstance(value, (str, int, float, bool)) else {"stringValue": json.dumps(value)}
-                for key, value in data_to_save.items()
-            }
-        }
+        firestore_data = to_firestore_format(data_to_save)
 
         # Use PATCH to update the document if it exists, or create it if it doesn't.
         res = requests.patch(url, json=firestore_data)
         if res.status_code in [200, 201]:
             st.success("✅ Session data saved to Cloud (REST API)!")
-            log_activity(f"Session data saved for user '{username}' via REST API.")
+            log_activity_main(f"Session data saved for user '{username}' via REST API.")
         else:
             st.error(f"❌ REST Save failed: {res.status_code}, {res.text}")
-            log_activity(f"REST Save failed for user '{username}': {res.status_code}, {res.text}")
+            log_activity_main(f"REST Save failed for user '{username}': {res.status_code}, {res.text}")
     except requests.exceptions.RequestException as e:
         st.error(f"🔥 REST Firebase connection error: {e}")
-        log_activity(f"REST Firebase connection error for user '{username}': {e}")
+        log_activity_main(f"REST Firebase connection error for user '{username}': {e}")
     except Exception as e:
         st.error(f"🔥 An unexpected error occurred during REST save: {e}")
-        log_activity(f"Unexpected REST save error for user '{username}': {e}")
+        log_activity_main(f"Unexpected REST save error for user '{username}': {e}")
+
+def from_firestore_format(firestore_data: dict) -> dict:
+    """Converts Firestore REST API 'fields' format to a Python dictionary."""
+    data = {}
+    if "fields" not in firestore_data:
+        return data # Or raise an error if expected
+    
+    for key, value_obj in firestore_data["fields"].items():
+        if "stringValue" in value_obj:
+            data[key] = value_obj["stringValue"]
+        elif "integerValue" in value_obj:
+            data[key] = int(value_obj["integerValue"])
+        elif "doubleValue" in value_obj:
+            data[key] = float(value_obj["doubleValue"])
+        elif "booleanValue" in value_obj:
+            data[key] = value_obj["booleanValue"]
+        elif "timestampValue" in value_obj:
+            # Remove 'Z' and parse
+            try:
+                data[key] = datetime.fromisoformat(value_obj["timestampValue"].replace('Z', ''))
+            except ValueError:
+                data[key] = value_obj["timestampValue"] # Keep as string if parsing fails
+        elif "arrayValue" in value_obj and "values" in value_obj["arrayValue"]:
+            # Recursively convert array elements
+            data[key] = [from_firestore_format({"fields": {"_": item}})["_"] if "mapValue" not in item else from_firestore_format({"fields": item["mapValue"]["fields"]}) for item in value_obj["arrayValue"]["values"]]
+        elif "mapValue" in value_obj and "fields" in value_obj["mapValue"]:
+            # Recursively convert map values
+            data[key] = from_firestore_format({"fields": value_obj["mapValue"]["fields"]})
+        elif "nullValue" in value_obj:
+            data[key] = None
+        # Add more types as needed
+    return data
+
 
 def load_session_data_from_firestore_rest(username):
     """
@@ -258,29 +320,12 @@ def load_session_data_from_firestore_rest(username):
             return
 
         doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{username}/session_data_rest/current_session"
-        url = f"{FIREBASE_FIRESTORE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
+        url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
 
         res = requests.get(url)
         if res.status_code == 200:
             data = res.json()
-            fields = data.get('fields', {})
-
-            loaded_data = {}
-            for key, value_obj in fields.items():
-                if 'stringValue' in value_obj:
-                    # Attempt to parse JSON strings back to Python objects
-                    try:
-                        loaded_data[key] = json.loads(value_obj['stringValue'])
-                    except json.JSONDecodeError:
-                        # If it's not a valid JSON string, keep it as a plain string
-                        loaded_data[key] = value_obj['stringValue']
-                elif 'integerValue' in value_obj:
-                    loaded_data[key] = int(value_obj['integerValue'])
-                elif 'doubleValue' in value_obj:
-                    loaded_data[key] = float(value_obj['doubleValue'])
-                elif 'booleanValue' in value_obj:
-                    loaded_data[key] = bool(value_obj['booleanValue'])
-                # Add other types if necessary (e.g., arrayValue, mapValue)
+            loaded_data = from_firestore_format(data) # Use the helper function
 
             if 'comprehensive_df_json' in loaded_data:
                 df_json_content = loaded_data['comprehensive_df_json']
@@ -293,10 +338,10 @@ def load_session_data_from_firestore_rest(username):
                         st.session_state['comprehensive_df'] = pd.DataFrame.from_records(df_json_content)
 
                     st.toast("Session data loaded from Cloud (REST API)!")
-                    log_activity(f"Session data loaded for user '{username}' via REST API.")
+                    log_activity_main(f"Session data loaded for user '{username}' via REST API.")
                 except Exception as e: # Catch any exception from pd.read_json or DataFrame reconstruction
                     st.error(f"Error reconstructing DataFrame from loaded JSON: {e}. Data might be corrupted or incompatible. Raw JSON content (truncated): {str(df_json_content)[:200]}...")
-                    log_activity(f"Error reconstructing DataFrame for user '{username}': {e}")
+                    log_activity_main(f"Error reconstructing DataFrame for user '{username}': {e}")
                     st.session_state['comprehensive_df'] = pd.DataFrame() # Reset to empty DF on error
             else:
                 st.info("No comprehensive data found in the loaded session data.")
@@ -306,15 +351,15 @@ def load_session_data_from_firestore_rest(username):
             st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty if no data
         else:
             st.error(f"❌ REST Load failed: {res.status_code}, {res.text}")
-            log_activity(f"REST Load failed for user '{username}': {res.status_code}, {res.text}")
+            log_activity_main(f"REST Load failed for user '{username}': {res.status_code}, {res.text}")
             st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on API error
     except requests.exceptions.RequestException as e:
         st.error(f"🔥 REST Firebase connection error: {e}")
-        log_activity(f"REST Firebase connection error for user '{username}': {e}")
+        log_activity_main(f"REST Firebase connection error for user '{username}': {e}")
         st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on connection error
     except Exception as e:
         st.error(f"🔥 An unexpected error occurred during REST load: {e}")
-        log_activity(f"Unexpected REST load error for user '{username}': {e}")
+        log_activity_main(f"Unexpected REST load error for user '{username}': {e}")
         st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on unexpected error
 
 
@@ -383,18 +428,17 @@ def is_current_user_admin():
     # Check if the current username is in the ADMIN_USERNAME tuple
     return st.session_state.get("authenticated", False) and st.session_state.get("username") in ADMIN_USERNAME
 
-# --- Helper for Activity Logging ---
-def log_activity(message):
-    """Logs an activity with a timestamp to the session state."""
+# Helper for Activity Logging (for main.py's own activities)
+def log_activity_main(message):
+    """Logs an activity with a timestamp to the session state for main.py's activities."""
     if 'activity_log' not in st.session_state:
         st.session_state.activity_log = []
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.session_state.activity_log.insert(0, f"[{timestamp}] {message}") # Add to the beginning for most recent first
-    # Keep log size manageable, e.g., last 50 activities
     st.session_state.activity_log = st.session_state.activity_log[:50]
 
 # --- Page Config ---
-st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="�")
+st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
 
 # Function to load external CSS
 def load_css(css_file_name):
@@ -493,12 +537,12 @@ h1, h2, h3, h4, h5, h6 {{
     font-weight: 600;
     border: none;
     transition: all 0.3s ease;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    box_shadow: 0 4px 12px rgba(0,0,0,0.1);
 }}
 .stButton>button:hover {{
     background-color: #00b0a8;
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+    box_shadow: 0 6px 16px rgba(0,0,0,0.15);
 }}
 .stExpander {{
     background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
@@ -584,7 +628,7 @@ if not login_section():
 else:
     # Log successful login
     if st.session_state.get('last_login_logged_for_user') != st.session_state.username:
-        log_activity(f"User '{st.session_state.username}' logged in.")
+        log_activity_main(f"User '{st.session_state.username}' logged in.")
         st.session_state.last_login_logged_for_user = st.session_state.username
 
 # Determine if the logged-in user is an admin
@@ -1249,7 +1293,7 @@ if tab == "🏠 Dashboard":
                     "notes": "Good potential, needs managerial review."
                 }
                 st.session_state.pending_approvals.append(mock_candidate)
-                log_activity(f"Mock candidate '{mock_candidate['candidate_name']}' added for approval.")
+                log_activity_main(f"Mock candidate '{mock_candidate['candidate_name']}' added for approval.")
                 st.rerun()
         else:
             st.write("Review the following candidates:")
@@ -1264,13 +1308,13 @@ if tab == "🏠 Dashboard":
                         with col_approve:
                             if st.button(f"✅ Approve {candidate['candidate_name']}", key=f"approve_{i}"):
                                 st.session_state.pending_approvals[i]['status'] = 'approved'
-                                log_activity(f"Candidate '{candidate['candidate_name']}' approved.")
+                                log_activity_main(f"Candidate '{candidate['candidate_name']}' approved.")
                                 st.success(f"Approved {candidate['candidate_name']}!")
                                 st.rerun()
                         with col_reject:
                             if st.button(f"❌ Reject {candidate['candidate_name']}", key=f"reject_{i}"):
                                 st.session_state.pending_approvals[i]['status'] = 'rejected'
-                                log_activity(f"Candidate '{candidate['candidate_name']}' rejected.")
+                                log_activity_main(f"Candidate '{candidate['candidate_name']}' rejected.")
                                 st.error(f"Rejected {candidate['candidate_name']}.")
                                 st.rerun()
             # Optionally show approved/rejected candidates
@@ -1296,7 +1340,7 @@ elif tab == "🧠 Resume Screener":
             # Log activity only if new data was added to comprehensive_df
             current_df_len = len(st.session_state['comprehensive_df'])
             if st.session_state.get('last_screen_log_count', 0) < current_df_len:
-                log_activity(f"Performed resume screening for {current_df_len} candidates.")
+                log_activity_main(f"Performed resume screening for {current_df_len} candidates.")
                 st.session_state.last_screen_log_count = current_df_len
 
             # Example: Triggering a pending approval for a high-scoring candidate
@@ -1312,7 +1356,7 @@ elif tab == "🧠 Resume Screener":
                         "status": "pending",
                         "notes": f"High-scoring candidate from recent screening."
                     })
-                    log_activity(f"Candidate '{result['Candidate Name']}' sent for approval (high score).")
+                    log_activity_main(f"Candidate '{result['Candidate Name']}' sent for approval (high score).")
                     st.toast(f"Candidate {result['Candidate Name']} sent for approval!")
 
     except ImportError:
@@ -1383,7 +1427,7 @@ elif tab == "❓ Feedback & Help":
     feedback_and_help_page()
 
 elif tab == "🚪 Logout":
-    log_activity(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out.")
+    log_activity_main(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out.")
     st.session_state.authenticated = False
     st.session_state.pop('username', None)
     st.success("✅ Logged out.")
