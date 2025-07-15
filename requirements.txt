@@ -14,3 +14,4 @@ simplejson
 plotly
 statsmodels
 bcrypt
+docx
