@@ -4,6 +4,8 @@ import plotly.express as px
 import collections
 import numpy as np
 from datetime import datetime, timedelta # Import timedelta for scheduling
+import requests # For Firestore REST API calls
+import json # For JSON parsing/dumping
 
 # --- Logging Function (can be shared or imported from main.py if needed) ---
 def log_user_action(user_email, action, details=None):
@@ -12,6 +14,123 @@ def log_user_action(user_email, action, details=None):
         print(f"LOG: [{timestamp}] User '{user_email}' performed action '{action}' with details: {details}")
     else:
         print(f"LOG: [{timestamp}] User '{user_email}' performed action '{action}'")
+
+# --- Firebase REST API Helper Functions (adapted from main.py) ---
+
+def to_firestore_format(data: dict) -> dict:
+    """Converts a Python dictionary to Firestore REST API 'fields' format."""
+    fields = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            fields[key] = {"stringValue": value}
+        elif isinstance(value, int):
+            fields[key] = {"integerValue": str(value)} # Firestore expects string for integerValue
+        elif isinstance(value, float):
+            fields[key] = {"doubleValue": value}
+        elif isinstance(value, bool):
+            fields[key] = {"booleanValue": value}
+        elif isinstance(value, datetime):
+            fields[key] = {"timestampValue": value.isoformat() + "Z"} # ISO 8601 with 'Z' for UTC
+        elif isinstance(value, list):
+            # For lists, convert each item and wrap in arrayValue
+            array_values = []
+            for item in value:
+                if isinstance(item, str):
+                    array_values.append({"stringValue": item})
+                elif isinstance(item, int):
+                    array_values.append({"integerValue": str(item)})
+                elif isinstance(item, float):
+                    array_values.append({"doubleValue": item})
+                elif isinstance(item, bool):
+                    array_values.append({"booleanValue": item})
+                elif isinstance(item, dict): # Handle nested dicts in lists
+                    array_values.append({"mapValue": {"fields": to_firestore_format(item)['fields']}})
+                else: # Fallback for other types in list
+                    array_values.append({"stringValue": str(item)})
+            fields[key] = {"arrayValue": {"values": array_values}}
+        elif isinstance(value, dict):
+            # For nested dictionaries (maps), recursively convert
+            fields[key] = {"mapValue": {"fields": to_firestore_format(value)['fields']}}
+        elif value is None:
+            fields[key] = {"nullValue": None}
+        else:
+            # Fallback for other types, try to stringify
+            fields[key] = {"stringValue": str(value)}
+    return {"fields": fields}
+
+
+def from_firestore_format(firestore_data: dict) -> dict:
+    """Converts Firestore REST API 'fields' format to a Python dictionary."""
+    data = {}
+    if "fields" not in firestore_data:
+        return data # Or raise an error if expected
+    
+    for key, value_obj in firestore_data["fields"].items():
+        if "stringValue" in value_obj:
+            data[key] = value_obj["stringValue"]
+        elif "integerValue" in value_obj:
+            data[key] = int(value_obj["integerValue"])
+        elif "doubleValue" in value_obj:
+            data[key] = float(value_obj["doubleValue"])
+        elif "booleanValue" in value_obj:
+            data[key] = value_obj["booleanValue"]
+        elif "timestampValue" in value_obj:
+            try:
+                data[key] = datetime.fromisoformat(value_obj["timestampValue"].replace('Z', ''))
+            except ValueError:
+                data[key] = value_obj["timestampValue"]
+        elif "arrayValue" in value_obj and "values" in value_obj["arrayValue"]:
+            data[key] = [from_firestore_format({"fields": {"_": item}})["_"] if "mapValue" not in item else from_firestore_format({"fields": item["mapValue"]["fields"]}) for item in value_obj["arrayValue"]["values"]]
+        elif "mapValue" in value_obj and "fields" in value_obj["mapValue"]:
+            data[key] = from_firestore_format({"fields": value_obj["mapValue"]["fields"]})
+        elif "nullValue" in value_obj:
+            data[key] = None
+    return data
+
+def save_document_to_firestore(collection_path, doc_id, data, api_key, base_url):
+    """Saves a document to Firestore using PATCH (create or update)."""
+    url = f"{base_url}/{collection_path}/{doc_id}?key={api_key}"
+    firestore_data = to_firestore_format(data)
+    try:
+        res = requests.patch(url, json=firestore_data)
+        res.raise_for_status() # Raise an exception for HTTP errors
+        return True, res.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"Firestore save error: {e}")
+        return False, str(e)
+
+def add_document_to_firestore_collection(collection_path, data, api_key, base_url):
+    """Adds a new document to a Firestore collection (Firestore assigns ID)."""
+    url = f"{base_url}/{collection_path}?key={api_key}"
+    firestore_data = to_firestore_format(data)
+    try:
+        res = requests.post(url, json=firestore_data)
+        res.raise_for_status()
+        return True, res.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"Firestore add error: {e}")
+        return False, str(e)
+
+def load_collection_from_firestore(collection_path, api_key, base_url):
+    """Loads all documents from a Firestore collection."""
+    url = f"{base_url}/{collection_path}?key={api_key}"
+    try:
+        res = requests.get(url)
+        res.raise_for_status()
+        docs_data = []
+        if 'documents' in res.json():
+            for doc in res.json()['documents']:
+                doc_id = doc['name'].split('/')[-1]
+                data = from_firestore_format(doc)
+                data['id'] = doc_id # Add document ID to the data
+                docs_data.append(data)
+        return True, docs_data
+    except requests.exceptions.RequestException as e:
+        if e.response and e.response.status_code == 404:
+            return True, [] # Collection not found, return empty list
+        st.error(f"Firestore load error: {e}")
+        return False, str(e)
+
 
 # --- Mock Salary Data (More Realistic and Granular) ---
 # This data simulates real-world salary ranges based on role, experience, and location.
@@ -58,7 +177,7 @@ MOCK_SALARY_DATA = [
 MOCK_SALARY_DF = pd.DataFrame(MOCK_SALARY_DATA)
 
 # --- Advanced Tools Page Function ---
-def advanced_tools_page():
+def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
     user_email = st.session_state.get('user_email', 'anonymous')
     log_user_action(user_email, "ADVANCED_TOOLS_PAGE_ACCESSED")
 
@@ -401,7 +520,7 @@ def advanced_tools_page():
                     st.markdown("#### Benchmark Results:")
                     st.success(f"**Estimated Compensation Range for '{selected_seniority} {selected_role}' in '{selected_location}' ({years_exp_comp} yrs exp):**")
                     st.write(f"**Base Salary: ₹{base_min_orig:,.0f} - ₹{base_max_orig:,.0f} per annum**")
-                    st.write(f"**Total Compensation (incl. Bonus/Equity): ₹{total_comp_min_orig:,.0f} - ₹{total_comp_max:,.0f} per annum (approx.)**")
+                    st.write(f"**Total Compensation (incl. Bonus/Equity): ₹{total_comp_min_orig:,.0f} - ₹{total_comp_max_orig:,.0f} per annum (approx.)**")
 
                     # Visualization of the range
                     salary_range_df = pd.DataFrame({
@@ -620,8 +739,33 @@ def advanced_tools_page():
             log_user_action(user_email, "JD_BIAS_CHECK_USED")
 
     with tab_scheduling: # New Tab: Automated Interview Scheduling (Mock)
-        st.subheader("🗓️ Automated Interview Scheduling (Mock)")
-        st.info("Streamline your interview process by automating scheduling, reminders, and feedback collection. (Mock functionality)")
+        st.subheader("🗓️ Automated Interview Scheduling")
+        st.info("Streamline your interview process by automating scheduling, reminders, and feedback collection. Data is stored in Firebase.")
+
+        # --- Load existing interviews and feedback from Firebase ---
+        # Ensure 'user_interviews' and 'user_feedback' are initialized in session state
+        if 'user_interviews' not in st.session_state:
+            st.session_state.user_interviews = []
+        if 'user_feedback' not in st.session_state:
+            st.session_state.user_feedback = []
+
+        # Load data on page load
+        success_interviews, loaded_interviews = load_collection_from_firestore(
+            f"artifacts/{app_id}/users/{user_email}/interviews", FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
+        )
+        if success_interviews:
+            st.session_state.user_interviews = loaded_interviews
+        else:
+            st.error(f"Failed to load interviews: {loaded_interviews}")
+
+        success_feedback, loaded_feedback = load_collection_from_firestore(
+            f"artifacts/{app_id}/users/{user_email}/interview_feedback", FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
+        )
+        if success_feedback:
+            st.session_state.user_feedback = loaded_feedback
+        else:
+            st.error(f"Failed to load feedback: {loaded_feedback}")
+
 
         with st.form("interview_scheduling_form", clear_on_submit=True):
             st.markdown("##### Schedule a New Interview")
@@ -645,14 +789,35 @@ def advanced_tools_page():
                 if not candidate_name or not candidate_email or not interviewer_name or not interviewer_email:
                     st.error("Please fill in all required fields (Candidate Name/Email, Interviewer Name/Email).")
                 else:
-                    # Mock scheduling logic
-                    st.success(f"✅ Interview scheduled for {candidate_name} with {interviewer_name} on {interview_date} at {interview_time} for {interview_duration} minutes ({interview_type}).")
-                    st.write("---")
-                    st.markdown("##### Mock Notifications Sent:")
-                    st.info(f"📧 Email sent to Candidate ({candidate_email}): Your interview for {interview_type} is scheduled for {interview_date} at {interview_time}.")
-                    st.info(f"📧 Calendar invite sent to Interviewer ({interviewer_email}): Interview for {candidate_name} on {interview_date} at {interview_time}.")
-                    st.success("Reminders will be sent automatically 24 hours prior. (Mock)")
-                    log_user_action(user_email, "INTERVIEW_SCHEDULED", {"candidate": candidate_name, "interviewer": interviewer_name, "type": interview_type})
+                    interview_data = {
+                        "candidate_name": candidate_name,
+                        "candidate_email": candidate_email,
+                        "interview_type": interview_type,
+                        "interviewer_name": interviewer_name,
+                        "interviewer_email": interviewer_email,
+                        "interview_datetime": datetime.combine(interview_date, interview_time),
+                        "duration_minutes": interview_duration,
+                        "notes": interview_notes,
+                        "scheduled_by": user_email,
+                        "timestamp": datetime.now()
+                    }
+                    
+                    success, response = add_document_to_firestore_collection(
+                        f"artifacts/{app_id}/users/{user_email}/interviews", interview_data, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
+                    )
+
+                    if success:
+                        st.success(f"✅ Interview scheduled for {candidate_name} with {interviewer_name} on {interview_date} at {interview_time} for {interview_duration} minutes ({interview_type}). (Data saved to Firebase)")
+                        st.write("---")
+                        st.markdown("##### Mock Notifications Sent:")
+                        st.info(f"📧 Email sent to Candidate ({candidate_email}): Your interview for {interview_type} is scheduled for {interview_date} at {interview_time}.")
+                        st.info(f"📧 Calendar invite sent to Interviewer ({interviewer_email}): Interview for {candidate_name} on {interview_date} at {interview_time}.")
+                        st.success("Reminders will be sent automatically 24 hours prior. (Mock)")
+                        log_user_action(user_email, "INTERVIEW_SCHEDULED_FIREBASE", {"candidate": candidate_name, "interviewer": interviewer_name, "type": interview_type})
+                        st.rerun() # Rerun to refresh the upcoming interviews list
+                    else:
+                        st.error(f"❌ Failed to save interview to Firebase: {response}")
+                        log_user_action(user_email, "INTERVIEW_SCHEDULE_FAILED_FIREBASE", {"candidate": candidate_name, "error": response})
 
         st.markdown("---")
         st.subheader("Interviewer Availability (Mock)")
@@ -685,23 +850,37 @@ def advanced_tools_page():
 
 
         st.markdown("---")
-        st.subheader("Upcoming Interviews (Mock Data)")
-        st.info("View your upcoming interview schedule at a glance.")
+        st.subheader("Upcoming Interviews")
+        st.info("View your upcoming interview schedule from Firebase.")
 
-        # Mock Upcoming Interviews Data
-        upcoming_interviews = [
-            {"Candidate": "Alice Wonderland", "Role": "Data Scientist", "Type": "Technical (R1)", "Interviewer": "Dr. Smith", "Date": (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d"), "Time": "10:00 AM"},
-            {"Candidate": "Bob The Builder", "Role": "Project Manager", "Type": "Hiring Manager", "Interviewer": "Ms. Jones", "Date": (datetime.now() + timedelta(days=5)).strftime("%Y-%m-%d"), "Time": "02:30 PM"},
-            {"Candidate": "Charlie Chaplin", "Role": "Software Engineer", "Type": "Final Round", "Interviewer": "CEO", "Date": (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d"), "Time": "11:00 AM"},
-        ]
-        upcoming_interviews_df = pd.DataFrame(upcoming_interviews)
-        st.dataframe(upcoming_interviews_df, use_container_width=True, hide_index=True)
+        if st.session_state.user_interviews:
+            # Sort interviews by date/time
+            sorted_interviews = sorted(st.session_state.user_interviews, key=lambda x: x.get('interview_datetime', datetime.min))
+            
+            display_interviews = []
+            for interview in sorted_interviews:
+                display_interviews.append({
+                    "Candidate": interview.get('candidate_name', 'N/A'),
+                    "Role": interview.get('interview_type', 'N/A'), # Reusing type as role for display simplicity
+                    "Interviewer": interview.get('interviewer_name', 'N/A'),
+                    "Date": interview.get('interview_datetime', datetime.min).strftime("%Y-%m-%d"),
+                    "Time": interview.get('interview_datetime', datetime.min).strftime("%I:%M %p")
+                })
+            st.dataframe(pd.DataFrame(display_interviews), use_container_width=True, hide_index=True)
+        else:
+            st.info("No upcoming interviews scheduled yet.")
 
         st.markdown("---")
-        st.subheader("Interview Feedback Collection & Trends (Mock)")
-        st.info("Submit and review interview feedback easily, and see overall trends.")
+        st.subheader("Interview Feedback Collection & Trends")
+        st.info("Submit and review interview feedback easily, and see overall trends. Data is stored in Firebase.")
 
-        feedback_candidate = st.selectbox("Select Candidate for Feedback", ["Alice Wonderland", "Bob The Builder", "Charlie Chaplin", "New Candidate..."], key="feedback_cand_select")
+        # Populate candidate dropdown from scheduled interviews
+        candidate_options = ["New Candidate..."]
+        if st.session_state.user_interviews:
+            candidate_options.extend(sorted(list(set([i.get('candidate_name') for i in st.session_state.user_interviews if i.get('candidate_name')])))
+        )
+
+        feedback_candidate = st.selectbox("Select Candidate for Feedback", candidate_options, key="feedback_cand_select")
         if feedback_candidate == "New Candidate...":
             feedback_candidate_name = st.text_input("Enter Candidate Name", key="new_feedback_cand_name")
         else:
@@ -713,29 +892,50 @@ def advanced_tools_page():
 
         if st.button("Submit Feedback", key="submit_feedback_button"):
             if feedback_candidate_name and feedback_interviewer and feedback_comments:
-                st.success(f"Feedback submitted for {feedback_candidate_name} by {feedback_interviewer} with rating {feedback_rating}.")
-                log_user_action(user_email, "INTERVIEW_FEEDBACK_SUBMITTED", {"candidate": feedback_candidate_name, "rating": feedback_rating})
+                feedback_data = {
+                    "candidate_name": feedback_candidate_name,
+                    "interviewer_name": feedback_interviewer,
+                    "rating": feedback_rating,
+                    "comments": feedback_comments,
+                    "timestamp": datetime.now()
+                }
+                success, response = add_document_to_firestore_collection(
+                    f"artifacts/{app_id}/users/{user_email}/interview_feedback", feedback_data, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
+                )
+                if success:
+                    st.success(f"Feedback submitted for {feedback_candidate_name} by {feedback_interviewer} with rating {feedback_rating}. (Data saved to Firebase)")
+                    log_user_action(user_email, "INTERVIEW_FEEDBACK_SUBMITTED_FIREBASE", {"candidate": feedback_candidate_name, "rating": feedback_rating})
+                    st.rerun() # Rerun to refresh feedback trends
+                else:
+                    st.error(f"❌ Failed to save feedback to Firebase: {response}")
+                    log_user_action(user_email, "INTERVIEW_FEEDBACK_FAILED_FIREBASE", {"candidate": feedback_candidate_name, "error": response})
             else:
                 st.warning("Please fill in all feedback fields.")
 
         st.markdown("---")
-        st.subheader("Overall Interview Feedback Trends (Mock)")
-        # Mock feedback trend data
-        feedback_trend_data = pd.DataFrame({
-            'Rating': [1, 2, 3, 4, 5],
-            'Count': [np.random.randint(5, 15), np.random.randint(10, 30), np.random.randint(40, 80), np.random.randint(50, 100), np.random.randint(30, 60)]
-        })
-        fig_feedback_trend = px.bar(
-            feedback_trend_data,
-            x='Rating',
-            y='Count',
-            title='Distribution of Interview Ratings',
-            labels={'Count': 'Number of Ratings', 'Rating': 'Rating (1-5)'},
-            color='Count',
-            color_continuous_scale=px.colors.sequential.Plasma if dark_mode else px.colors.sequential.Viridis
-        )
-        st.plotly_chart(fig_feedback_trend, use_container_width=True)
-        st.caption("This chart shows the aggregated distribution of interview ratings.")
+        st.subheader("Overall Interview Feedback Trends")
+        if st.session_state.user_feedback:
+            feedback_ratings = [f.get('rating') for f in st.session_state.user_feedback if f.get('rating') is not None]
+            if feedback_ratings:
+                feedback_trend_data = pd.DataFrame({'Rating': feedback_ratings})
+                feedback_counts = feedback_trend_data['Rating'].value_counts().sort_index().reset_index()
+                feedback_counts.columns = ['Rating', 'Count']
+
+                fig_feedback_trend = px.bar(
+                    feedback_counts,
+                    x='Rating',
+                    y='Count',
+                    title='Distribution of Interview Ratings',
+                    labels={'Count': 'Number of Ratings', 'Rating': 'Rating (1-5)'},
+                    color='Count',
+                    color_continuous_scale=px.colors.sequential.Plasma if dark_mode else px.colors.sequential.Viridis
+                )
+                st.plotly_chart(fig_feedback_trend, use_container_width=True)
+                st.caption("This chart shows the aggregated distribution of interview ratings from Firebase.")
+            else:
+                st.info("No feedback ratings available to display trends.")
+        else:
+            st.info("No interview feedback data available in Firebase yet.")
 
 
     st.markdown("</div>", unsafe_allow_html=True)
