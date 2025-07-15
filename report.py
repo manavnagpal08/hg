@@ -27,21 +27,61 @@ def custom_reports_page():
 
     if df_screening_data.empty:
         st.info("No data available for reports. Please screen some resumes or upload data.")
-        # Optionally, provide a way to load data or go to screener
         if st.button("Go to Resume Screener"):
             st.session_state.tab_override = '🧠 Resume Screener'
             st.rerun()
         return # Stop execution if no data
 
-    # Ensure 'Date Screened' column is datetime for trend analysis
-    if 'Date Screened' in df_screening_data.columns:
-        df_screening_data['Date Screened'] = pd.to_datetime(df_screening_data['Date Screened'], errors='coerce')
-        df_screening_data.dropna(subset=['Date Screened'], inplace=True) # Remove rows where date conversion failed
-    else:
-        st.warning("The 'Date Screened' column is missing from your screening data. Trend Analysis will not be available.")
-        # Add a dummy date column if missing, for demonstration purposes if needed
-        # For actual data, ensure your screener populates this.
-        df_screening_data['Date Screened'] = datetime.date.today() # Fallback to today's date
+    # --- Ensure essential columns exist and handle missing ones gracefully ---
+    # Define all expected columns and their default values if missing
+    expected_cols = {
+        'Score (%)': 0.0,
+        'Years Experience': 0.0,
+        'File Name': 'Unknown File',
+        'Candidate Name': 'Unknown Candidate',
+        'JD Used': 'Unknown JD',
+        'Location': 'Unknown Location',
+        'CGPA (4.0 Scale)': np.nan, # Use NaN for numerical missing values
+        'Matched Keywords': '',
+        'Missing Skills': '',
+        'AI Suggestion': '',
+        'Email': '',
+        'Phone Number': '',
+        'Languages': '',
+        'Education Details': '',
+        'Work History': '',
+        'Project Details': '',
+        'Semantic Similarity': np.nan,
+        'Matched Keywords (Categorized)': {},
+        'Date Screened': datetime.date.today() # Default to today if missing
+    }
+
+    for col, default_val in expected_cols.items():
+        if col not in df_screening_data.columns:
+            df_screening_data[col] = default_val
+            st.warning(f"Column '{col}' was missing in screening data and has been added with default values. For accurate reports, ensure your screener populates this column.")
+        # Ensure correct data types for critical columns if they exist but might be wrong
+        if col in ['Score (%)', 'Years Experience', 'CGPA (4.0 Scale)', 'Semantic Similarity']:
+            # Convert to numeric, coercing errors will turn invalid parsing into NaN
+            df_screening_data[col] = pd.to_numeric(df_screening_data[col], errors='coerce')
+        elif col == 'Date Screened':
+            # Convert to datetime, then extract date part, coerce errors to NaT (Not a Time)
+            df_screening_data[col] = pd.to_datetime(df_screening_data[col], errors='coerce').dt.date
+            # Fill NaT values with today's date
+            df_screening_data[col].fillna(datetime.date.today(), inplace=True) 
+
+    # Re-calculate 'Shortlisted' and 'Tag' if they are missing or for consistency
+    # These thresholds should ideally be configurable or come from the main app's session state
+    dummy_shortlist_threshold = st.session_state.get('screening_cutoff_score', 75)
+    df_screening_data['Shortlisted'] = df_screening_data['Score (%)'].apply(lambda x: "Yes" if x >= dummy_shortlist_threshold else "No")
+    
+    # Re-calculate 'Tag' for consistency
+    df_screening_data['Tag'] = df_screening_data.apply(lambda row:
+        "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row.get('Semantic Similarity', 0) >= 0.85 else (
+        "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row.get('Semantic Similarity', 0) >= 0.7 else (
+        "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 else (
+        "⚠️ Needs Review" if row['Score (%)'] >= 40 else
+        "❌ Limited Match"))), axis=1)
 
 
     st.markdown("### 📊 Report Generator")
@@ -60,16 +100,33 @@ def custom_reports_page():
         # Filters for Candidate Summary
         col_filters_cs = st.columns(3)
         with col_filters_cs[0]:
-            min_score_cs = st.slider("Minimum Score (%)", 0, 100, 70, key="min_score_cs")
+            min_score_cs = st.slider("Minimum Score (%)", 0, 100, 70, key="min_score_cs_report")
         with col_filters_cs[1]:
-            min_exp_cs = st.slider("Minimum Experience (Years)", 0, int(df_screening_data['Years Experience'].max()), 2, key="min_exp_cs")
+            # Ensure max value for slider is based on actual data, fallback to a sensible default
+            max_exp_val = int(df_screening_data['Years Experience'].max()) if not df_screening_data['Years Experience'].empty else 20
+            min_exp_cs = st.slider("Minimum Experience (Years)", 0, max_exp_val, 2, key="min_exp_cs_report")
         with col_filters_cs[2]:
             # Ensure 'JD Used' exists before trying to get unique values
             if 'JD Used' in df_screening_data.columns and not df_screening_data['JD Used'].empty:
-                selected_jd_cs = st.multiselect("Filter by JD", df_screening_data['JD Used'].unique(), key="jd_filter_cs")
+                selected_jd_cs = st.multiselect("Filter by JD", df_screening_data['JD Used'].unique(), key="jd_filter_cs_report")
             else:
                 selected_jd_cs = []
                 st.info("No 'JD Used' data available for filtering.")
+
+
+        col_filters_cs_2 = st.columns(2)
+        with col_filters_cs_2[0]:
+            if 'Location' in df_screening_data.columns and not df_screening_data['Location'].empty:
+                selected_location_cs = st.multiselect("Filter by Location", df_screening_data['Location'].unique(), key="location_filter_cs_report")
+            else:
+                selected_location_cs = []
+                st.info("No 'Location' data available for filtering.")
+        with col_filters_cs_2[1]:
+            if 'Tag' in df_screening_data.columns and not df_screening_data['Tag'].empty:
+                selected_tag_cs = st.multiselect("Filter by Candidate Tag", df_screening_data['Tag'].unique(), key="tag_filter_cs_report")
+            else:
+                selected_tag_cs = []
+                st.info("No 'Tag' data available for filtering.")
 
 
         filtered_cs_df = df_screening_data[
@@ -78,9 +135,14 @@ def custom_reports_page():
         ]
         if selected_jd_cs:
             filtered_cs_df = filtered_cs_df[filtered_cs_df['JD Used'].isin(selected_jd_cs)]
+        if selected_location_cs:
+            filtered_cs_df = filtered_cs_df[filtered_cs_df['Location'].isin(selected_location_cs)]
+        if selected_tag_cs:
+            filtered_cs_df = filtered_cs_df[filtered_cs_df['Tag'].isin(selected_tag_cs)]
+
 
         if not filtered_cs_df.empty:
-            display_cols_cs = ['Candidate Name', 'Score (%)', 'Years Experience', 'JD Used', 'Shortlisted', 'Tag', 'Location', 'CGPA (4.0 Scale)']
+            display_cols_cs = ['Candidate Name', 'Score (%)', 'Years Experience', 'JD Used', 'Shortlisted', 'Tag', 'Location', 'CGPA (4.0 Scale)', 'Email', 'Phone Number']
             # Filter to only include columns that actually exist in the DataFrame
             display_cols_cs = [col for col in display_cols_cs if col in filtered_cs_df.columns]
             st.dataframe(filtered_cs_df[display_cols_cs].sort_values(by="Score (%)", ascending=False), use_container_width=True)
@@ -98,6 +160,30 @@ def custom_reports_page():
                 fig_exp_dist = px.histogram(filtered_cs_df, x="Years Experience", nbins=10, title="Years of Experience Distribution",
                                             color_discrete_sequence=[px.colors.qualitative.Plotly[1]] if not dark_mode else [px.colors.qualitative.Dark2[1]])
                 st.plotly_chart(fig_exp_dist, use_container_width=True)
+            
+            # New visualizations
+            col_cs_viz3, col_cs_viz4 = st.columns(2)
+            with col_cs_viz3:
+                if 'Location' in filtered_cs_df.columns and not filtered_cs_df['Location'].empty:
+                    st.write("##### Candidates by Location")
+                    location_counts = filtered_cs_df['Location'].value_counts().reset_index()
+                    location_counts.columns = ['Location', 'Count']
+                    fig_location_pie = px.pie(location_counts, values='Count', names='Location', title='Candidates by Location',
+                                              color_discrete_sequence=px.colors.qualitative.Pastel if not dark_mode else px.colors.qualitative.Dark2)
+                    st.plotly_chart(fig_location_pie, use_container_width=True)
+                else:
+                    st.info("No 'Location' data for this visualization.")
+            with col_cs_viz4:
+                if 'Tag' in filtered_cs_df.columns and not filtered_cs_df['Tag'].empty:
+                    st.write("##### Candidates by Quality Tag")
+                    tag_counts = filtered_cs_df['Tag'].value_counts().reset_index()
+                    tag_counts.columns = ['Tag', 'Count']
+                    fig_tag_bar = px.bar(tag_counts, x='Tag', y='Count', title='Candidates by Quality Tag',
+                                         color='Count', color_continuous_scale=px.colors.sequential.Plasma if dark_mode else px.colors.sequential.Viridis)
+                    st.plotly_chart(fig_tag_bar, use_container_width=True)
+                else:
+                    st.info("No 'Tag' data for this visualization.")
+
         else:
             st.warning("No data found matching the selected filters for Candidate Summary.")
 
@@ -106,30 +192,44 @@ def custom_reports_page():
         st.write("Analyze the average score and number of shortlisted candidates per Job Description.")
 
         if 'JD Used' in df_screening_data.columns and not df_screening_data['JD Used'].empty:
-            jd_performance_df = df_screening_data.groupby('JD Used').agg(
-                Avg_Score=('Score (%)', 'mean'),
-                Total_Candidates=('Candidate Name', 'count'),
-                Shortlisted_Count=('Shortlisted', lambda x: (x == 'Yes').sum())
-            ).reset_index().sort_values(by="Avg_Score", ascending=False)
-            jd_performance_df['Avg_Score'] = jd_performance_df['Avg_Score'].round(2)
-
-            if not jd_performance_df.empty:
-                st.dataframe(jd_performance_df, use_container_width=True)
-
-                st.markdown("#### Visualizations:")
-                col_jd_viz1, col_jd_viz2 = st.columns(2)
-                with col_jd_viz1:
-                    st.write("##### Average Score by JD")
-                    fig_jd_score = px.bar(jd_performance_df, x='JD Used', y='Avg_Score', title='Average Score per Job Description',
-                                          color='Avg_Score', color_continuous_scale=px.colors.sequential.Teal if not dark_mode else px.colors.sequential.Plasma)
-                    st.plotly_chart(fig_jd_score, use_container_width=True)
-                with col_jd_viz2:
-                    st.write("##### Shortlisted Count by JD")
-                    fig_jd_shortlist = px.bar(jd_performance_df, x='JD Used', y='Shortlisted_Count', title='Shortlisted Candidates per Job Description',
-                                              color='Shortlisted_Count', color_continuous_scale=px.colors.sequential.Viridis if not dark_mode else px.colors.sequential.Cividis)
-                    st.plotly_chart(fig_jd_shortlist, use_container_width=True)
+            
+            if 'Location' in df_screening_data.columns and not df_screening_data['Location'].empty:
+                selected_location_jd = st.multiselect("Filter by Location", df_screening_data['Location'].unique(), key="location_filter_jd_report")
             else:
-                st.warning("No data available for JD Performance Report.")
+                selected_location_jd = []
+                st.info("No 'Location' data available for filtering.")
+            
+            filtered_jd_df = df_screening_data.copy()
+            if selected_location_jd:
+                filtered_jd_df = filtered_jd_df[filtered_jd_df['Location'].isin(selected_location_jd)]
+
+            if not filtered_jd_df.empty:
+                jd_performance_df = filtered_jd_df.groupby('JD Used').agg(
+                    Avg_Score=('Score (%)', 'mean'),
+                    Total_Candidates=('Candidate Name', 'count'),
+                    Shortlisted_Count=('Shortlisted', lambda x: (x == 'Yes').sum())
+                ).reset_index().sort_values(by="Avg_Score", ascending=False)
+                jd_performance_df['Avg_Score'] = jd_performance_df['Avg_Score'].round(2)
+
+                if not jd_performance_df.empty:
+                    st.dataframe(jd_performance_df, use_container_width=True)
+
+                    st.markdown("#### Visualizations:")
+                    col_jd_viz1, col_jd_viz2 = st.columns(2)
+                    with col_jd_viz1:
+                        st.write("##### Average Score by JD")
+                        fig_jd_score = px.bar(jd_performance_df, x='JD Used', y='Avg_Score', title='Average Score per Job Description',
+                                              color='Avg_Score', color_continuous_scale=px.colors.sequential.Teal if not dark_mode else px.colors.sequential.Plasma)
+                        st.plotly_chart(fig_jd_score, use_container_width=True)
+                    with col_jd_viz2:
+                        st.write("##### Shortlisted Count by JD")
+                        fig_jd_shortlist = px.bar(jd_performance_df, x='JD Used', y='Shortlisted_Count', title='Shortlisted Candidates per Job Description',
+                                                  color='Shortlisted_Count', color_continuous_scale=px.colors.sequential.Viridis if not dark_mode else px.colors.sequential.Cividis)
+                        st.plotly_chart(fig_jd_shortlist, use_container_width=True)
+                else:
+                    st.warning("No data available for JD Performance Report after filtering.")
+            else:
+                st.warning("No data available for JD Performance Report with the selected filters.")
         else:
             st.info("No 'JD Used' data available in screening results for this report.")
 
@@ -139,9 +239,24 @@ def custom_reports_page():
         st.write("Identify the most common skills missing from your candidate pool based on screenings.")
 
         if 'Missing Skills' in df_screening_data.columns and not df_screening_data['Missing Skills'].empty:
+            
+            if 'JD Used' in df_screening_data.columns and not df_screening_data['JD Used'].empty:
+                selected_jd_sga = st.multiselect("Filter by JD", df_screening_data['JD Used'].unique(), key="jd_filter_sga_report")
+            else:
+                selected_jd_sga = []
+                st.info("No 'JD Used' data available for filtering.")
+            
+            filtered_sga_df = df_screening_data.copy()
+            if selected_jd_sga:
+                filtered_sga_df = filtered_sga_df[filtered_sga_df['JD Used'].isin(selected_jd_sga)]
+
             all_missing_skills = []
-            for skills_str in df_screening_data['Missing Skills'].dropna():
-                all_missing_skills.extend([s.strip() for s in str(skills_str).split(',') if s.strip()]) # Ensure str conversion
+            for skills_str in filtered_sga_df['Missing Skills'].dropna():
+                # Ensure skills_str is a string before splitting
+                if isinstance(skills_str, str):
+                    all_missing_skills.extend([s.strip() for s in skills_str.split(',') if s.strip()])
+                elif isinstance(skills_str, list): # Handle if 'Missing Skills' is already a list
+                    all_missing_skills.extend([s.strip() for s in skills_str if s.strip()])
             
             if all_missing_skills:
                 missing_skill_counts = collections.Counter(all_missing_skills)
@@ -155,7 +270,7 @@ def custom_reports_page():
                                             color='Frequency', color_continuous_scale=px.colors.sequential.Sunset if not dark_mode else px.colors.sequential.Inferno)
                 st.plotly_chart(fig_missing_skills, use_container_width=True)
             else:
-                st.info("No 'Missing Skills' data to analyze for Skill Gap Report. All candidates seem to have required skills!")
+                st.info("No 'Missing Skills' data to analyze for Skill Gap Report with current filters. All candidates seem to have required skills!")
         else:
             st.info("No 'Missing Skills' column found in screening results for this report.")
 
@@ -163,9 +278,9 @@ def custom_reports_page():
         st.subheader("📈 Screening Trend Analysis")
         st.write("Analyze screening activity and average scores over time.")
 
-        if 'Date Screened' in df_screening_data.columns and not df_screening_data['Date Screened'].empty:
+        if 'Date Screened' in df_screening_data.columns and not df_screening_data['Date Screened'].empty and df_screening_data['Date Screened'].nunique() > 1:
             # Group by week or month
-            time_granularity = st.radio("Group by:", ["Daily", "Weekly", "Monthly"], horizontal=True, key="trend_granularity")
+            time_granularity = st.radio("Group by:", ["Daily", "Weekly", "Monthly"], horizontal=True, key="trend_granularity_report")
             
             # Ensure 'Date Screened' is truly datetime before resampling
             df_screening_data['Date Screened'] = pd.to_datetime(df_screening_data['Date Screened'], errors='coerce')
@@ -181,13 +296,21 @@ def custom_reports_page():
                     Avg_Score=('Score (%)', 'mean'),
                     Total_Screenings=('Candidate Name', 'count')
                 ).reset_index()
-                df_trends['Date Screened'] = df_trends['Date Screened'].dt.to_period('W').astype(str) # For better display
+                # Format for display, handling cases where the period might be empty
+                df_trends['Date Display'] = df_trends['Date Screened'].dt.to_period('W').astype(str)
+                df_trends.rename(columns={'Date Screened': 'Original Date'}, inplace=True)
+                df_trends.rename(columns={'Date Display': 'Date Screened'}, inplace=True)
+
             else: # Monthly
                 df_trends = df_trends.set_index('Date Screened').resample('M').agg(
                     Avg_Score=('Score (%)', 'mean'),
                     Total_Screenings=('Candidate Name', 'count')
                 ).reset_index()
-                df_trends['Date Screened'] = df_trends['Date Screened'].dt.to_period('M').astype(str) # For better display
+                # Format for display, handling cases where the period might be empty
+                df_trends['Date Display'] = df_trends['Date Screened'].dt.to_period('M').astype(str)
+                df_trends.rename(columns={'Date Screened': 'Original Date'}, inplace=True)
+                df_trends.rename(columns={'Date Display': 'Date Screened'}, inplace=True)
+
 
             if not df_trends.empty:
                 st.dataframe(df_trends, use_container_width=True)
@@ -207,5 +330,5 @@ def custom_reports_page():
             else:
                 st.warning("No sufficient screening activity data available for Trend Analysis after date processing.")
         else:
-            st.info("The 'Date Screened' column is required for Trend Analysis and was not found in your data.")
+            st.info("The 'Date Screened' column is required for Trend Analysis and was not found or has insufficient unique dates in your data.")
 
