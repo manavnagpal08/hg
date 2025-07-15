@@ -171,12 +171,12 @@ h1, h2, h3, h4, h5, h6 {{
 }}
 
 /* Custom styling for st.sidebar.radio to make it look like buttons */
-.stSidebar .stRadio div[role="radiogroup"] {
+.stSidebar .stRadio div[role="radiogroup"] {{
     display: flex;
     flex-direction: column;
     gap: 0.5rem; /* Space between buttons */
-}
-.stSidebar .stRadio div[role="radiogroup"] label {
+}}
+.stSidebar .stRadio div[role="radiogroup"] label {{
     background-color: {'#2D2D2D' if dark_mode else '#F0F2F6'};
     color: {'#E0E0E0' if dark_mode else '#333333'};
     border-radius: 12px;
@@ -190,29 +190,29 @@ h1, h2, h3, h4, h5, h6 {{
     cursor: pointer;
     display: flex; /* Use flex to align content and hide default radio */
     align-items: center;
-}
-.stSidebar .stRadio div[role="radiogroup"] label span:first-child {
+}}
+.stSidebar .stRadio div[role="radiogroup"] label span:first-child {{
     display: none; /* Hide the default radio circle */
-}
-.stSidebar .stRadio div[role="radiogroup"] label:hover {
+}}
+.stSidebar .stRadio div[role="radiogroup"] label:hover {{
     background-color: {'#3A3A3A' if dark_mode else '#E6E6E6'};
     transform: translateX(5px);
-}
+}}
 /* Style for the selected radio button (using input:checked + div) */
-.stSidebar .stRadio div[role="radiogroup"] input:checked + div {
+.stSidebar .stRadio div[role="radiogroup"] input:checked + div {{
     background-color: #00cec9;
     color: white;
     box-shadow: 0 4px 12px rgba(0,0,0,0.2);
     transform: translateX(0);
-}
+}}
 /* Ensure the text inside the radio button is styled correctly */
-.stSidebar .stRadio div[role="radiogroup"] label p {
+.stSidebar .stRadio div[role="radiogroup"] label p {{
     font-weight: 600; /* Make sidebar navigation labels bolder */
     color: {'#E0E0E0' if dark_mode else '#333333'};
-}
-.stSidebar .stRadio div[role="radiogroup"] input:checked + div p {
+}}
+.stSidebar .stRadio div[role="radiogroup"] input:checked + div p {{
     color: white; /* Text color for selected button */
-}
+}}
 
 
 /* Custom styling for the dataframes */
@@ -348,20 +348,30 @@ if "tab_override" in st.session_state:
 def analytics_dashboard_page():
     # This styling is specific to the analytics page content block, not global.
     # It will apply the fadeInSlide animation.
-    st.markdown("""
+    st.markdown(f"""
     <style>
-    .analytics-box {
+    .analytics-box {{
         padding: 2rem;
-        background: var(--background-color-secondary); /* Use Streamlit's theme variable */
+        background: {'#2D2D2D' if dark_mode else 'rgba(255, 255, 255, 0.96)'}; /* Use Streamlit's theme variable */
         border-radius: 20px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+        box-shadow: 0 10px 30px rgba(0,0,0,{'0.3' if dark_mode else '0.08'});
         animation: fadeInSlide 0.7s ease-in-out;
         margin-bottom: 2rem;
-    }
-    @keyframes fadeInSlide {
-        0% { opacity: 0; transform: translateY(20px); }
+    }}
+    @keyframes fadeInSlide {{
+        0% {{ opacity: 0; transform: translateY(20px); }}
         100% {{ opacity: 1; transform: translateY(0); }}
-    }
+    }}
+    h3 {{
+        color: {'#00cec9' if dark_mode else '#00cec9'};
+        font-weight: 700;
+    }}
+    .stMetric {{
+        background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }}
     </style>
     """, unsafe_allow_html=True)
 
