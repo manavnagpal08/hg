@@ -5,7 +5,7 @@ import streamlit as st # Only for st.error, consider removing for pure utility
 
 # --- Firebase REST API Configuration ---
 # IMPORTANT: Leave FIREBASE_WEB_API_KEY as an empty string. Canvas will provide it at runtime.
-FIREBASE_WEB_API_KEY = ""
+FIREBASE_WEB_API_KEY = "AIzaSyDjC7tdmpEkpsipgf9r1c3HlTO7C7BZ6Mw"
 # Use __app_id from the Canvas environment for the project ID if available, otherwise use a default
 FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
 FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
