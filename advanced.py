@@ -13,40 +13,45 @@ def log_user_action(user_email, action, details=None):
     else:
         print(f"LOG: [{timestamp}] User '{user_email}' performed action '{action}'")
 
-# --- Mock Salary Data (More Realistic) ---
+# --- Mock Salary Data (More Realistic and Granular) ---
 # This data simulates real-world salary ranges based on role, experience, and location.
 # In a real application, this would come from a secure database or external API.
 MOCK_SALARY_DATA = [
-    # Software Engineer - Bengaluru
-    {"role": "Software Engineer", "location": "Bengaluru, India", "min_exp": 0, "max_exp": 2, "min_salary": 600000, "max_salary": 900000},
-    {"role": "Software Engineer", "location": "Bengaluru, India", "min_exp": 3, "max_exp": 5, "min_salary": 1000000, "max_salary": 1500000},
-    {"role": "Software Engineer", "location": "Bengaluru, India", "min_exp": 6, "max_exp": 10, "min_salary": 1600000, "max_salary": 2500000},
-    {"role": "Software Engineer", "location": "Bengaluru, India", "min_exp": 11, "max_exp": 99, "min_salary": 2600000, "max_salary": 4000000},
+    # Software Engineer - Bengaluru (Annual Salaries in INR Lakhs)
+    {"role": "Software Engineer", "seniority": "Junior", "location": "Bengaluru, India", "min_exp": 0, "max_exp": 1, "min_salary": 400000, "max_salary": 600000, "avg_bonus_pct": 5, "avg_equity_pct": 0},
+    {"role": "Software Engineer", "seniority": "Mid", "location": "Bengaluru, India", "min_exp": 2, "max_exp": 4, "min_salary": 800000, "max_salary": 1300000, "avg_bonus_pct": 8, "avg_equity_pct": 5},
+    {"role": "Software Engineer", "seniority": "Senior", "location": "Bengaluru, India", "min_exp": 5, "max_exp": 8, "min_salary": 1500000, "max_salary": 2500000, "avg_bonus_pct": 10, "avg_equity_pct": 10},
+    {"role": "Software Engineer", "seniority": "Lead/Principal", "location": "Bengaluru, India", "min_exp": 9, "max_exp": 99, "min_salary": 2800000, "max_salary": 4500000, "avg_bonus_pct": 12, "avg_equity_pct": 15},
     
     # Data Scientist - Bengaluru
-    {"role": "Data Scientist", "location": "Bengaluru, India", "min_exp": 0, "max_exp": 2, "min_salary": 700000, "max_salary": 1100000},
-    {"role": "Data Scientist", "location": "Bengaluru, India", "min_exp": 3, "max_exp": 5, "min_salary": 1200000, "max_salary": 1800000},
-    {"role": "Data Scientist", "location": "Bengaluru, India", "min_exp": 6, "max_exp": 10, "min_salary": 1900000, "max_salary": 3000000},
+    {"role": "Data Scientist", "seniority": "Junior", "location": "Bengaluru, India", "min_exp": 0, "max_exp": 1, "min_salary": 500000, "max_salary": 750000, "avg_bonus_pct": 6, "avg_equity_pct": 0},
+    {"role": "Data Scientist", "seniority": "Mid", "location": "Bengaluru, India", "min_exp": 2, "max_exp": 4, "min_salary": 1000000, "max_salary": 1600000, "avg_bonus_pct": 9, "avg_equity_pct": 7},
+    {"role": "Data Scientist", "seniority": "Senior", "location": "Bengaluru, India", "min_exp": 5, "max_exp": 8, "min_salary": 1800000, "max_salary": 3000000, "avg_bonus_pct": 11, "avg_equity_pct": 12},
 
     # HR Manager - Bengaluru
-    {"role": "HR Manager", "location": "Bengaluru, India", "min_exp": 3, "max_exp": 7, "min_salary": 800000, "max_salary": 1300000},
-    {"role": "HR Manager", "location": "Bengaluru, India", "min_exp": 8, "max_exp": 99, "min_salary": 1400000, "max_salary": 2200000},
+    {"role": "HR Manager", "seniority": "Mid", "location": "Bengaluru, India", "min_exp": 3, "max_exp": 6, "min_salary": 700000, "max_salary": 1200000, "avg_bonus_pct": 7, "avg_equity_pct": 0},
+    {"role": "HR Manager", "seniority": "Senior", "location": "Bengaluru, India", "min_exp": 7, "max_exp": 12, "min_salary": 1300000, "max_salary": 2000000, "avg_bonus_pct": 10, "avg_equity_pct": 5},
+    {"role": "HR Manager", "seniority": "Lead/Principal", "location": "Bengaluru, India", "min_exp": 13, "max_exp": 99, "min_salary": 2100000, "max_salary": 3500000, "avg_bonus_pct": 15, "avg_equity_pct": 8},
 
     # Business Analyst - Bengaluru
-    {"role": "Business Analyst", "location": "Bengaluru, India", "min_exp": 0, "max_exp": 3, "min_salary": 500000, "max_salary": 800000},
-    {"role": "Business Analyst", "location": "Bengaluru, India", "min_exp": 4, "max_exp": 7, "min_salary": 900000, "max_salary": 1400000},
+    {"role": "Business Analyst", "seniority": "Junior", "location": "Bengaluru, India", "min_exp": 0, "max_exp": 2, "min_salary": 450000, "max_salary": 700000, "avg_bonus_pct": 5, "avg_equity_pct": 0},
+    {"role": "Business Analyst", "seniority": "Mid", "location": "Bengaluru, India", "min_exp": 3, "max_exp": 6, "min_salary": 800000, "max_salary": 1300000, "avg_bonus_pct": 8, "avg_equity_pct": 3},
 
     # Software Engineer - Mumbai
-    {"role": "Software Engineer", "location": "Mumbai, India", "min_exp": 0, "max_exp": 2, "min_salary": 550000, "max_salary": 850000},
-    {"role": "Software Engineer", "location": "Mumbai, India", "min_exp": 3, "max_exp": 5, "min_salary": 950000, "max_salary": 1400000},
+    {"role": "Software Engineer", "seniority": "Junior", "location": "Mumbai, India", "min_exp": 0, "max_exp": 1, "min_salary": 350000, "max_salary": 550000, "avg_bonus_pct": 5, "avg_equity_pct": 0},
+    {"role": "Software Engineer", "seniority": "Mid", "location": "Mumbai, India", "min_exp": 2, "max_exp": 4, "min_salary": 700000, "max_salary": 1100000, "avg_bonus_pct": 8, "avg_equity_pct": 4},
 
     # Data Scientist - Hyderabad
-    {"role": "Data Scientist", "location": "Hyderabad, India", "min_exp": 0, "max_exp": 2, "min_salary": 650000, "max_salary": 1000000},
-    {"role": "Data Scientist", "location": "Hyderabad, India", "min_exp": 3, "max_exp": 5, "min_salary": 1100000, "max_salary": 1700000},
+    {"role": "Data Scientist", "seniority": "Junior", "location": "Hyderabad, India", "min_exp": 0, "max_exp": 1, "min_salary": 450000, "max_salary": 650000, "avg_bonus_pct": 6, "avg_equity_pct": 0},
+    {"role": "Data Scientist", "seniority": "Mid", "location": "Hyderabad, India", "min_exp": 2, "max_exp": 4, "min_salary": 900000, "max_salary": 1400000, "avg_bonus_pct": 9, "avg_equity_pct": 6},
 
-    # Other roles/locations can be added here
-    {"role": "Product Manager", "location": "Bengaluru, India", "min_exp": 5, "max_exp": 10, "min_salary": 1800000, "max_salary": 2800000},
-    {"role": "Marketing Specialist", "location": "Delhi, India", "min_exp": 2, "max_exp": 6, "min_salary": 600000, "max_salary": 1000000},
+    # Product Manager - Bengaluru
+    {"role": "Product Manager", "seniority": "Mid", "location": "Bengaluru, India", "min_exp": 4, "max_exp": 7, "min_salary": 1600000, "max_salary": 2500000, "avg_bonus_pct": 12, "avg_equity_pct": 10},
+    {"role": "Product Manager", "seniority": "Senior", "location": "Bengaluru, India", "min_exp": 8, "max_exp": 12, "min_salary": 2800000, "max_salary": 4000000, "avg_bonus_pct": 15, "avg_equity_pct": 18},
+
+    # Marketing Specialist - Delhi
+    {"role": "Marketing Specialist", "seniority": "Junior", "location": "Delhi, India", "min_exp": 0, "max_exp": 2, "min_salary": 300000, "max_salary": 500000, "avg_bonus_pct": 4, "avg_equity_pct": 0},
+    {"role": "Marketing Specialist", "seniority": "Mid", "location": "Delhi, India", "min_exp": 3, "max_exp": 6, "min_salary": 600000, "max_salary": 1000000, "avg_bonus_pct": 7, "avg_equity_pct": 0},
 ]
 
 # Convert to DataFrame for easier querying
@@ -147,21 +152,44 @@ def advanced_tools_page():
             with col_p1:
                 candidate_score = st.slider("Candidate Score (%)", 0, 100, 75, key="pred_score")
                 years_experience = st.slider("Years of Experience", 0.0, 30.0, 5.0, step=0.5, key="pred_exp")
+                # New: Specific skills match (mock)
+                skills_match_score = st.slider("Specific Skills Match (0-100%)", 0, 100, 70, key="pred_skills_match")
             with col_p2:
                 education_level = st.selectbox("Highest Education Level", ["High School", "Associate's", "Bachelor's", "Master's", "PhD"], key="pred_edu")
                 interview_feedback = st.slider("Interview Feedback (1-5, 5=Excellent)", 1, 5, 3, key="pred_feedback")
+                # New: Past company tier (mock)
+                past_company_tier = st.selectbox("Past Company Tier", ["Tier 1 (FAANG/Unicorn)", "Tier 2 (Large Enterprise)", "Tier 3 (Mid-size)", "Tier 4 (Startup/Small)"], key="pred_company_tier")
             
             predict_button = st.form_submit_button("Predict Success")
 
             if predict_button:
-                # Mock prediction logic
-                likelihood = "Moderate"
-                if candidate_score >= 80 and years_experience >= 5 and interview_feedback >= 4:
+                # More complex mock prediction logic
+                likelihood_score = 0
+                if candidate_score >= 80: likelihood_score += 3
+                elif candidate_score >= 60: likelihood_score += 2
+                else: likelihood_score += 1
+
+                if years_experience >= 5: likelihood_score += 3
+                elif years_experience >= 2: likelihood_score += 2
+                else: likelihood_score += 1
+
+                if skills_match_score >= 80: likelihood_score += 2
+                elif skills_match_score >= 50: likelihood_score += 1
+
+                if interview_feedback >= 4: likelihood_score += 2
+                elif interview_feedback >= 3: likelihood_score += 1
+
+                if past_company_tier == "Tier 1 (FAANG/Unicorn)": likelihood_score += 2
+                elif past_company_tier == "Tier 2 (Large Enterprise)": likelihood_score += 1
+
+                likelihood = "Low"
+                if likelihood_score >= 9:
                     likelihood = "High"
-                elif candidate_score < 60 or years_experience < 2:
-                    likelihood = "Low"
+                elif likelihood_score >= 6:
+                    likelihood = "Moderate"
                 
                 st.success(f"**Prediction:** The candidate has a **{likelihood}** likelihood of success in this role.")
+                st.write(f"*(Simulated Score: {likelihood_score}/13)*")
                 log_user_action(user_email, "PREDICTIVE_ANALYTICS_USED", {"score": candidate_score, "exp": years_experience, "likelihood": likelihood})
 
     with tab_skill_gap:
@@ -190,6 +218,10 @@ def advanced_tools_page():
                 
                 if missing_skills:
                     st.error(f"❌ **Missing Skills:** {', '.join(missing_skills).title()}")
+                    # New: Suggest learning resources
+                    st.markdown("##### Suggested Learning Resources for Missing Skills:")
+                    for skill in missing_skills:
+                        st.write(f"- For **{skill.title()}**: [Coursera Course](https://www.coursera.org/courses?query={skill.replace(' ', '%20')}), [Udemy Course](https://www.udemy.com/courses/search/?src=ukw&q={skill.replace(' ', '%20')}) (Mock Links)")
                 else:
                     st.info("Candidate possesses all required skills!")
 
@@ -200,10 +232,11 @@ def advanced_tools_page():
 
     with tab_compensation:
         st.subheader("💰 Compensation Benchmarking")
-        st.info("Get estimated salary ranges based on role, experience, and location. Data is simulated for demonstration.")
+        st.info("Get estimated salary ranges based on role, experience, seniority, and location. Data is simulated for demonstration.")
 
-        # Get unique roles and locations from mock data
+        # Get unique roles, seniorities, and locations from mock data
         all_roles = sorted(MOCK_SALARY_DF['role'].unique().tolist())
+        all_seniorities = sorted(MOCK_SALARY_DF['seniority'].unique().tolist(), key=lambda x: ['Junior', 'Mid', 'Senior', 'Lead/Principal'].index(x))
         all_locations = sorted(MOCK_SALARY_DF['location'].unique().tolist())
 
         # Try to infer roles/locations from comprehensive_df if available in session state
@@ -225,10 +258,10 @@ def advanced_tools_page():
             col_c1, col_c2 = st.columns(2)
             with col_c1:
                 selected_role = st.selectbox("Role Title", all_roles, key="comp_role")
-                selected_location = st.selectbox("Location", all_locations, key="comp_loc")
+                selected_seniority = st.selectbox("Seniority Level", all_seniorities, key="comp_seniority")
             with col_c2:
-                years_exp_comp = st.slider("Years of Experience (for benchmark)", 0, 20, 5, key="comp_exp")
-                industry = st.selectbox("Industry (for context)", ["Tech", "Finance", "Healthcare", "Manufacturing", "Other"], key="comp_industry")
+                years_exp_comp = st.slider("Years of Experience", 0, 20, 5, key="comp_exp")
+                selected_location = st.selectbox("Location", all_locations, key="comp_loc")
             
             benchmark_button = st.form_submit_button("Get Benchmark")
 
@@ -236,50 +269,66 @@ def advanced_tools_page():
                 # Filter mock data based on user selection
                 filtered_salaries = MOCK_SALARY_DF[
                     (MOCK_SALARY_DF['role'] == selected_role) &
+                    (MOCK_SALARY_DF['seniority'] == selected_seniority) &
                     (MOCK_SALARY_DF['location'] == selected_location) &
                     (MOCK_SALARY_DF['min_exp'] <= years_exp_comp) &
                     (MOCK_SALARY_DF['max_exp'] >= years_exp_comp)
                 ]
 
                 if not filtered_salaries.empty:
-                    # Take the first matching range (or average if multiple overlap, though not designed for that)
-                    benchmark_min = filtered_salaries['min_salary'].min()
-                    benchmark_max = filtered_salaries['max_salary'].max()
+                    # Get the specific benchmark row
+                    benchmark_row = filtered_salaries.iloc[0] # Take the first match
+
+                    base_min = benchmark_row['min_salary']
+                    base_max = benchmark_row['max_salary']
+                    avg_bonus_pct = benchmark_row['avg_bonus_pct']
+                    avg_equity_pct = benchmark_row['avg_equity_pct']
+
+                    # Calculate total compensation (simulated)
+                    # For simplicity, using the average of min/max base for bonus/equity calculation
+                    avg_base_salary = (base_min + base_max) / 2
+                    estimated_bonus = avg_base_salary * (avg_bonus_pct / 100)
+                    estimated_equity = avg_base_salary * (avg_equity_pct / 100) # Assuming equity as annual value
+
+                    total_comp_min = base_min + (base_min * avg_bonus_pct / 100) + (base_min * avg_equity_pct / 100)
+                    total_comp_max = base_max + (base_max * avg_bonus_pct / 100) + (base_max * avg_equity_pct / 100)
 
                     st.markdown("#### Benchmark Results:")
-                    st.success(f"**Estimated Salary Range for '{selected_role}' in '{selected_location}' ({years_exp_comp} yrs exp):**")
-                    st.write(f"**₹{benchmark_min:,.0f} - ₹{benchmark_max:,.0f} per annum**")
+                    st.success(f"**Estimated Compensation Range for '{selected_seniority} {selected_role}' in '{selected_location}' ({years_exp_comp} yrs exp):**")
+                    st.write(f"**Base Salary: ₹{base_min:,.0f} - ₹{base_max:,.0f} per annum**")
+                    st.write(f"**Total Compensation (incl. Bonus/Equity): ₹{total_comp_min:,.0f} - ₹{total_comp_max:,.0f} per annum (approx.)**")
 
                     # Visualization of the range
                     salary_range_df = pd.DataFrame({
-                        'Category': ['Minimum', 'Maximum'],
-                        'Salary': [benchmark_min, benchmark_max]
+                        'Component': ['Base Min', 'Base Max', 'Total Comp Min', 'Total Comp Max'],
+                        'Salary': [base_min, base_max, total_comp_min, total_comp_max]
                     })
                     fig_salary_range = px.bar(
                         salary_range_df,
-                        x='Category',
+                        x='Component',
                         y='Salary',
-                        title='Estimated Salary Range',
+                        title='Estimated Compensation Breakdown',
                         labels={'Salary': 'Annual Salary (₹)'},
-                        color_discrete_sequence=['#00cec9', '#00b0a8'] if not dark_mode else ['#00cec9', '#00b0a8']
+                        color_discrete_sequence=['#00cec9', '#00b0a8', '#2ecc71', '#27ae60'] if not dark_mode else ['#00cec9', '#00b0a8', '#2ecc71', '#27ae60']
                     )
                     st.plotly_chart(fig_salary_range, use_container_width=True)
 
                     st.markdown("---")
-                    st.markdown("##### Factors Influencing This Benchmark (Simulated):")
-                    st.write(f"- **Experience Level:** {years_exp_comp} years (matched to {filtered_salaries['min_exp'].iloc[0]}-{filtered_salaries['max_exp'].iloc[0]} yrs band)")
-                    st.write(f"- **Location Premium:** {selected_location} (simulated regional adjustment)")
-                    st.write(f"- **Industry Standard:** {industry} (simulated industry norms)")
-                    st.write("---")
-                    st.info("Confidence Level: High (based on available simulated data points)")
+                    st.markdown("##### Key Factors & Confidence (Simulated):")
+                    st.write(f"- **Experience Level:** {years_exp_comp} years (matched to {benchmark_row['min_exp']}-{benchmark_row['max_exp']} yrs band)")
+                    st.write(f"- **Seniority:** {selected_seniority}")
+                    st.write(f"- **Location Premium:** {selected_location}")
+                    st.write(f"- **Average Bonus:** {avg_bonus_pct}%")
+                    st.write(f"- **Average Equity/Stock:** {avg_equity_pct}%")
+                    st.info("Confidence Level: **High** (direct match found in simulated data)")
 
                 else:
-                    st.warning("No benchmark data found for the selected criteria. Please try different parameters.")
+                    st.warning("No precise benchmark data found for the selected criteria. Adjust parameters or consider a broader search.")
+                    st.info("Confidence Level: **Low** (no direct match in simulated data)")
                 
                 log_user_action(user_email, "COMPENSATION_BENCHMARK_USED", {
-                    "role": selected_role, "location": selected_location, "exp": years_exp_comp,
-                    "benchmark_min": benchmark_min if 'benchmark_min' in locals() else 'N/A',
-                    "benchmark_max": benchmark_max if 'benchmark_max' in locals() else 'N/A'
+                    "role": selected_role, "seniority": selected_seniority, "location": selected_location, "exp": years_exp_comp,
+                    "benchmark_found": not filtered_salaries.empty
                 })
 
     with tab_dei:
@@ -321,6 +370,30 @@ def advanced_tools_page():
 
         st.markdown("---")
         st.write("More DEI metrics (e.g., ethnicity, disability status) and bias detection features could be added here.")
-        log_user_action(user_email, "DEI_ANALYTICS_VIEWED")
+        
+        # New: Mock Bias Detection for Job Description
+        st.subheader("Job Description Bias Detection (Mock)")
+        st.info("Analyze your job description for potentially biased language. (Mock functionality)")
+        jd_text_for_bias = st.text_area("Paste Job Description Text for Bias Check:", "We are seeking a highly motivated and aggressive individual to lead our sales team. Must be a rockstar with a proven track record.", height=150, key="jd_bias_check")
+        
+        if st.button("Check for Bias", key="check_bias_button"):
+            biased_terms = []
+            if "aggressive" in jd_text_for_bias.lower():
+                biased_terms.append("aggressive (gender-coded)")
+            if "rockstar" in jd_text_for_bias.lower():
+                biased_terms.append("rockstar (can imply age/culture bias)")
+            if "ninja" in jd_text_for_bias.lower():
+                biased_terms.append("ninja (can imply culture bias)")
+            if "guru" in jd_text_for_bias.lower():
+                biased_terms.append("guru (can imply age bias)")
+
+            if biased_terms:
+                st.warning("⚠️ Potential biased language detected:")
+                for term in biased_terms:
+                    st.write(f"- `{term}`: Consider using more neutral alternatives.")
+                st.markdown("Suggested alternatives: 'driven', 'high-achieving', 'expert', 'specialist'.")
+            else:
+                st.success("✅ No obvious biased language detected in this text. Great job!")
+            log_user_action(user_email, "JD_BIAS_CHECK_USED")
 
     st.markdown("</div>", unsafe_allow_html=True)
