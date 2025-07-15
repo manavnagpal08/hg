@@ -139,7 +139,7 @@ def send_actual_email(to_email, subject, body, gmail_address, gmail_app_password
     Attempts to send a real email via Gmail's SMTP server using an App Password.
     """
     if not gmail_address or not gmail_app_password:
-        st.warning("Email sending skipped: Please configure your Gmail Address and App Password in the 'Email Configuration' section.")
+        st.warning("Email sending skipped: Gmail Address or App Password not configured internally.")
         return False, "Gmail credentials not configured."
 
     try:
@@ -158,7 +158,7 @@ def send_actual_email(to_email, subject, body, gmail_address, gmail_app_password
         st.success(f"📧 Real email sent to {to_email} via Gmail!")
         return True, "Email sent successfully."
     except smtplib.SMTPAuthenticationError:
-        st.error("❌ Gmail Authentication Error: Please check your Gmail address and App Password. Ensure 2-Step Verification is enabled and you've generated an App Password.")
+        st.error("❌ Gmail Authentication Error: Please check your hardcoded Gmail address and App Password. Ensure 2-Step Verification is enabled and you've generated an App Password.")
         return False, "Authentication failed."
     except smtplib.SMTPServerDisconnected:
         st.error("❌ Gmail SMTP Server Disconnected: This might be a temporary network issue or a security block. Try again later.")
@@ -783,19 +783,24 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
             1.  **Enable 2-Step Verification** for your Google Account.
             2.  Go to [Google Account Security](https://myaccount.google.com/security) -> "App passwords" (you might need to search for it).
             3.  Generate a new App password and **copy the 16-character code**.
-            4.  **Paste this 16-character code** into the "Gmail App Password" field below.
-            5.  **Enter your full Gmail address** (e.g., `your.email@gmail.com`) into the "Your Gmail Address" field.
-            6.  **Note:** Direct SMTP connections from this Streamlit Canvas environment might still be blocked by network policies. For reliable email sending, consider deploying your app to a server where you have full control over network access.
+            4.  **REPLACE THE PLACEHOLDERS BELOW IN THE CODE WITH YOUR ACTUAL GMAIL ADDRESS AND APP PASSWORD.**
+            5.  **Note:** Direct SMTP connections from this Streamlit Canvas environment might still be blocked by network policies. For reliable email sending, consider deploying your app to a server where you have full control over network access.
         """)
         
-        # Store email configuration in session state for persistence within the session
-        if 'gmail_address' not in st.session_state:
-            st.session_state.gmail_address = ""
-        if 'gmail_app_password' not in st.session_state:
-            st.session_state.gmail_app_password = ""
+        # --- HARDCODED GMAIL CREDENTIALS (REPLACE THESE PLACEHOLDERS) ---
+        # You need to replace "YOUR_GMAIL_ADDRESS@gmail.com" with your actual Gmail address
+        # and "YOUR_GMAIL_APP_PASSWORD" with the 16-character App Password you generated.
+        gmail_address = "screenerpro.ai@gmail.com"  # <--- REPLACE THIS
+        gmail_app_password = "zdbvrxatqutupql"  # <--- REPLACE THIS
+        # --- END HARDCODED GMAIL CREDENTIALS ---
 
-        st.session_state.gmail_address = st.text_input("Your Gmail Address", value=st.session_state.gmail_address, help="e.g., your.email@gmail.com", key="gmail_address_input")
-        st.session_state.gmail_app_password = st.text_input("Gmail App Password", value=st.session_state.gmail_app_password, type="password", help="Your 16-character App Password from Google Account Security.", key="gmail_app_password_input")
+        # Store these in session state for consistency, but they are now hardcoded values
+        st.session_state.gmail_address = gmail_address
+        st.session_state.gmail_app_password = gmail_app_password
+
+        # Commented out UI input fields as requested
+        # st.session_state.gmail_address = st.text_input("Your Gmail Address", value=st.session_state.gmail_address, help="e.g., your.email@gmail.com", key="gmail_address_input")
+        # st.session_state.gmail_app_password = st.text_input("Gmail App Password", value=st.session_state.gmail_app_password, type="password", help="Your 16-character App Password from Google Account Security.", key="gmail_app_password_input")
         
         # We don't need a toggle anymore, as the presence of credentials implies attempting to send.
         # send_real_emails_toggle = st.checkbox("Attempt to Send Real Emails (Requires Configuration Above)", key="send_real_emails_toggle")
@@ -975,9 +980,9 @@ Best regards,
 The HR Team
 """
 
-                        # Attempt to send real emails if credentials are provided
+                        # Attempt to send real emails if hardcoded credentials are provided
                         if st.session_state.gmail_address and st.session_state.gmail_app_password:
-                            st.info("Attempting to send real emails via Gmail...")
+                            st.info("Attempting to send real emails via Gmail (using hardcoded credentials)...")
                             # Send email to candidate
                             send_actual_email(
                                 candidate_email,
@@ -995,7 +1000,7 @@ The HR Team
                                 st.session_state.gmail_app_password
                             )
                         else:
-                            st.info("Gmail credentials not provided. Emails will not be sent.")
+                            st.info("Hardcoded Gmail credentials not provided. Emails will not be sent.")
                             st.info(f"📧 **Simulated Email to Candidate ({candidate_email}):** Your interview for {interview_type} is scheduled for {interview_date.strftime('%Y-%m-%d')} at {interview_time.strftime('%I:%M %p')}.")
                             st.info(f"📧 **Simulated Calendar Invite to Interviewer ({selected_interviewer_email}):** Interview for {candidate_name} on {interview_date.strftime('%Y-%m-%d')} at {interview_time.strftime('%I:%M %p')}.")
                         
