@@ -139,7 +139,7 @@ def send_actual_email(to_email, subject, body, gmail_address, gmail_app_password
     Attempts to send a real email via Gmail's SMTP server using an App Password.
     """
     if not gmail_address or not gmail_app_password:
-        st.warning("Email sending skipped: Please configure your Gmail Address and App Password in the 'Email Configuration' section.")
+        st.warning("Email sending skipped: Gmail Address or App Password not configured internally.")
         return False, "Gmail credentials not configured."
 
     try:
@@ -158,7 +158,7 @@ def send_actual_email(to_email, subject, body, gmail_address, gmail_app_password
         st.success(f"📧 Real email sent to {to_email} via Gmail!")
         return True, "Email sent successfully."
     except smtplib.SMTPAuthenticationError:
-        st.error("❌ Gmail Authentication Error: Please check your Gmail address and App Password. Ensure 2-Step Verification is enabled and you've generated an App Password.")
+        st.error("❌ Gmail Authentication Error: Please check your hardcoded Gmail address and App Password. Ensure 2-Step Verification is enabled and you've generated an App Password.")
         return False, "Authentication failed."
     except smtplib.SMTPServerDisconnected:
         st.error("❌ Gmail SMTP Server Disconnected: This might be a temporary network issue or a security block. Try again later.")
@@ -777,25 +777,30 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
         st.info("Streamline your interview process by automating scheduling, reminders, and feedback collection. Data is stored in Firebase.")
         
         st.markdown("---")
-        st.subheader("📧 Email Configuration (Gmail App Password)")
-        st.warning("""
-            **To send actual emails via Gmail:**
-            1.  **Enable 2-Step Verification** for your Google Account.
-            2.  Go to [Google Account Security](https://myaccount.google.com/security) -> "App passwords" (you might need to search for it).
-            3.  Generate a new App password and **copy the 16-character code**.
-            4.  **Paste this 16-character code** into the "Gmail App Password" field below.
-            5.  **Enter your full Gmail address** (e.g., `your.email@gmail.com`) into the "Your Gmail Address" field.
-            6.  **Note:** Direct SMTP connections from this Streamlit Canvas environment might still be blocked by network policies. For reliable email sending, consider deploying your app to a server where you have full control over network access.
+        st.subheader("📧 Email Configuration")
+        st.info("""
+            Email notifications for scheduled interviews are now simulated.
+            If you wish to enable real email sending, you will need to:
+            1.  **Replace the placeholder values** for `gmail_address` and `gmail_app_password` directly in the `advanced.py` code.
+            2.  Ensure your Gmail account has **2-Step Verification enabled** and you've generated a **16-character App Password**.
+            3.  **Note:** Direct SMTP connections from this Streamlit Canvas environment might still be blocked by network policies.
         """)
         
-        # Store email configuration in session state for persistence within the session
-        if 'gmail_address' not in st.session_state:
-            st.session_state.gmail_address = ""
-        if 'gmail_app_password' not in st.session_state:
-            st.session_state.gmail_app_password = ""
+        # --- HARDCODED GMAIL CREDENTIALS (REPLACE THESE PLACEHOLDERS) ---
+        # If you want to enable real email sending, replace "YOUR_GMAIL_ADDRESS@gmail.com"
+        # with your actual Gmail address and "YOUR_GMAIL_APP_PASSWORD" with the 16-character
+        # App Password you generated from Google Account Security.
+        gmail_address = "screenerpro.ai@gmail.com@gmail.com"  # <--- REPLACE THIS WITH YOUR GMAIL
+        gmail_app_password = "hcss uefd gaae wrse"  # <--- REPLACE THIS WITH YOUR 16-CHARACTER APP PASSWORD
+        # --- END HARDCODED GMAIL CREDENTIALS ---
 
-        st.session_state.gmail_address = st.text_input("Your Gmail Address", value=st.session_state.gmail_address, help="e.g., your.email@gmail.com", key="gmail_address_input")
-        st.session_state.gmail_app_password = st.text_input("Gmail App Password", value=st.session_state.gmail_app_password, type="password", help="Your 16-character App Password from Google Account Security.", key="gmail_app_password_input")
+        # Store these in session state for consistency, but they are now hardcoded values
+        st.session_state.gmail_address = gmail_address
+        st.session_state.gmail_app_password = gmail_app_password
+
+        # Commented out UI input fields as requested
+        # st.session_state.gmail_address = st.text_input("Your Gmail Address", value=st.session_state.gmail_address, help="e.g., your.email@gmail.com", key="gmail_address_input")
+        # st.session_state.gmail_app_password = st.text_input("Gmail App Password", value=st.session_state.gmail_app_password, type="password", help="Your 16-character App Password from Google Account Security.", key="gmail_app_password_input")
         
         # --- Load existing interviews, feedback, and interviewers from Firebase ---
         if 'user_interviews' not in st.session_state:
@@ -972,7 +977,9 @@ The HR Team
 """
 
                         # Attempt to send real emails if credentials are provided
-                        if st.session_state.gmail_address and st.session_state.gmail_app_password:
+                        if st.session_state.gmail_address and st.session_state.gmail_app_password and \
+                           st.session_state.gmail_address != "YOUR_GMAIL_ADDRESS@gmail.com" and \
+                           st.session_state.gmail_app_password != "YOUR_GMAIL_APP_PASSWORD":
                             st.info("Attempting to send real emails via Gmail...")
                             # Send email to candidate
                             send_actual_email(
@@ -991,7 +998,7 @@ The HR Team
                                 st.session_state.gmail_app_password
                             )
                         else:
-                            st.info("Gmail credentials not provided. Emails will not be sent.")
+                            st.info("Gmail credentials not provided or are placeholders. Emails will be simulated.")
                             st.info(f"📧 **Simulated Email to Candidate ({candidate_email}):** Your interview for {interview_type} is scheduled for {interview_date.strftime('%Y-%m-%d')} at {interview_time.strftime('%I:%M %p')}.")
                             st.info(f"📧 **Simulated Calendar Invite to Interviewer ({selected_interviewer_email}):** Interview for {candidate_name} on {interview_date.strftime('%Y-%m-%d')} at {interview_time.strftime('%I:%M %p')}.")
                         
