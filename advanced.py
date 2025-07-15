@@ -152,12 +152,10 @@ def advanced_tools_page():
             with col_p1:
                 candidate_score = st.slider("Candidate Score (%)", 0, 100, 75, key="pred_score")
                 years_experience = st.slider("Years of Experience", 0.0, 30.0, 5.0, step=0.5, key="pred_exp")
-                # New: Specific skills match (mock)
                 skills_match_score = st.slider("Specific Skills Match (0-100%)", 0, 100, 70, key="pred_skills_match")
             with col_p2:
                 education_level = st.selectbox("Highest Education Level", ["High School", "Associate's", "Bachelor's", "Master's", "PhD"], key="pred_edu")
                 interview_feedback = st.slider("Interview Feedback (1-5, 5=Excellent)", 1, 5, 3, key="pred_feedback")
-                # New: Past company tier (mock)
                 past_company_tier = st.selectbox("Past Company Tier", ["Tier 1 (FAANG/Unicorn)", "Tier 2 (Large Enterprise)", "Tier 3 (Mid-size)", "Tier 4 (Startup/Small)"], key="pred_company_tier")
             
             predict_button = st.form_submit_button("Predict Success")
@@ -182,15 +180,62 @@ def advanced_tools_page():
                 if past_company_tier == "Tier 1 (FAANG/Unicorn)": likelihood_score += 2
                 elif past_company_tier == "Tier 2 (Large Enterprise)": likelihood_score += 1
 
-                likelihood = "Low"
-                if likelihood_score >= 9:
-                    likelihood = "High"
-                elif likelihood_score >= 6:
-                    likelihood = "Moderate"
+                probability = min(100, max(0, int(likelihood_score / 13 * 100) + np.random.randint(-10, 10))) # Add some randomness
                 
-                st.success(f"**Prediction:** The candidate has a **{likelihood}** likelihood of success in this role.")
+                likelihood = "Low"
+                confidence = "Low"
+                if probability >= 80:
+                    likelihood = "High"
+                    confidence = "High"
+                elif probability >= 50:
+                    likelihood = "Moderate"
+                    confidence = "Medium"
+                else:
+                    likelihood = "Low"
+                    confidence = "Low"
+                
+                st.success(f"**Prediction:** The candidate has a **{likelihood}** likelihood of success in this role (Simulated Probability: **{probability}%**).")
+                st.info(f"Confidence in this prediction: **{confidence}**.")
                 st.write(f"*(Simulated Score: {likelihood_score}/13)*")
-                log_user_action(user_email, "PREDICTIVE_ANALYTICS_USED", {"score": candidate_score, "exp": years_experience, "likelihood": likelihood})
+                log_user_action(user_email, "CANDIDATE_PREDICTION_USED", {"score": candidate_score, "exp": years_experience, "probability": probability})
+
+        st.markdown("---")
+        st.subheader("Employee Churn Prediction (Mock)")
+        st.info("Predict which existing employees might be at risk of leaving the company. (Mock functionality)")
+
+        with st.form("churn_prediction_form", clear_on_submit=False):
+            col_ch1, col_ch2 = st.columns(2)
+            with col_ch1:
+                employee_tenure = st.slider("Employee Tenure (Years)", 0, 20, 3, key="churn_tenure")
+                performance_rating = st.slider("Last Performance Rating (1-5)", 1, 5, 3, key="churn_perf")
+            with col_ch2:
+                compensation_satisfaction = st.slider("Compensation Satisfaction (1-5)", 1, 5, 3, key="churn_comp_sat")
+                work_life_balance = st.slider("Work-Life Balance (1-5)", 1, 5, 3, key="churn_wlb")
+            
+            predict_churn_button = st.form_submit_button("Predict Churn Risk")
+
+            if predict_churn_button:
+                churn_risk_score = 0
+                if employee_tenure <= 2: churn_risk_score += 2 # Early churn risk
+                elif employee_tenure >= 7: churn_risk_score += 1 # Long-term stagnation risk
+
+                if performance_rating <= 2: churn_risk_score += 3 # Low performance
+                
+                if compensation_satisfaction <= 2: churn_risk_score += 3 # Unhappy with pay
+                elif compensation_satisfaction == 3: churn_risk_score += 1
+
+                if work_life_balance <= 2: churn_risk_score += 2 # Poor WLB
+
+                risk_level = "Low"
+                if churn_risk_score >= 6:
+                    risk_level = "High"
+                elif churn_risk_score >= 3:
+                    risk_level = "Moderate"
+                
+                st.warning(f"**Churn Risk Prediction:** This employee has a **{risk_level}** risk of leaving. (Simulated Score: {churn_risk_score}/11)")
+                st.write("*(Factors considered: Tenure, Performance, Compensation Satisfaction, Work-Life Balance)*")
+                log_user_action(user_email, "CHURN_PREDICTION_USED", {"tenure": employee_tenure, "risk": risk_level})
+
 
     with tab_skill_gap:
         st.subheader("Skill Gap Analysis (Mock)")
@@ -231,8 +276,23 @@ def advanced_tools_page():
                 log_user_action(user_email, "SKILL_GAP_ANALYSIS_USED", {"required": required_skills_input, "candidate": candidate_skills_input})
         
         st.markdown("---")
-        st.subheader("Team Skill Inventory (Mock Visualization)")
-        st.info("Visualize the distribution of key skills across your current team. (Mock data)")
+        st.subheader("Role Skill Requirements Builder (Mock)")
+        st.info("Define and categorize skills required for a new role. (Mock functionality)")
+        
+        new_role_name = st.text_input("New Role Name", "Senior AI Engineer", key="new_role_skill_builder")
+        core_skills = st.text_area("Core Skills (comma-separated)", "Deep Learning, Python, TensorFlow, PyTorch", key="core_skills_builder")
+        soft_skills = st.text_area("Soft Skills (comma-separated)", "Communication, Teamwork, Problem Solving", key="soft_skills_builder")
+        
+        if st.button("Build Skill Profile", key="build_skill_profile_button"):
+            st.success(f"Skill profile built for **{new_role_name}**!")
+            st.write(f"**Core Skills:** {core_skills}")
+            st.write(f"**Soft Skills:** {soft_skills}")
+            st.info("This profile can be saved and used for future candidate matching.")
+            log_user_action(user_email, "ROLE_SKILL_BUILDER_USED", {"role": new_role_name})
+
+        st.markdown("---")
+        st.subheader("Team Skill Inventory & Heatmap (Mock Visualization)")
+        st.info("Visualize the distribution and proficiency of key skills across your current team. (Mock data)")
         
         # Mock Team Skill Data
         team_skills_data = {
@@ -254,6 +314,28 @@ def advanced_tools_page():
         )
         st.plotly_chart(fig_team_skills, use_container_width=True)
         st.caption("This chart shows average self-reported or assessed proficiency for key skills across the team.")
+
+        # Mock Team Skill Heatmap
+        st.markdown("##### Team Skill Heatmap (Simulated)")
+        skills_for_heatmap = ['Python', 'SQL', 'Cloud Computing', 'Communication', 'Leadership']
+        team_members_for_heatmap = [f"Team Member {i+1}" for i in range(10)]
+        
+        heatmap_data = pd.DataFrame(
+            np.random.randint(1, 6, size=(len(team_members_for_heatmap), len(skills_for_heatmap))),
+            index=team_members_for_heatmap,
+            columns=skills_for_heatmap
+        )
+        
+        fig_heatmap = px.imshow(
+            heatmap_data,
+            text_auto=True,
+            aspect="auto",
+            color_continuous_scale=px.colors.sequential.Greens if not dark_mode else px.colors.sequential.Viridis,
+            title="Team Skill Proficiency Heatmap (1=Low, 5=High)"
+        )
+        fig_heatmap.update_xaxes(side="top")
+        st.plotly_chart(fig_heatmap, use_container_width=True)
+        st.caption("A visual representation of individual skill strengths across the team.")
 
 
     with tab_compensation:
@@ -305,29 +387,26 @@ def advanced_tools_page():
                     # Get the specific benchmark row
                     benchmark_row = filtered_salaries.iloc[0] # Take the first match
 
-                    base_min = benchmark_row['min_salary']
-                    base_max = benchmark_row['max_salary']
+                    base_min_orig = benchmark_row['min_salary']
+                    base_max_orig = benchmark_row['max_salary']
                     avg_bonus_pct = benchmark_row['avg_bonus_pct']
                     avg_equity_pct = benchmark_row['avg_equity_pct']
 
                     # Calculate total compensation (simulated)
-                    # For simplicity, using the average of min/max base for bonus/equity calculation
-                    avg_base_salary = (base_min + base_max) / 2
-                    estimated_bonus = avg_base_salary * (avg_bonus_pct / 100)
-                    estimated_equity = avg_base_salary * (avg_equity_pct / 100) # Assuming equity as annual value
-
-                    total_comp_min = base_min + (base_min * avg_bonus_pct / 100) + (base_min * avg_equity_pct / 100)
-                    total_comp_max = base_max + (base_max * avg_bonus_pct / 100) + (base_max * avg_equity_pct / 100)
+                    avg_base_salary_orig = (base_min_orig + base_max_orig) / 2
+                    
+                    total_comp_min_orig = base_min_orig + (base_min_orig * avg_bonus_pct / 100) + (base_min_orig * avg_equity_pct / 100)
+                    total_comp_max_orig = base_max_orig + (base_max_orig * avg_bonus_pct / 100) + (base_max_orig * avg_equity_pct / 100)
 
                     st.markdown("#### Benchmark Results:")
                     st.success(f"**Estimated Compensation Range for '{selected_seniority} {selected_role}' in '{selected_location}' ({years_exp_comp} yrs exp):**")
-                    st.write(f"**Base Salary: ₹{base_min:,.0f} - ₹{base_max:,.0f} per annum**")
-                    st.write(f"**Total Compensation (incl. Bonus/Equity): ₹{total_comp_min:,.0f} - ₹{total_comp_max:,.0f} per annum (approx.)**")
+                    st.write(f"**Base Salary: ₹{base_min_orig:,.0f} - ₹{base_max_orig:,.0f} per annum**")
+                    st.write(f"**Total Compensation (incl. Bonus/Equity): ₹{total_comp_min_orig:,.0f} - ₹{total_comp_max:,.0f} per annum (approx.)**")
 
                     # Visualization of the range
                     salary_range_df = pd.DataFrame({
                         'Component': ['Base Min', 'Base Max', 'Total Comp Min', 'Total Comp Max'],
-                        'Salary': [base_min, base_max, total_comp_min, total_comp_max]
+                        'Salary': [base_min_orig, base_max_orig, total_comp_min_orig, total_comp_max_orig]
                     })
                     fig_salary_range = px.bar(
                         salary_range_df,
@@ -348,22 +427,50 @@ def advanced_tools_page():
                     st.write(f"- **Average Equity/Stock:** {avg_equity_pct}%")
                     st.info("Confidence Level: **High** (direct match found in simulated data)")
 
-                    # New: Compare with Candidate's Expected Salary
+                    # New: Custom Range Adjustment
+                    st.markdown("---")
+                    st.subheader("Custom Range Adjustment")
+                    st.write("Adjust the benchmarked range to fit specific budget or candidate considerations.")
+                    col_adj1, col_adj2 = st.columns(2)
+                    with col_adj1:
+                        adjusted_min_salary = st.number_input("Adjusted Minimum Base Salary (₹)", min_value=0, value=int(base_min_orig), step=50000, key="adj_min_salary")
+                    with col_adj2:
+                        adjusted_max_salary = st.number_input("Adjusted Maximum Base Salary (₹)", min_value=0, value=int(base_max_orig), step=50000, key="adj_max_salary")
+                    
+                    if st.button("Apply Adjustment", key="apply_adj_button"):
+                        st.success(f"Adjusted Base Salary Range: ₹{adjusted_min_salary:,.0f} - ₹{adjusted_max_salary:,.0f} per annum.")
+                        log_user_action(user_email, "COMPENSATION_ADJUSTED", {"min": adjusted_min_salary, "max": adjusted_max_salary})
+
+                    # New: Scenario Analysis
+                    st.markdown("---")
+                    st.subheader("Compensation Scenario Analysis (Mock)")
+                    st.write("See how different bonus or equity percentages impact the total compensation.")
+                    scenario_bonus_pct = st.slider("Scenario Bonus (%)", 0, 30, avg_bonus_pct, key="scenario_bonus")
+                    scenario_equity_pct = st.slider("Scenario Equity (%)", 0, 30, avg_equity_pct, key="scenario_equity")
+
+                    if st.button("Run Scenario", key="run_scenario_button"):
+                        scenario_total_comp_min = base_min_orig + (base_min_orig * scenario_bonus_pct / 100) + (base_min_orig * scenario_equity_pct / 100)
+                        scenario_total_comp_max = base_max_orig + (base_max_orig * scenario_bonus_pct / 100) + (base_max_orig * scenario_equity_pct / 100)
+                        st.info(f"Scenario Total Compensation: ₹{scenario_total_comp_min:,.0f} - ₹{scenario_total_comp_max:,.0f} per annum.")
+                        log_user_action(user_email, "COMPENSATION_SCENARIO_RUN", {"bonus": scenario_bonus_pct, "equity": scenario_equity_pct})
+
+
+                    # Compare with Candidate's Expected Salary
                     st.markdown("---")
                     st.subheader("Compare with Candidate's Expected Salary")
-                    candidate_expected_salary = st.number_input("Candidate's Expected Annual Salary (₹)", min_value=0, value=int(avg_base_salary), step=10000, key="cand_expected_salary")
+                    candidate_expected_salary = st.number_input("Candidate's Expected Annual Salary (₹)", min_value=0, value=int(avg_base_salary_orig), step=10000, key="cand_expected_salary")
                     
                     if st.button("Compare", key="compare_salary_button"):
-                        if candidate_expected_salary < base_min:
-                            st.warning(f"Candidate's expectation (₹{candidate_expected_salary:,.0f}) is below the benchmark range (₹{base_min:,.0f} - ₹{base_max:,.0f}).")
+                        if candidate_expected_salary < base_min_orig:
+                            st.warning(f"Candidate's expectation (₹{candidate_expected_salary:,.0f}) is below the benchmark range (₹{base_min_orig:,.0f} - ₹{base_max_orig:,.0f}).")
                             st.write("This could be an opportunity to offer a competitive package or indicate a mismatch in expectations.")
-                        elif candidate_expected_salary > base_max:
-                            st.warning(f"Candidate's expectation (₹{candidate_expected_salary:,.0f}) is above the benchmark range (₹{base_min:,.0f} - ₹{base_max:,.0f}).")
+                        elif candidate_expected_salary > base_max_orig:
+                            st.warning(f"Candidate's expectation (₹{candidate_expected_salary:,.0f}) is above the benchmark range (₹{base_min_orig:,.0f} - ₹{base_max_orig:,.0f}).")
                             st.write("This might require re-evaluation of the role's budget or negotiation strategy.")
                         else:
-                            st.success(f"Candidate's expectation (₹{candidate_expected_salary:,.0f}) is within the benchmark range (₹{base_min:,.0f} - ₹{base_max:,.0f}).")
+                            st.success(f"Candidate's expectation (₹{candidate_expected_salary:,.0f}) is within the benchmark range (₹{base_min_orig:,.0f} - ₹{base_max_orig:,.0f}).")
                             st.write("This indicates a good alignment with market compensation.")
-                        log_user_action(user_email, "COMPENSATION_COMPARE_USED", {"expected_salary": candidate_expected_salary, "benchmark_min": base_min, "benchmark_max": base_max})
+                        log_user_action(user_email, "COMPENSATION_COMPARE_USED", {"expected_salary": candidate_expected_salary, "benchmark_min": base_min_orig, "benchmark_max": base_max_orig})
 
                 else:
                     st.warning("No precise benchmark data found for the selected criteria. Adjust parameters or consider a broader search.")
@@ -427,6 +534,50 @@ def advanced_tools_page():
             color_discrete_sequence=['#00cec9', '#fab1a0'] if not dark_mode else ['#00cec9', '#fab1a0']
         )
         st.plotly_chart(fig_dept_diversity, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("Hiring Funnel Diversity Breakdown (Mock)")
+        st.info("Analyze diversity metrics at each stage of your hiring pipeline. (Mock data)")
+
+        funnel_data = pd.DataFrame({
+            'Stage': ['Applicants', 'Screened', 'Interviewed', 'Offered', 'Hired'],
+            'Total': [1000, 500, 100, 20, 10],
+            'Female': [400, 200, 40, 8, 4],
+            'Underrepresented Groups': [150, 70, 15, 3, 2]
+        })
+        funnel_data['Female %'] = (funnel_data['Female'] / funnel_data['Total'] * 100).round(1)
+        funnel_data['URG %'] = (funnel_data['Underrepresented Groups'] / funnel_data['Total'] * 100).round(1)
+
+        fig_funnel = px.line(
+            funnel_data,
+            x='Stage',
+            y=['Female %', 'URG %'],
+            title='Diversity Percentage Across Hiring Funnel',
+            labels={'value': 'Percentage (%)', 'variable': 'Diversity Group'},
+            markers=True,
+            color_discrete_sequence=['#00cec9', '#fab1a0'] if not dark_mode else ['#00cec9', '#fab1a0']
+        )
+        st.plotly_chart(fig_funnel, use_container_width=True)
+        st.dataframe(funnel_data[['Stage', 'Total', 'Female %', 'URG %']], use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("Pay Equity Analysis (Mock)")
+        st.info("Simulate analysis of pay differences across demographic groups for similar roles. (Mock functionality)")
+        
+        gender_pay_gap = np.random.uniform(-5, 5) # Simulate a small gender pay gap
+        urg_pay_gap = np.random.uniform(-3, 3) # Simulate a small URG pay gap
+
+        if st.button("Run Pay Equity Analysis", key="run_pay_equity_button"):
+            st.markdown("##### Simulated Pay Equity Report:")
+            st.write(f"- **Gender Pay Gap (Female vs. Male):** **{gender_pay_gap:.2f}%** (simulated, positive means male earns more)")
+            st.write(f"- **Underrepresented Groups Pay Gap:** **{urg_pay_gap:.2f}%** (simulated, positive means non-URG earns more)")
+            
+            if abs(gender_pay_gap) > 2 or abs(urg_pay_gap) > 2:
+                st.warning("⚠️ **Action Recommended:** Simulated data indicates potential pay disparities. Further investigation is advised.")
+            else:
+                st.success("✅ **Simulated Result:** Pay appears generally equitable based on available data.")
+            st.caption("_This is a simplified simulation and does not account for all complex factors in real pay equity analysis._")
+            log_user_action(user_email, "PAY_EQUITY_ANALYSIS_USED")
 
 
         st.markdown("---")
@@ -504,6 +655,36 @@ def advanced_tools_page():
                     log_user_action(user_email, "INTERVIEW_SCHEDULED", {"candidate": candidate_name, "interviewer": interviewer_name, "type": interview_type})
 
         st.markdown("---")
+        st.subheader("Interviewer Availability (Mock)")
+        st.info("View mock availability for interviewers to help with manual scheduling. (Mock data)")
+        
+        interviewer_to_check = st.selectbox("Select Interviewer", ["Dr. Smith", "Ms. Jones", "Mr. Brown"], key="interviewer_avail_select")
+        check_date = st.date_input("Check Availability for Date", min_value=datetime.now().date(), key="avail_check_date")
+
+        if st.button("Check Availability", key="check_avail_button"):
+            st.markdown(f"##### Mock Availability for {interviewer_to_check} on {check_date}:")
+            # Simulate availability
+            if interviewer_to_check == "Dr. Smith":
+                st.success("✅ Available: 10:00 AM - 12:00 PM, 02:00 PM - 04:00 PM")
+            elif interviewer_to_check == "Ms. Jones":
+                st.success("✅ Available: 09:00 AM - 11:00 AM, 01:00 PM - 03:00 PM")
+            else:
+                st.warning("⚠️ Limited Availability: 03:00 PM - 04:00 PM only")
+            log_user_action(user_email, "INTERVIEWER_AVAILABILITY_CHECKED", {"interviewer": interviewer_to_check, "date": check_date})
+
+        st.markdown("---")
+        st.subheader("Automated Reminders Configuration (Mock)")
+        st.info("Configure automated email reminders for candidates and interviewers. (Mock functionality)")
+        
+        reminder_candidate_days = st.slider("Send Candidate Reminder (days before interview)", 0, 3, 1, key="rem_cand_days")
+        reminder_interviewer_hours = st.slider("Send Interviewer Reminder (hours before interview)", 0, 48, 24, key="rem_int_hours")
+        
+        if st.button("Save Reminder Settings", key="save_reminders_button"):
+            st.success(f"Reminder settings saved: Candidate {reminder_candidate_days} day(s) before, Interviewer {reminder_interviewer_hours} hour(s) before.")
+            log_user_action(user_email, "REMINDER_SETTINGS_SAVED")
+
+
+        st.markdown("---")
         st.subheader("Upcoming Interviews (Mock Data)")
         st.info("View your upcoming interview schedule at a glance.")
 
@@ -517,8 +698,8 @@ def advanced_tools_page():
         st.dataframe(upcoming_interviews_df, use_container_width=True, hide_index=True)
 
         st.markdown("---")
-        st.subheader("Interview Feedback Collection (Mock)")
-        st.info("Submit and review interview feedback easily.")
+        st.subheader("Interview Feedback Collection & Trends (Mock)")
+        st.info("Submit and review interview feedback easily, and see overall trends.")
 
         feedback_candidate = st.selectbox("Select Candidate for Feedback", ["Alice Wonderland", "Bob The Builder", "Charlie Chaplin", "New Candidate..."], key="feedback_cand_select")
         if feedback_candidate == "New Candidate...":
@@ -536,6 +717,25 @@ def advanced_tools_page():
                 log_user_action(user_email, "INTERVIEW_FEEDBACK_SUBMITTED", {"candidate": feedback_candidate_name, "rating": feedback_rating})
             else:
                 st.warning("Please fill in all feedback fields.")
+
+        st.markdown("---")
+        st.subheader("Overall Interview Feedback Trends (Mock)")
+        # Mock feedback trend data
+        feedback_trend_data = pd.DataFrame({
+            'Rating': [1, 2, 3, 4, 5],
+            'Count': [np.random.randint(5, 15), np.random.randint(10, 30), np.random.randint(40, 80), np.random.randint(50, 100), np.random.randint(30, 60)]
+        })
+        fig_feedback_trend = px.bar(
+            feedback_trend_data,
+            x='Rating',
+            y='Count',
+            title='Distribution of Interview Ratings',
+            labels={'Count': 'Number of Ratings', 'Rating': 'Rating (1-5)'},
+            color='Count',
+            color_continuous_scale=px.colors.sequential.Plasma if dark_mode else px.colors.sequential.Viridis
+        )
+        st.plotly_chart(fig_feedback_trend, use_container_width=True)
+        st.caption("This chart shows the aggregated distribution of interview ratings.")
 
 
     st.markdown("</div>", unsafe_allow_html=True)
