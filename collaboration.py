@@ -14,7 +14,7 @@ FIREBASE_PROJECT_ID = os.environ.get('__app_id', 'default-app-id')
 # potentially passed from main.py or an environment variable.
 # For this Canvas environment, we'll assume it's available or use a placeholder.
 # You might need to manually set this in your main.py or environment if not automatically provided.
-FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'YOUR_FIREBASE_WEB_API_KEY') # Replace with your actual Web API Key
+FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'AIzaSyDjC7tdmpEkpsipgf9r1c3HlTO7C7BZ6Mw') # Replace with your actual Web API Key
 
 # Base URL for Firestore REST API
 FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
