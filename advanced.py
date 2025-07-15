@@ -3,11 +3,11 @@ import pandas as pd
 import plotly.express as px
 import collections
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date # Import date for date filtering
 import requests
 import json
-import smtplib # For sending emails via SMTP
-from email.mime.text import MIMEText # For creating email messages
+import smtplib # For sending emails via SMTP (though now simulated)
+from email.mime.text import MIMEText # For creating email messages (though now simulated)
 
 # --- Logging Function (can be shared or imported from main.py if needed) ---
 def log_user_action(user_email, action, details=None):
@@ -133,39 +133,15 @@ def load_collection_from_firestore(collection_path, api_key, base_url):
         st.error(f"Firestore load error: {e}")
         return False, str(e)
 
-# --- Email Sending Function using Gmail App Password ---
-def send_actual_email(to_email, subject, body, gmail_address, gmail_app_password):
+# --- Email Sending Function (now purely simulated as per request) ---
+def send_simulated_email(to_email, subject, body):
     """
-    Attempts to send a real email via Gmail's SMTP server using an App Password.
+    Simulates sending an email. In this environment, actual emails cannot be sent directly.
     """
-    if not gmail_address or not gmail_app_password:
-        st.warning("Email sending skipped: Gmail Address or App Password not configured internally.")
-        return False, "Gmail credentials not configured."
-
-    try:
-        msg = MIMEText(body)
-        msg['Subject'] = subject
-        msg['From'] = gmail_address
-        msg['To'] = to_email
-
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp: # Use SSL for port 465
-        # For port 587 (TLS), use:
-        # with smtplib.SMTP('smtp.gmail.com', 587) as smtp:
-        #     smtp.starttls()
-            smtp.login(gmail_address, gmail_app_password)
-            smtp.send_message(msg)
-        
-        st.success(f"📧 Real email sent to {to_email} via Gmail!")
-        return True, "Email sent successfully."
-    except smtplib.SMTPAuthenticationError:
-        st.error("❌ Gmail Authentication Error: Please check your hardcoded Gmail address and App Password. Ensure 2-Step Verification is enabled and you've generated an App Password.")
-        return False, "Authentication failed."
-    except smtplib.SMTPServerDisconnected:
-        st.error("❌ Gmail SMTP Server Disconnected: This might be a temporary network issue or a security block. Try again later.")
-        return False, "Server disconnected."
-    except Exception as e:
-        st.error(f"❌ Failed to send real email to {to_email} due to an unexpected error: {e}")
-        return False, str(e)
+    st.info(f"📧 **Simulated Email to {to_email}:**")
+    st.markdown(f"**Subject:** {subject}")
+    st.markdown(f"**Body:**\n```\n{body}\n```")
+    return True, "Simulated email sent successfully."
 
 
 # --- Mock Salary Data (More Realistic and Granular) ---
@@ -776,36 +752,10 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
         st.subheader("🗓️ Automated Interview Scheduling")
         st.info("Streamline your interview process by automating scheduling, reminders, and feedback collection. Data is stored in Firebase.")
         
-        st.markdown("---")
-        st.subheader("📧 Email Configuration (Gmail App Password)")
-        st.warning("""
-            **To send actual emails via Gmail:**
-            1.  **Enable 2-Step Verification** for your Google Account.
-            2.  Go to [Google Account Security](https://myaccount.google.com/security) -> "App passwords" (you might need to search for it).
-            3.  Generate a new App password and **copy the 16-character code**.
-            4.  **REPLACE THE PLACEHOLDERS BELOW IN THE CODE WITH YOUR ACTUAL GMAIL ADDRESS AND APP PASSWORD.**
-            5.  **Note:** Direct SMTP connections from this Streamlit Canvas environment might still be blocked by network policies. For reliable email sending, consider deploying your app to a server where you have full control over network access.
-        """)
+        # --- Removed Email Configuration Section ---
+        # The previous section for Gmail App Password configuration has been removed as requested.
+        # Email notifications will now be simulated.
         
-        # --- HARDCODED GMAIL CREDENTIALS (REPLACE THESE PLACEHOLDERS) ---
-        # You need to replace "YOUR_GMAIL_ADDRESS@gmail.com" with your actual Gmail address
-        # and "YOUR_GMAIL_APP_PASSWORD" with the 16-character App Password you generated.
-        gmail_address = "screenerpro.ai@gmail.com"  # <--- REPLACE THIS
-        gmail_app_password = "hcss uefd gaae wrse"  # <--- REPLACE THIS
-        # --- END HARDCODED GMAIL CREDENTIALS ---
-
-        # Store these in session state for consistency, but they are now hardcoded values
-        st.session_state.gmail_address = gmail_address
-        st.session_state.gmail_app_password = gmail_app_password
-
-        # Commented out UI input fields as requested
-        # st.session_state.gmail_address = st.text_input("Your Gmail Address", value=st.session_state.gmail_address, help="e.g., your.email@gmail.com", key="gmail_address_input")
-        # st.session_state.gmail_app_password = st.text_input("Gmail App Password", value=st.session_state.gmail_app_password, type="password", help="Your 16-character App Password from Google Account Security.", key="gmail_app_password_input")
-        
-        # We don't need a toggle anymore, as the presence of credentials implies attempting to send.
-        # send_real_emails_toggle = st.checkbox("Attempt to Send Real Emails (Requires Configuration Above)", key="send_real_emails_toggle")
-
-
         # --- Load existing interviews, feedback, and interviewers from Firebase ---
         if 'user_interviews' not in st.session_state:
             st.session_state.user_interviews = []
@@ -941,9 +891,9 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
                     if success:
                         st.success(f"✅ Interview scheduled for {candidate_name} with {selected_interviewer_name} on {interview_date} at {interview_time} for {interview_duration} minutes ({interview_type}). (Data saved to Firebase)")
                         st.write("---")
-                        st.markdown("##### Notification Status:")
+                        st.markdown("##### Notification Status (Simulated):")
                         
-                        # Prepare email content
+                        # Prepare email content for simulation
                         candidate_subject = f"Interview Invitation: {interview_type} with {selected_interviewer_name}"
                         candidate_body = f"""
 Dear {candidate_name},
@@ -979,30 +929,9 @@ Please add this to your calendar.
 Best regards,
 The HR Team
 """
-
-                        # Attempt to send real emails if hardcoded credentials are provided
-                        if st.session_state.gmail_address and st.session_state.gmail_app_password:
-                            st.info("Attempting to send real emails via Gmail (using hardcoded credentials)...")
-                            # Send email to candidate
-                            send_actual_email(
-                                candidate_email,
-                                candidate_subject,
-                                candidate_body,
-                                st.session_state.gmail_address,
-                                st.session_state.gmail_app_password
-                            )
-                            # Send email to interviewer
-                            send_actual_email(
-                                selected_interviewer_email,
-                                interviewer_subject,
-                                interviewer_body,
-                                st.session_state.gmail_address,
-                                st.session_state.gmail_app_password
-                            )
-                        else:
-                            st.info("Hardcoded Gmail credentials not provided. Emails will not be sent.")
-                            st.info(f"📧 **Simulated Email to Candidate ({candidate_email}):** Your interview for {interview_type} is scheduled for {interview_date.strftime('%Y-%m-%d')} at {interview_time.strftime('%I:%M %p')}.")
-                            st.info(f"📧 **Simulated Calendar Invite to Interviewer ({selected_interviewer_email}):** Interview for {candidate_name} on {interview_date.strftime('%Y-%m-%d')} at {interview_time.strftime('%I:%M %p')}.")
+                        # Send simulated emails
+                        send_simulated_email(candidate_email, candidate_subject, candidate_body)
+                        send_simulated_email(selected_interviewer_email, interviewer_subject, interviewer_body)
                         
                         st.success("Simulated reminders will be sent automatically 24 hours prior. (Mock)")
                         log_user_action(user_email, "INTERVIEW_SCHEDULED_FIREBASE", {"candidate": candidate_name, "interviewer": selected_interviewer_name, "type": interview_type})
@@ -1054,23 +983,73 @@ The HR Team
 
 
         st.markdown("---")
-        st.subheader("Upcoming Interviews")
+        st.subheader("🗓️ Interview Calendar View")
+        st.info("View all scheduled interviews in a calendar-like format.")
+
+        if st.session_state.user_interviews:
+            # Convert list of dicts to DataFrame for easier manipulation
+            interviews_df = pd.DataFrame(st.session_state.user_interviews)
+            
+            # Ensure 'interview_datetime' is datetime object
+            interviews_df['interview_datetime'] = pd.to_datetime(interviews_df['interview_datetime'])
+            interviews_df['interview_date'] = interviews_df['interview_datetime'].dt.date
+
+            # Date filtering
+            col_cal1, col_cal2 = st.columns(2)
+            with col_cal1:
+                start_date = st.date_input("Start Date", value=date.today(), key="calendar_start_date")
+            with col_cal2:
+                end_date = st.date_input("End Date", value=date.today() + timedelta(days=30), key="calendar_end_date")
+
+            filtered_interviews = interviews_df[
+                (interviews_df['interview_date'] >= start_date) &
+                (interviews_df['interview_date'] <= end_date)
+            ].sort_values(by='interview_datetime')
+
+            if not filtered_interviews.empty:
+                st.markdown("---")
+                st.markdown("##### Scheduled Interviews:")
+                
+                # Group by date and display
+                for interview_date, group in filtered_interviews.groupby('interview_date'):
+                    st.markdown(f"**🗓️ {interview_date.strftime('%A, %B %d, %Y')}**")
+                    for _, row in group.iterrows():
+                        interview_time_str = row['interview_datetime'].strftime('%I:%M %p')
+                        st.markdown(f"- **{interview_time_str}** - **{row['candidate_name']}** ({row['interview_type']}) with {row['interviewer_name']}")
+                        if row['notes']:
+                            st.caption(f"    _Notes: {row['notes']}_")
+                    st.markdown("---")
+            else:
+                st.info(f"No interviews scheduled between {start_date.strftime('%Y-%m-%d')} and {end_date.strftime('%Y-%m-%d')}.")
+        else:
+            st.info("No interviews scheduled yet. Schedule one above to see it here!")
+
+        st.markdown("---")
+        st.subheader("Upcoming Interviews (List View)")
         st.info("View your upcoming interview schedule from Firebase.")
 
         if st.session_state.user_interviews:
+            # Filter for upcoming interviews (from today onwards)
+            upcoming_interviews = [
+                i for i in st.session_state.user_interviews
+                if i.get('interview_datetime', datetime.min).date() >= date.today()
+            ]
             # Sort interviews by date/time
-            sorted_interviews = sorted(st.session_state.user_interviews, key=lambda x: x.get('interview_datetime', datetime.min))
+            sorted_interviews = sorted(upcoming_interviews, key=lambda x: x.get('interview_datetime', datetime.min))
             
-            display_interviews = []
-            for interview in sorted_interviews:
-                display_interviews.append({
-                    "Candidate": interview.get('candidate_name', 'N/A'),
-                    "Role": interview.get('interview_type', 'N/A'), # Reusing type as role for display simplicity
-                    "Interviewer": interview.get('interviewer_name', 'N/A'),
-                    "Date": interview.get('interview_datetime', datetime.min).strftime("%Y-%m-%d"),
-                    "Time": interview.get('interview_datetime', datetime.min).strftime("%I:%M %p")
-                })
-            st.dataframe(pd.DataFrame(display_interviews), use_container_width=True, hide_index=True)
+            if sorted_interviews:
+                display_interviews = []
+                for interview in sorted_interviews:
+                    display_interviews.append({
+                        "Candidate": interview.get('candidate_name', 'N/A'),
+                        "Role": interview.get('interview_type', 'N/A'), # Reusing type as role for display simplicity
+                        "Interviewer": interview.get('interviewer_name', 'N/A'),
+                        "Date": interview.get('interview_datetime', datetime.min).strftime("%Y-%m-%d"),
+                        "Time": interview.get('interview_datetime', datetime.min).strftime("%I:%M %p")
+                    })
+                st.dataframe(pd.DataFrame(display_interviews), use_container_width=True, hide_index=True)
+            else:
+                st.info("No upcoming interviews found.")
         else:
             st.info("No upcoming interviews scheduled yet.")
 
