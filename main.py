@@ -66,10 +66,11 @@ def load_users():
         for username, data in users.items():
             if isinstance(data, str): # Old format: "username": "hashed_password"
                 users[username] = {"password": data, "status": "active", "company": "N/A"}
-            elif "status" not in data:
-                data["status"] = "active"
-            if "company" not in data: # Add company field if missing
-                data["company"] = "N/A"
+            # After ensuring it's a dict, check for missing keys
+            if "status" not in users[username]:
+                users[username]["status"] = "active"
+            if "company" not in users[username]: # Add company field if missing
+                users[username]["company"] = "N/A"
         return users
 
 def save_users(users):
