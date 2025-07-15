@@ -185,6 +185,8 @@ def collaboration_hub_page(app_id: str, FIREBASE_WEB_API_KEY: str, FIRESTORE_BAS
     user_company = st.session_state.get('user_company', 'default_company').replace(' ', '_').lower()
 
     st.info(f"You are logged in as: **{current_username}** (Company: **{st.session_state.get('user_company', 'N/A')}**)")
+    # Temporary debug message for user_company
+    st.write(f"**DEBUG: Current Company for Data Isolation:** `{user_company}`")
     st.markdown("---")
 
     # --- Tabs for different collaboration features ---
@@ -594,7 +596,12 @@ def collaboration_hub_page(app_id: str, FIREBASE_WEB_API_KEY: str, FIRESTORE_BAS
 
     with tab_files:
         st.subheader("Shared Files (Metadata Storage Only)")
-        
+        st.info(f"""
+            This section allows you to manage *metadata* about shared files (like name, description, and URL).
+            Data is isolated for **{st.session_state.get('user_company', 'your company')}**.
+            **Actual file storage (upload/download) is NOT supported here.**
+            For real file storage, you would need to integrate with a dedicated cloud storage service (e.g., Firebase Storage, AWS S3, Google Cloud Storage) which handles binary data.
+        """)
         st.write("You can list external file links and descriptions for your team.")
 
         with st.form("add_file_metadata_form", clear_on_submit=True):
