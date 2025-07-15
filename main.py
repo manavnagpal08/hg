@@ -14,14 +14,14 @@ import collections
 
 # Firebase imports
 from firebase_admin import credentials, initialize_app, firestore
-import firebase_admin.app # Corrected import for 'apps' module
+from firebase_admin.app import get_app, get_apps # Corrected import for 'apps' module functions
 # import json # Already imported above, no need to import again
 
 # --- Firebase Initialization (Re-enabled) ---
 try:
     # Check if the default Firebase app is already initialized
-    # Use firebase_admin.app.get_apps() to get a list of initialized apps and check if it's empty
-    if not firebase_admin.app.get_apps():
+    # Use get_apps() from firebase_admin.app to get a list of initialized apps and check if it's empty
+    if not get_apps(): # Now directly calling get_apps()
         # Path to your service account key file
         # This path is relative to where your script is run.
         # Ensure 'config' folder exists in the same directory as main.py
