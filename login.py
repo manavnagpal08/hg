@@ -9,7 +9,7 @@ import requests # For making HTTP requests to Firebase Auth and Firestore REST A
 # Import utility functions and constants from firebase_utils
 from firebase_utils import (
     FIREBASE_PROJECT_ID, FIRESTORE_BASE_URL, FIREBASE_WEB_API_KEY,
-    get_firestore_document, update_firestore_document, delete_firestore_document, # <--- Corrected this line
+    get_firestore_document, set_firestore_document, delete_firestore_document, # <--- Changed update_firestore_document to set_firestore_document
     fetch_firestore_collection, log_activity_to_firestore, to_firestore_format
 )
 
@@ -111,7 +111,7 @@ def get_user_profile_from_firestore(uid):
 def set_user_profile_in_firestore(uid, profile_data):
     """Sets/updates a user's custom profile in Firestore."""
     profile_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{uid}/profile"
-    return update_firestore_document(profile_path, "user_data", profile_data)
+    return set_firestore_document(profile_path, "user_data", profile_data) # <--- Changed to set_firestore_document
 
 def get_all_user_profiles_for_admin():
     """
@@ -523,7 +523,7 @@ def admin_disable_enable_user_section():
                 uid_to_update = selected_user_profile['id'] # Use the 'id' from the mock user list
                 
                 with st.spinner(f"Updating status for {selected_user_email}..."):
-                    success, _ = set_user_profile_in_firestore(uid_to_update, {"status": new_status, "last_updated": datetime.now()})
+                    success, _ = set_firestore_document(uid_to_update, {"status": new_status, "last_updated": datetime.now()}) # <--- Changed to set_firestore_document
                     if success:
                         st.success(f"✅ User '{selected_user_email}' status set to **{new_status.upper()}**.")
                         log_activity_to_firestore(f"Admin '{st.session_state.username}' toggled status of '{selected_user_email}' to '{new_status}'.", user=st.session_state.username)
@@ -532,205 +532,3 @@ def admin_disable_enable_user_section():
                         st.error(f"Failed to update status for '{selected_user_email}'.")
         else:
             st.warning("Selected user profile not found. Please refresh the list.")
-
-# ======================
-# Advanced Tools Page Function
-# ======================
-def advanced_tools_page():
-    st.markdown('<div class="dashboard-header">📈 Advanced Tools</div>', unsafe_allow_html=True)
-    st.write("This section provides access to advanced functionalities for power users.")
-
-    st.subheader("AI-Powered Insights (Mock)")
-    st.info("Integrate with advanced AI models for deeper insights into candidate behavior and market trends.")
-    st.button("Generate Candidate Persona (Mock)", key="generate_persona_btn")
-    st.button("Predict Hiring Success (Mock)", key="predict_success_btn")
-
-    st.markdown("---")
-    st.subheader("Customizable Workflows (Mock)")
-    st.info("Design and automate your recruitment workflows to streamline operations.")
-    st.button("Create New Workflow (Mock)", key="create_workflow_btn")
-    st.button("Manage Existing Workflows (Mock)", key="manage_workflow_btn")
-
-    st.markdown("---")
-    st.subheader("Data Export & Integration (Mock)")
-    st.info("Export your data or integrate with other HR systems.")
-    st.button("Export All Data (Mock)", key="export_data_btn")
-    st.button("Configure Integrations (Mock)", key="configure_integrations_btn")
-
-
-# ======================
-# Page Routing via function calls
-# ======================
-if tab == "🏠 Dashboard":
-    if is_candidate:
-        candidate_dashboard_page()
-    else:
-        recruiter_admin_dashboard_page()
-
-elif tab == "🧠 Resume Screener":
-    if is_candidate:
-        st.error("Access Denied: Candidates cannot access the Resume Screener.")
-    else:
-        try:
-            from screener import resume_screener_page
-            resume_screener_page()
-            if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
-                current_df_len = len(st.session_state['comprehensive_df'])
-                if st.session_state.get('last_screen_log_count', 0) < current_df_len:
-                    log_activity_to_firestore(f"Performed resume screening for {current_df_len} candidates.", user=st.session_state.username)
-                    st.session_state.last_screen_log_count = current_df_len
-
-                for result in st.session_state['comprehensive_df'].to_dict('records'):
-                    if result.get('Score (%)', 0) >= 90 and result['Candidate Name'] not in [app['candidate_name'] for app in st.session_state.get('pending_approvals', []) if app['status'] == 'pending']:
-                        if 'pending_approvals' not in st.session_state:
-                            st.session_state.pending_approvals = []
-                        st.session_state.pending_approvals.append({
-                            "candidate_name": result['Candidate Name'],
-                            "score": result['Score (%)'],
-                            "experience": result['Years Experience'],
-                            "jd_used": result.get('JD Used', 'N/A'),
-                            "status": "pending",
-                            "notes": f"High-scoring candidate from recent screening."
-                        })
-                        log_activity_to_firestore(f"Candidate '{result['Candidate Name']}' sent for approval (high score).", user=st.session_state.username)
-                        st.toast(f"Candidate {result['Candidate Name']} sent for approval!")
-        except ImportError:
-            st.error("`screener.py` not found or `resume_screener_page` function not defined. Please ensure 'screener.py' exists and contains the 'resume_screener_page' function.")
-        except Exception as e:
-            st.error(f"Error loading Resume Screener: {e}")
-
-elif tab == "📁 Manage JDs":
-    if is_candidate:
-        st.error("Access Denied: Candidates cannot access Job Description Management.")
-    else:
-        try:
-            with open("manage_jds.py", encoding="utf-8") as f:
-                exec(f.read())
-        except FileNotFoundError:
-            st.info("`manage_jds.py` not found. Please ensure the file exists in the same directory.")
-        except Exception as e:
-            st.error(f"Error loading Manage JDs: {e}")
-
-elif tab == "📊 Screening Analytics":
-    if is_candidate:
-        st.error("Access Denied: Candidates cannot access Screening Analytics.")
-    else:
-        analytics_dashboard_page()
-
-elif tab == "📤 Email Candidates":
-    if is_candidate:
-        st.error("Access Denied: Candidates cannot email other candidates.")
-    else:
-        st.markdown('<div class="dashboard-header">📤 Email Candidates</div>', unsafe_allow_html=True)
-        st.info("This page allows you to compose and send emails to shortlisted candidates.")
-        st.warning("Note: This is a placeholder. Actual email sending functionality would require integration with an email service provider.")
-        
-        st.subheader("Compose Email")
-        recipient_type = st.radio("Send email to:", ["All Screened Candidates (Mock)", "Shortlisted Candidates (Mock)"], key="email_recipient_type")
-        subject = st.text_input("Subject:", "Regarding your application for [Job Title]", key="email_subject")
-        body = st.text_area("Email Body:", "Dear [Candidate Name],\n\nThank you for your application. We would like to invite you for an interview.\n\nBest regards,\n[Your Company]", height=200, key="email_body")
-        
-        if st.button("Send Mock Email", key="send_mock_email_button"):
-            st.success(f"Mock email sent to {recipient_type} with subject: '{subject}'")
-            log_activity_to_firestore(f"sent a mock email to '{recipient_type}'.", user=st.session_state.username)
-
-elif tab == "🔍 Search Resumes":
-    if is_candidate:
-        st.error("Access Denied: Candidates cannot search resumes.")
-    else:
-        st.markdown('<div class="dashboard-header">🔍 Search Resumes</div>', unsafe_allow_html=True)
-        st.info("This page allows you to search through your screened resumes based on various criteria.")
-        st.warning("Note: This is a placeholder. A full search functionality would involve robust indexing and querying of resume data.")
-        
-        search_query = st.text_input("Search keywords (e.g., 'Python', 'Project Management'):", key="resume_search_query")
-        min_score_search = st.slider("Minimum Score (%):", 0, 100, 50, key="min_score_search")
-        min_exp_search = st.slider("Minimum Years Experience:", 0, 20, 2, key="min_exp_search")
-        
-        if st.button("Perform Mock Search", key="perform_mock_search_button"):
-            st.info(f"Performing mock search for '{search_query}' with min score {min_score_search}% and min experience {min_exp_search} years.")
-            st.write("*(Mock search results would appear here)*")
-            log_activity_to_firestore(f"performed a mock resume search for '{search_query}'.", user=st.session_state.username)
-
-elif tab == "📝 Candidate Notes":
-    if is_candidate:
-        st.error("Access Denied: Candidates cannot access Candidate Notes.")
-    else:
-        st.markdown('<div class="dashboard-header">📝 Candidate Notes</div>', unsafe_allow_html=True)
-        st.info("This page allows you to add and manage private notes for individual candidates.")
-        st.warning("Note: This is a placeholder. Actual note storage would require a database linked to candidate profiles.")
-        
-        candidate_name_note = st.text_input("Candidate Name:", key="candidate_name_note")
-        note_content = st.text_area("Your Private Note:", height=150, key="note_content")
-        
-        if st.button("Save Note (Mock)", key="save_note_button"):
-            if candidate_name_note and note_content:
-                st.success(f"Mock note saved for {candidate_name_note}: '{note_content}'")
-                log_activity_to_firestore(f"saved a mock note for '{candidate_name_note}'.", user=st.session_state.username)
-            else:
-                st.warning("Please enter candidate name and note content.")
-        
-        st.subheader("Recent Notes (Mock)")
-        st.write("*(Your recent notes would be displayed here)*")
-
-elif tab == "📈 Advanced Tools":
-    if is_candidate:
-        st.error("Access Denied: Candidates cannot access Advanced Tools.")
-    else:
-        advanced_tools_page()
-
-elif tab == "🤝 Collaboration Hub":
-    if is_candidate:
-        st.error("Access Denied: Candidates cannot access the Collaboration Hub.")
-    else:
-        try:
-            from collaboration import collaboration_hub_page
-            collaboration_hub_page(FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL)
-        except ImportError:
-            st.error("`collaboration.py` not found or `collaboration_hub_page` function not defined. Please ensure 'collaboration.py' exists and contains the 'collaboration_hub_page' function.")
-        except Exception as e:
-            st.error(f"Error loading Collaboration Hub: {e}")
-
-elif tab == "📄 My Applications":
-    if is_candidate:
-        my_applications_page()
-    else:
-        st.error("Access Denied: Recruiters/Admins do not have a 'My Applications' page.")
-
-elif tab == "❓ Feedback & Help":
-    try:
-        from feedback import feedback_and_help_page
-        if 'user_email' not in st.session_state:
-            st.session_state['user_email'] = st.session_state.get('username', 'anonymous_user')
-        feedback_and_help_page()
-    except ImportError:
-        st.error("`feedback.py` not found or `feedback_and_help_page` function not defined. Please ensure 'feedback.py' exists and contains the 'feedback_and_help_page' function.")
-    except Exception as e:
-        st.error(f"Error loading Feedback & Help page: {e}")
-
-elif tab == "⚙️ Admin Tools":
-    st.markdown('<div class="dashboard-header">⚙️ Admin Tools</div>', unsafe_allow_html=True)
-    if is_admin:
-        admin_tab_selection = st.radio(
-            "Admin Actions:",
-            ("Create User", "Reset Password", "Toggle User Status"),
-            key="admin_actions_radio"
-        )
-        if admin_tab_selection == "Create User":
-            admin_registration_section()
-        elif admin_tab_selection == "Reset Password":
-            admin_password_reset_section()
-        elif admin_tab_selection == "Toggle User Status":
-            admin_disable_enable_user_section()
-    else:
-        st.error("Access Denied: You do not have administrator privileges to view this page.")
-
-elif tab == "🚪 Logout":
-    log_activity_to_firestore(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out.", user=st.session_state.get('username', 'anonymous_user'))
-    st.session_state.authenticated = False
-    st.session_state.pop('username', None)
-    st.session_state.pop('user_id', None)
-    st.session_state.pop('user_company', None)
-    st.session_state.pop('user_type', None)
-    st.session_state.pop('id_token', None)
-    st.success("✅ Logged out.")
-    st.rerun()
