@@ -4,8 +4,7 @@ import os
 import datetime
 
 # Import Firebase modules
-from firebase_admin import credentials, initialize_app
-from firebase_admin import firestore
+from firebase_admin import credentials, initialize_app, apps, firestore
 import json
 
 # Initialize Firebase (if not already initialized)
@@ -20,12 +19,8 @@ try:
         firebase_config_str = globals().get('__firebase_config', '{}')
         firebase_config = json.loads(firebase_config_str)
 
-        # Initialize Firebase Admin SDK for server-side operations (like Firestore)
-        # This part assumes you have a service account JSON file.
-        # For Canvas, we'll use a placeholder and rely on the environment's setup.
-        
-        # Check if an app is already initialized to prevent re-initialization errors
-        if not initialize_app(): # No specific app name, checks default app
+        # Check if the default Firebase app is already initialized
+        if not apps.get_app(): # This correctly checks if the default app exists
             # If firebase_config is empty or doesn't contain a 'type' key (e.g., from service account)
             # then it's likely running in a Canvas environment that handles credentials implicitly.
             # Otherwise, attempt to load credentials from the provided config.
@@ -36,7 +31,6 @@ try:
                 # This path is for environments where Firebase is implicitly configured
                 # or where no explicit service account JSON is needed for the Admin SDK.
                 # In such cases, initialize_app() without arguments might work if default credentials are set up.
-                # If this is still failing, it implies the underlying environment is not correctly configured for Firebase Admin SDK.
                 initialize_app() # Attempt to initialize with default credentials if available
         
         st.session_state.firebase_initialized = True
