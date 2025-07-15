@@ -791,7 +791,7 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
         # You need to replace "YOUR_GMAIL_ADDRESS@gmail.com" with your actual Gmail address
         # and "YOUR_GMAIL_APP_PASSWORD" with the 16-character App Password you generated.
         gmail_address = "screenerpro.ai@gmail.com"  # <--- REPLACE THIS
-        gmail_app_password = "zdbvrxatqutupql"  # <--- REPLACE THIS
+        gmail_app_password = "hcss uefd gaae wrse"  # <--- REPLACE THIS
         # --- END HARDCODED GMAIL CREDENTIALS ---
 
         # Store these in session state for consistency, but they are now hardcoded values
