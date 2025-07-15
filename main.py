@@ -24,7 +24,7 @@ try:
     # For local development, ensure this path is correct.
     # In a deployed Streamlit Cloud environment, this might be handled differently
     # or rely on environment variables set in the Streamlit Cloud secret management.
-    key_path = os.path.abspath("config/screenerproapp-firebase-adminsdk-fbsvc-d1af80d154.json")
+    key_path = os.path.abspath("config/firebase-key.json")
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key_path
 
     # Check if a default Firebase app is already initialized
