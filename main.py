@@ -288,6 +288,7 @@ def load_session_data_from_firestore_rest(username):
                     try:
                         loaded_data[key] = json.loads(value_obj['stringValue'])
                     except json.JSONDecodeError:
+                        # If it's not a valid JSON string, keep it as a plain string
                         loaded_data[key] = value_obj['stringValue']
                 elif 'integerValue' in value_obj:
                     loaded_data[key] = int(value_obj['integerValue'])
@@ -298,22 +299,39 @@ def load_session_data_from_firestore_rest(username):
                 # Add other types if necessary (e.g., arrayValue, mapValue)
 
             if 'comprehensive_df_json' in loaded_data:
-                st.session_state['comprehensive_df'] = pd.read_json(loaded_data['comprehensive_df_json'], orient='records')
-                st.toast("Session data loaded from Cloud (REST API)!")
-                log_activity(f"Session data loaded for user '{username}' via REST API.")
+                df_json_content = loaded_data['comprehensive_df_json']
+                try:
+                    # pd.read_json can take a Python list/dict (result of json.loads) directly
+                    # or a JSON string. We ensure it's a string if it wasn't parsed by json.loads.
+                    if isinstance(df_json_content, str):
+                        st.session_state['comprehensive_df'] = pd.read_json(df_json_content, orient='records')
+                    else: # If json.loads already converted it to a list/dict
+                        st.session_state['comprehensive_df'] = pd.DataFrame.from_records(df_json_content)
+
+                    st.toast("Session data loaded from Cloud (REST API)!")
+                    log_activity(f"Session data loaded for user '{username}' via REST API.")
+                except Exception as e: # Catch any exception from pd.read_json or DataFrame reconstruction
+                    st.error(f"Error reconstructing DataFrame from loaded JSON: {e}. Data might be corrupted or incompatible. Raw JSON content (truncated): {str(df_json_content)[:200]}...")
+                    log_activity(f"Error reconstructing DataFrame for user '{username}': {e}")
+                    st.session_state['comprehensive_df'] = pd.DataFrame() # Reset to empty DF on error
             else:
                 st.info("No comprehensive data found in the loaded session data.")
+                st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's an empty DF if not found
         elif res.status_code == 404:
             st.info("No previous session data found in Cloud (REST API).")
+            st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty if no data
         else:
             st.error(f"❌ REST Load failed: {res.status_code}, {res.text}")
             log_activity(f"REST Load failed for user '{username}': {res.status_code}, {res.text}")
+            st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on API error
     except requests.exceptions.RequestException as e:
         st.error(f"🔥 REST Firebase connection error: {e}")
         log_activity(f"REST Firebase connection error for user '{username}': {e}")
+        st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on connection error
     except Exception as e:
         st.error(f"🔥 An unexpected error occurred during REST load: {e}")
         log_activity(f"Unexpected REST load error for user '{username}': {e}")
+        st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on unexpected error
 
 
 def login_section():
