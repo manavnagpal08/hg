@@ -1,441 +1,124 @@
 import streamlit as st
 import json
-import bcrypt
 import os
-import re
+import re # Import regex for email validation
+from datetime import datetime # Use datetime module directly
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
-from datetime import datetime
 import plotly.express as px
 import statsmodels.api as sm
 import collections
-import requests # Added for REST API calls
 
-# --- Firebase REST Setup ---
-# IMPORTANT: Replace "YOUR_FIREBASE_WEB_API_KEY" with your actual Firebase Web API Key
-# You can find this in your Firebase project settings -> Project settings -> General -> Web API Key
-FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'AIzaSyDkYourRealAPIKey12345') # Ensure this is your actual key
-# Use __app_id from the Canvas environment for the project ID if available, otherwise use a default
-FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
-FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
+# Import authentication and user management functions from login.py
+from login import login_section, is_current_user_admin, is_current_user_candidate, \
+                  admin_registration_section, admin_password_reset_section, admin_disable_enable_user_section
+
+# Import Firebase utility functions and constants
+from firebase_utils import (
+    FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL,
+    get_firestore_document, update_firestore_document, log_activity_to_firestore,
+    to_firestore_format, from_firestore_format # Import these for session data handling
+)
 
 
-# File to store user credentials
-USER_DB_FILE = "users.json"
-ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2", "manav.nagpal2005@gmail.com")
-
-def load_users():
-    """Loads user data from the JSON file."""
-    if not os.path.exists(USER_DB_FILE):
-        with open(USER_DB_FILE, "w") as f:
-            json.dump({}, f)
-    with open(USER_DB_FILE, "r") as f:
-        users = json.load(f)
-        # Ensure each user has a 'status' key and 'company' key for backward compatibility
-        for username, data in users.items():
-            if isinstance(data, str): # Old format: "username": "hashed_password"
-                users[username] = {"password": data, "status": "active", "company": "N/A"}
-            # After ensuring it's a dict, check for missing keys
-            if "status" not in users[username]:
-                users[username]["status"] = "active"
-            if "company" not in users[username]: # Add company field if missing
-                users[username]["company"] = "N/A"
-        return users
-
-def save_users(users):
-    """Saves user data to the JSON file."""
-    with open(USER_DB_FILE, "w") as f:
-        json.dump(users, f, indent=4)
-
-def hash_password(password):
-    """Hashes a password using bcrypt."""
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-
-def check_password(password, hashed_password):
-    """Checks a password against its bcrypt hash."""
-    return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
-
-def is_valid_email(email):
-    """Basic validation for email format."""
-    return re.match(r"[^@]+@[^@]+\.\w+", email)
-
-def register_section():
-    """Public self-registration form."""
-    st.subheader("📝 Create New Account")
-    with st.form("registration_form", clear_on_submit=True):
-        new_username = st.text_input("Choose Username (Email address required)", key="new_username_reg_public")
-        new_company_name = st.text_input("Company Name", key="new_company_name_reg_public") # New field
-        new_password = st.text_input("Choose Password", type="password", key="new_password_reg_public")
-        confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password_reg_public")
-        register_button = st.form_submit_button("Register New Account")
-
-        if register_button:
-            if not new_username or not new_password or not confirm_password or not new_company_name:
-                st.error("Please fill in all fields.")
-            elif not is_valid_email(new_username): # Email format validation
-                st.error("Please enter a valid email address for the username.")
-            elif new_password != confirm_password:
-                st.error("Passwords do not match.")
-            else:
-                users = load_users()
-                if new_username in users:
-                    st.error("Username already exists. Please choose a different one.")
-                else:
-                    users[new_username] = {
-                        "password": hash_password(new_password),
-                        "status": "active",
-                        "company": new_company_name # Store company name
-                    }
-                    save_users(users)
-                    st.success("✅ Registration successful! You can now switch to the 'Login' option.")
-                    # Manually set the session state to switch to Login option
-                    st.session_state.active_login_tab_selection = "Login"
-
-def admin_registration_section():
-    """Admin-driven user creation form."""
-    st.subheader("➕ Create New User Account (Admin Only)")
-    with st.form("admin_registration_form", clear_on_submit=True):
-        new_username = st.text_input("New User's Username (Email)", key="new_username_admin_reg")
-        new_company_name = st.text_input("New User's Company Name", key="new_company_name_admin_reg") # New field
-        new_password = st.text_input("New User's Password", type="password", key="new_password_admin_reg")
-        admin_register_button = st.form_submit_button("Add New User")
-
-    if admin_register_button:
-        if not new_username or not new_password or not new_company_name:
-            st.error("Please fill in all fields.")
-        elif not is_valid_email(new_username): # Email format validation
-            st.error("Please enter a valid email address for the username.")
-        else:
-            users = load_users()
-            if new_username in users:
-                st.error(f"User '{new_username}' already exists.")
-            else:
-                users[new_username] = {
-                    "password": hash_password(new_password),
-                    "status": "active",
-                    "company": new_company_name
-                }
-                save_users(users)
-                st.success(f"✅ User '{new_username}' added successfully!")
-
-def admin_password_reset_section():
-    """Admin-driven password reset form."""
-    st.subheader("🔑 Reset User Password (Admin Only)")
-    users = load_users()
-    # Exclude all admin usernames from the list of users whose passwords can be reset
-    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
-
-    if not user_options:
-        st.info("No other users to reset passwords for.")
+# --- Session Data Management (using Firestore REST API) ---
+def save_session_data_to_firestore_rest(user_id: str):
+    """
+    Saves the current Streamlit session state (excluding sensitive info)
+    to a user-specific Firestore document via REST API.
+    """
+    if not user_id or user_id == 'anonymous':
+        st.warning("Cannot save session data for an anonymous or unauthenticated user.")
         return
 
-    with st.form("admin_reset_password_form", clear_on_submit=True):
-        selected_user = st.selectbox("Select User to Reset Password For", user_options, key="reset_user_select")
-        new_password = st.text_input("New Password", type="password", key="new_pwd_reset")
-        reset_button = st.form_submit_button("Reset Password")
+    session_data = {
+        "comprehensive_df": st.session_state.get('comprehensive_df', pd.DataFrame()).to_json(orient='split', date_format='iso') if not st.session_state.get('comprehensive_df', pd.DataFrame()).empty else None,
+        "screening_cutoff_score": st.session_state.get('screening_cutoff_score'),
+        "screening_min_experience": st.session_state.get('screening_min_experience'),
+        "screening_max_experience": st.session_state.get('screening_max_experience'),
+        "screening_min_cgpa": st.session_state.get('screening_min_cgpa'),
+        "dashboard_widgets": st.session_state.get('dashboard_widgets'),
+        "pending_approvals": st.session_state.get('pending_approvals', []),
+        "last_screen_log_count": st.session_state.get('last_screen_log_count'),
+        "activity_log": st.session_state.get('activity_log', []), # Save the local activity log too
+        "last_saved_at": datetime.now()
+    }
 
-        if reset_button:
-            if not new_password:
-                st.error("Please enter a new password.")
-            else:
-                users[selected_user]["password"] = hash_password(new_password)
-                save_users(users)
-                st.success(f"✅ Password for '{selected_user}' has been reset.")
+    # Remove non-serializable or sensitive items before saving
+    clean_session_data = {}
+    for key, value in session_data.items():
+        if key not in ['authenticated', 'username', 'user_id', 'user_company', 'user_type', 'id_token', 'show_forgot_password', 'active_login_tab_selection']:
+            clean_session_data[key] = value
 
-def admin_disable_enable_user_section():
-    """Admin-driven user disable/enable form."""
-    st.subheader("⛔ Toggle User Status (Admin Only)")
-    users = load_users()
-    # Exclude all admin usernames from the list of users whose status can be toggled
-    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
+    try:
+        collection_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{user_id}/session_data"
+        success, _ = update_firestore_document(collection_path, "user_session", clean_session_data)
+        if success:
+            st.success("Session data saved to cloud successfully!")
+            log_activity_to_firestore(f"User '{st.session_state.username}' saved session data.", user=st.session_state.username)
+        else:
+            st.error("Failed to save session data to cloud.")
+    except Exception as e:
+        st.error(f"Error saving session data: {e}")
+        log_activity_to_firestore(f"Error saving session data for '{st.session_state.username}': {e}", user=st.session_state.username)
 
-    if not user_options:
-        st.info("No other users to manage status for.")
+def load_session_data_from_firestore_rest(user_id: str):
+    """
+    Loads Streamlit session state from a user-specific Firestore document via REST API.
+    """
+    if not user_id or user_id == 'anonymous':
+        st.warning("Cannot load session data for an anonymous or unauthenticated user.")
         return
 
-    with st.form("admin_toggle_user_status_form", clear_on_submit=False): # Keep values after submit for easier toggling
-        selected_user = st.selectbox("Select User to Toggle Status", user_options, key="toggle_user_select")
-
-        current_status = users[selected_user]["status"]
-        st.info(f"Current status of '{selected_user}': **{current_status.upper()}**")
-
-        if st.form_submit_button(f"Toggle to {'Disable' if current_status == 'active' else 'Enable'} User"):
-            new_status = "disabled" if current_status == "active" else "active"
-            users[selected_user]["status"] = new_status
-            save_users(users)
-            st.success(f"✅ User '{selected_user}' status set to **{new_status.upper()}**.")
-            st.rerun() # Rerun to update the displayed status immediately
-
-
-# --- Firebase Data Persistence Functions (REST API) ---
-def to_firestore_format(data: dict) -> dict:
-    """Converts a Python dictionary to Firestore REST API 'fields' format."""
-    fields = {}
-    for key, value in data.items():
-        if isinstance(value, str):
-            fields[key] = {"stringValue": value}
-        elif isinstance(value, int):
-            fields[key] = {"integerValue": str(value)} # Firestore expects string for integerValue
-        elif isinstance(value, float):
-            fields[key] = {"doubleValue": value}
-        elif isinstance(value, bool):
-            fields[key] = {"booleanValue": value}
-        elif isinstance(value, datetime):
-            fields[key] = {"timestampValue": value.isoformat() + "Z"} # ISO 8601 with 'Z' for UTC
-        elif isinstance(value, list):
-            # For lists, convert each item and wrap in arrayValue
-            array_values = []
-            for item in value:
-                if isinstance(item, str):
-                    array_values.append({"stringValue": item})
-                elif isinstance(item, int):
-                    array_values.append({"integerValue": str(item)})
-                elif isinstance(item, float):
-                    array_values.append({"doubleValue": item})
-                elif isinstance(item, bool):
-                    array_values.append({"booleanValue": item})
-                elif isinstance(item, dict): # Handle nested dicts in lists
-                    array_values.append({"mapValue": {"fields": to_firestore_format(item)['fields']}})
-                # Add more types as needed for list elements
-            fields[key] = {"arrayValue": {"values": array_values}}
-        elif isinstance(value, dict):
-            # For nested dictionaries (maps), recursively convert
-            fields[key] = {"mapValue": {"fields": to_firestore_format(value)['fields']}}
-        elif value is None:
-            fields[key] = {"nullValue": None}
-        else:
-            # Fallback for other types, try to stringify
-            fields[key] = {"stringValue": str(value)}
-    return {"fields": fields}
-
-
-def save_session_data_to_firestore_rest(username):
-    """
-    Saves comprehensive session data (including comprehensive_df) to Firestore
-    using the REST API for the current user.
-    """
     try:
-        if not username:
-            st.warning("No username found. Please log in.")
-            return
+        collection_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{user_id}/session_data"
+        loaded_data = get_firestore_document(collection_path, "user_session")
 
-        # Define the document path for user-specific session data
-        # This path aligns with private data rules: /artifacts/{appId}/users/{userId}/session_data_rest/current_session
-        doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{username}/session_data_rest/current_session"
-        url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
-
-        data_to_save = {}
-        if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
-            # Create a copy to avoid modifying the original session state DataFrame directly
-            df_for_save = st.session_state['comprehensive_df'].copy()
-
-            # Ensure 'Shortlisted' column exists before accessing it
-            if 'Shortlisted' not in df_for_save.columns:
-                # Use a default cutoff if not already set in session state
-                shortlist_threshold = st.session_state.get('screening_cutoff_score', 75)
-                df_for_save['Shortlisted'] = df_for_save['Score (%)'].apply(
-                    lambda x: f"Yes (Score >= {shortlist_threshold}%)" if x >= shortlist_threshold else "No"
-                )
-                log_activity_main("Derived 'Shortlisted' column for saving as it was missing.")
-
-            # Filter out 'Resume Raw Text' as it can be very large and is not needed for analytics.
-            df_for_save = df_for_save.drop(columns=['Resume Raw Text'], errors='ignore')
-            data_to_save['comprehensive_df_json'] = df_for_save.to_json(orient='records')
-
-            # Extract shortlisted names and job locations for logging/summary
-            shortlisted_candidates = df_for_save[df_for_save['Shortlisted'].str.startswith('Yes')]['Candidate Name'].tolist()
-            job_locations = df_for_save['Location'].dropna().unique().tolist()
-
-            data_to_save['shortlisted_names'] = json.dumps(shortlisted_candidates) # Store as JSON string
-            data_to_save['job_locations_found'] = json.dumps(job_locations) # Store as JSON string
-            data_to_save['screened_count'] = len(df_for_save)
-            data_to_save['timestamp'] = str(datetime.now())
-            data_to_save['status'] = "saved from Streamlit Cloud"
-
-        else:
-            st.warning("No comprehensive data to save.")
-            return
-
-        # Convert Python dictionary to Firestore's REST API format (Fields object)
-        firestore_data = to_firestore_format(data_to_save)
-
-        # Use PATCH to update the document if it exists, or create it if it doesn't.
-        res = requests.patch(url, json=firestore_data)
-        if res.status_code in [200, 201]:
-            st.success("✅ Session data saved to Cloud (REST API)!")
-            log_activity_main(f"Session data saved for user '{username}' via REST API.")
-        else:
-            st.error(f"❌ REST Save failed: {res.status_code}, {res.text}")
-            log_activity_main(f"REST Save failed for user '{username}': {res.status_code}, {res.text}")
-    except requests.exceptions.RequestException as e:
-        st.error(f"🔥 REST Firebase connection error: {e}")
-        log_activity_main(f"REST Firebase connection error for user '{username}': {e}")
-    except Exception as e:
-        st.error(f"🔥 An unexpected error occurred during REST save: {e}")
-        log_activity_main(f"Unexpected REST save error for user '{username}': {e}")
-
-def from_firestore_format(firestore_data: dict) -> dict:
-    """Converts Firestore REST API 'fields' format to a Python dictionary."""
-    data = {}
-    if "fields" not in firestore_data:
-        return data # Or raise an error if expected
-    
-    for key, value_obj in firestore_data["fields"].items():
-        if "stringValue" in value_obj:
-            data[key] = value_obj["stringValue"]
-        elif "integerValue" in value_obj:
-            data[key] = int(value_obj["integerValue"])
-        elif "doubleValue" in value_obj:
-            data[key] = float(value_obj["doubleValue"])
-        elif "booleanValue" in value_obj:
-            data[key] = value_obj["booleanValue"]
-        elif "timestampValue" in value_obj:
-            # Remove 'Z' and parse
-            try:
-                data[key] = datetime.fromisoformat(value_obj["timestampValue"].replace('Z', ''))
-            except ValueError:
-                data[key] = value_obj["timestampValue"] # Keep as string if parsing fails
-        elif "arrayValue" in value_obj and "values" in value_obj["arrayValue"]:
-            # Recursively convert array elements
-            data[key] = [from_firestore_format({"fields": {"_": item}})["_"] if "mapValue" not in item else from_firestore_format({"fields": item["mapValue"]["fields"]}) for item in value_obj["arrayValue"]["values"]]
-        elif "mapValue" in value_obj and "fields" in value_obj["mapValue"]:
-            # Recursively convert map values
-            data[key] = from_firestore_format({"fields": value_obj["mapValue"]["fields"]})
-        elif "nullValue" in value_obj:
-            data[key] = None
-        # Add more types as needed
-    return data
-
-
-def load_session_data_from_firestore_rest(username):
-    """
-    Loads comprehensive session data from Firestore using the REST API
-    for the current user.
-    """
-    try:
-        if not username:
-            st.warning("No username found. Please log in.")
-            return
-
-        doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{username}/session_data_rest/current_session"
-        url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
-
-        res = requests.get(url)
-        if res.status_code == 200:
-            data = res.json()
-            loaded_data = from_firestore_format(data) # Use the helper function
-
-            if 'comprehensive_df_json' in loaded_data:
-                df_json_content = loaded_data['comprehensive_df_json']
-                try:
-                    # pd.read_json can take a Python list/dict (result of json.loads) directly
-                    # or a JSON string. We ensure it's a string if it wasn't parsed by json.loads.
-                    if isinstance(df_json_content, str):
-                        st.session_state['comprehensive_df'] = pd.read_json(df_json_content, orient='records')
-                    else: # If json.loads already converted it to a list/dict
-                        st.session_state['comprehensive_df'] = pd.DataFrame.from_records(df_json_content)
-
-                    st.toast("Session data loaded from Cloud (REST API)!")
-                    log_activity_main(f"Session data loaded for user '{username}' via REST API.")
-                except Exception as e: # Catch any exception from pd.read_json or DataFrame reconstruction
-                    st.error(f"Error reconstructing DataFrame from loaded JSON: {e}. Data might be corrupted or incompatible. Raw JSON content (truncated): {str(df_json_content)[:200]}...")
-                    log_activity_main(f"Error reconstructing DataFrame for user '{username}': {e}")
-                    st.session_state['comprehensive_df'] = pd.DataFrame() # Reset to empty DF on error
+        if loaded_data:
+            if loaded_data.get('comprehensive_df'):
+                st.session_state['comprehensive_df'] = pd.read_json(loaded_data['comprehensive_df'], orient='split')
             else:
-                st.info("No comprehensive data found in the loaded session data.")
-                st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's an empty DF if not found
-        elif res.status_code == 404:
-            st.info("No previous session data found in Cloud (REST API).")
-            st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty if no data
+                st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's always a DataFrame
+
+            # Load other session state variables
+            st.session_state['screening_cutoff_score'] = loaded_data.get('screening_cutoff_score', 75)
+            st.session_state['screening_min_experience'] = loaded_data.get('screening_min_experience', 2)
+            st.session_state['screening_max_experience'] = loaded_data.get('screening_max_experience', 10)
+            st.session_state['screening_min_cgpa'] = loaded_data.get('screening_min_cgpa', 2.5)
+            st.session_state['dashboard_widgets'] = loaded_data.get('dashboard_widgets', {
+                'Candidate Distribution': True, 'Experience Distribution': True,
+                'Top 5 Most Common Skills': True, 'My Recent Screenings': True,
+                'Top Performing JDs': True, 'Pending Approvals': True,
+            })
+            st.session_state['pending_approvals'] = loaded_data.get('pending_approvals', [])
+            st.session_state['last_screen_log_count'] = loaded_data.get('last_screen_log_count', 0)
+            st.session_state['activity_log'] = loaded_data.get('activity_log', []) # Load local activity log
+
+            st.success("Session data loaded from cloud successfully!")
+            log_activity_to_firestore(f"User '{st.session_state.username}' loaded session data.", user=st.session_state.username)
         else:
-            st.error(f"❌ REST Load failed: {res.status_code}, {res.text}")
-            log_activity_main(f"REST Load failed for user '{username}': {res.status_code}, {res.text}")
-            st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on API error
-    except requests.exceptions.RequestException as e:
-        st.error(f"🔥 REST Firebase connection error: {e}")
-        log_activity_main(f"REST Firebase connection error for user '{username}': {e}")
-        st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on connection error
+            st.info("No saved session data found for this user.")
+            st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty if nothing loaded
+            # Reset other session states to defaults if no data found
+            st.session_state['screening_cutoff_score'] = 75
+            st.session_state['screening_min_experience'] = 2
+            st.session_state['screening_max_experience'] = 10
+            st.session_state['screening_min_cgpa'] = 2.5
+            st.session_state['dashboard_widgets'] = {
+                'Candidate Distribution': True, 'Experience Distribution': True,
+                'Top 5 Most Common Skills': True, 'My Recent Screenings': True,
+                'Top Performing JDs': True, 'Pending Approvals': True,
+            }
+            st.session_state['pending_approvals'] = []
+            st.session_state['last_screen_log_count'] = 0
+            st.session_state['activity_log'] = []
+
     except Exception as e:
-        st.error(f"🔥 An unexpected error occurred during REST load: {e}")
-        log_activity_main(f"Unexpected REST load error for user '{username}': {e}")
-        st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on unexpected error
+        st.error(f"Error loading session data: {e}")
+        log_activity_to_firestore(f"Error loading session data for '{st.session_state.username}': {e}", user=st.session_state.username)
 
-
-def login_section():
-    """Handles user login and public registration."""
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-    if "username" not in st.session_state:
-        st.session_state.username = None
-
-    # Initialize active_login_tab_selection if not present
-    if "active_login_tab_selection" not in st.session_state:
-        # Default to 'Register' if no users, otherwise 'Login'
-        if not os.path.exists(USER_DB_FILE) or len(load_users()) == 0:
-            st.session_state.active_login_tab_selection = "Register"
-        else:
-            st.session_state.active_login_tab_selection = "Login"
-
-
-    if st.session_state.authenticated:
-        return True
-
-    # Use st.radio to simulate tabs if st.tabs() default_index is not supported
-    tab_selection = st.radio(
-        "Select an option:",
-        ("Login", "Register"),
-        key="login_register_radio",
-        index=0 if st.session_state.active_login_tab_selection == "Login" else 1
-    )
-
-    if tab_selection == "Login":
-        st.subheader("🔐 HR Login")
-        st.info("If you don't have an account, please go to the 'Register' option first.") # Added instructional message
-        with st.form("login_form", clear_on_submit=False):
-            username = st.text_input("Username", key="username_login")
-            password = st.text_input("Password", type="password", key="password_login")
-            submitted = st.form_submit_button("Login")
-
-            if submitted:
-                users = load_users()
-                if username not in users:
-                    st.error("❌ Invalid username or password. Please register if you don't have an account.")
-                else:
-                    user_data = users[username]
-                    if user_data["status"] == "disabled":
-                        st.error("❌ Your account has been disabled. Please contact an administrator.")
-                    elif check_password(password, user_data["password"]):
-                        st.session_state.authenticated = True
-                        st.session_state.username = username
-                        st.session_state.user_company = user_data.get("company", "N/A") # Store company name
-                        st.success("✅ Login successful!")
-                        # --- Load session data after successful login ---
-                        # Load data using the REST API function
-                        load_session_data_from_firestore_rest(st.session_state.username)
-                        st.rerun()
-                    else:
-                        st.error("❌ Invalid username or password.")
-
-    elif tab_selection == "Register": # This will be the initially selected option for new users
-        register_section()
-
-    return st.session_state.authenticated
-
-# Helper function to check if the current user is an admin
-def is_current_user_admin():
-    # Check if the current username is in the ADMIN_USERNAME tuple
-    return st.session_state.get("authenticated", False) and st.session_state.get("username") in ADMIN_USERNAME
-
-# Helper for Activity Logging (for main.py's own activities)
-def log_activity_main(message):
-    """Logs an activity with a timestamp to the session state for main.py's activities."""
-    if 'activity_log' not in st.session_state:
-        st.session_state.activity_log = []
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    st.session_state.activity_log.insert(0, f"[{timestamp}] {message}") # Add to the beginning for most recent first
-    st.session_state.activity_log = st.session_state.activity_log[:50]
 
 # --- Page Config ---
 st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
@@ -537,12 +220,12 @@ h1, h2, h3, h4, h5, h6 {{
     font-weight: 600;
     border: none;
     transition: all 0.3s ease;
-    box_shadow: 0 4px 12px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
 }}
 .stButton>button:hover {{
     background-color: #00b0a8;
     transform: translateY(-2px);
-    box_shadow: 0 6px 16px rgba(0,0,0,0.15);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.15);
 }}
 .stExpander {{
     background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
@@ -628,11 +311,12 @@ if not login_section():
 else:
     # Log successful login
     if st.session_state.get('last_login_logged_for_user') != st.session_state.username:
-        log_activity_main(f"User '{st.session_state.username}' logged in.")
+        log_activity_to_firestore(f"User '{st.session_state.username}' logged in.", user=st.session_state.username)
         st.session_state.last_login_logged_for_user = st.session_state.username
 
-# Determine if the logged-in user is an admin
+# Determine if the logged-in user is an admin or candidate
 is_admin = is_current_user_admin()
+is_candidate = is_current_user_candidate()
 
 # Initialize comprehensive_df globally if it doesn't exist
 # This ensures it's always a DataFrame, even if empty, preventing potential KeyErrors
@@ -640,13 +324,23 @@ if 'comprehensive_df' not in st.session_state:
     st.session_state['comprehensive_df'] = pd.DataFrame()
 
 # --- Navigation Control ---
-navigation_options = [
-    "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
-    "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes",
-    "📈 Advanced Tools", # New page
-    "🤝 Collaboration Hub", # New page
-    "❓ Feedback & Help"
-]
+# Navigation options vary based on user type
+navigation_options = []
+
+if is_candidate:
+    navigation_options = [
+        "🏠 Candidate Dashboard",
+        "📄 My Applications",
+        "❓ Feedback & Help",
+    ]
+else: # Recruiter/Admin
+    navigation_options = [
+        "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
+        "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes",
+        "📈 Advanced Tools", # Existing page
+        "🤝 Collaboration Hub", # Existing page
+        "❓ Feedback & Help"
+    ]
 
 if is_admin: # Only add Admin Tools if the user is an admin
     navigation_options.append("⚙️ Admin Tools")
@@ -655,8 +349,12 @@ navigation_options.append("🚪 Logout") # Always add Logout last
 
 default_tab = st.session_state.get("tab_override", "🏠 Dashboard")
 
-if default_tab not in navigation_options: # Handle cases where default_tab might be Admin Tools for non-admins
-    default_tab = "🏠 Dashboard"
+# Adjust default tab if it's not valid for the current user type
+if default_tab not in navigation_options:
+    if is_candidate:
+        default_tab = "🏠 Candidate Dashboard"
+    else:
+        default_tab = "🏠 Dashboard"
 
 tab = st.sidebar.radio("📍 Navigate", navigation_options, index=navigation_options.index(default_tab))
 
@@ -683,7 +381,7 @@ def analytics_dashboard_page():
         margin-bottom: 2rem;
     }
     @keyframes fadeInSlide {
-        0% {{ opacity: 0; transform: translateY(20px); }}
+        0% { opacity: 0; transform: translateY(20px); }
         100% {{ opacity: 1; transform: translateY(0); }}
     }
     h3 {
@@ -719,7 +417,7 @@ def analytics_dashboard_page():
 
     if df.empty:
         st.info("No data available for analytics. Please screen some resumes first.")
-        st.stop()
+        return # Use return instead of st.stop() to allow the rest of the script to execute if this function is called in a larger context
 
     essential_core_columns = ['Score (%)', 'Years Experience', 'File Name', 'Candidate Name']
     missing_essential_columns = [col for col in essential_core_columns if col not in df.columns]
@@ -727,7 +425,7 @@ def analytics_dashboard_page():
     if missing_essential_columns:
         st.error(f"Error: The loaded data is missing essential core columns: {', '.join(missing_essential_columns)}."
                  " Please ensure your screening process generates at least these required data fields.")
-        st.stop()
+        return # Use return instead of st.stop()
 
     st.markdown("### 🔍 Filter Results")
     filter_cols = st.columns(3)
@@ -771,7 +469,7 @@ def analytics_dashboard_page():
 
     if filtered_df.empty:
         st.warning("No data matches the selected filters. Please adjust your criteria.")
-        st.stop()
+        return # Use return instead of st.stop()
 
     filtered_df['Shortlisted'] = filtered_df['Score (%)'].apply(lambda x: f"Yes (Score >= {shortlist_threshold}%)" if x >= shortlist_threshold else "No")
 
@@ -1043,9 +741,9 @@ def analytics_dashboard_page():
 
 
 # ======================
-# 🏠 Dashboard Section
+# 🏠 Dashboard Section (Recruiter/Admin)
 # ======================
-if tab == "🏠 Dashboard":
+def recruiter_admin_dashboard_page():
     st.markdown('<div class="dashboard-header">📊 Overview Dashboard</div>', unsafe_allow_html=True)
 
     # Initialize metrics
@@ -1111,13 +809,13 @@ if tab == "🏠 Dashboard":
     # --- Add Save/Load Buttons for Session Data ---
     st.markdown("---")
     st.subheader("Cloud Session Data Management")
-    cloud_data_cols = st.columns(2) # Changed to 2 columns as Admin SDK functions are removed
+    cloud_data_cols = st.columns(2)
     with cloud_data_cols[0]:
         if st.button("💾 Save Session Data to Cloud (REST API)", key="save_session_data_button"):
-            save_session_data_to_firestore_rest(st.session_state.get('username', 'anonymous'))
+            save_session_data_to_firestore_rest(st.session_state.get('user_id', 'anonymous'))
     with cloud_data_cols[1]:
         if st.button("🔄 Load Session Data from Cloud (REST API)", key="load_session_data_button"):
-            load_session_data_from_firestore_rest(st.session_state.get('username', 'anonymous'))
+            load_session_data_from_firestore_rest(st.session_state.get('user_id', 'anonymous'))
             st.rerun() # Rerun to apply loaded data to the UI
 
     st.markdown("---")
@@ -1293,7 +991,7 @@ if tab == "🏠 Dashboard":
                     "notes": "Good potential, needs managerial review."
                 }
                 st.session_state.pending_approvals.append(mock_candidate)
-                log_activity_main(f"Mock candidate '{mock_candidate['candidate_name']}' added for approval.")
+                log_activity_to_firestore(f"Mock candidate '{mock_candidate['candidate_name']}' added for approval.", user=st.session_state.username)
                 st.rerun()
         else:
             st.write("Review the following candidates:")
@@ -1308,13 +1006,13 @@ if tab == "🏠 Dashboard":
                         with col_approve:
                             if st.button(f"✅ Approve {candidate['candidate_name']}", key=f"approve_{i}"):
                                 st.session_state.pending_approvals[i]['status'] = 'approved'
-                                log_activity_main(f"Candidate '{candidate['candidate_name']}' approved.")
+                                log_activity_to_firestore(f"Candidate '{candidate['candidate_name']}' approved.", user=st.session_state.username)
                                 st.success(f"Approved {candidate['candidate_name']}!")
                                 st.rerun()
                         with col_reject:
                             if st.button(f"❌ Reject {candidate['candidate_name']}", key=f"reject_{i}"):
                                 st.session_state.pending_approvals[i]['status'] = 'rejected'
-                                log_activity_main(f"Candidate '{candidate['candidate_name']}' rejected.")
+                                log_activity_to_firestore(f"Candidate '{candidate['candidate_name']}' rejected.", user=st.session_state.username)
                                 st.error(f"Rejected {candidate['candidate_name']}.")
                                 st.rerun()
             # Optionally show approved/rejected candidates
@@ -1325,114 +1023,289 @@ if tab == "🏠 Dashboard":
                 reviewed_df = pd.DataFrame(approved_rejected)
                 st.dataframe(reviewed_df[['candidate_name', 'score', 'experience', 'status']], use_container_width=True, hide_index=True)
 
+# ======================
+# 🏠 Candidate Dashboard Page Function
+# ======================
+def candidate_dashboard_page():
+    st.markdown('<div class="dashboard-header">👤 Candidate Dashboard</div>', unsafe_allow_html=True)
+    st.write(f"Welcome, {st.session_state.username}! This is your personalized dashboard.")
+    st.info("Here you can view your application status, manage your profile, and find relevant resources.")
+
+    st.subheader("Your Application Status (Mock)")
+    # Mock data for candidate applications
+    mock_applications = [
+        {"Job Title": "Software Engineer", "Application Date": "2023-01-15", "Status": "Under Review"},
+        {"Job Title": "Product Manager", "Application Date": "2023-02-01", "Status": "Interview Scheduled"},
+        {"Job Title": "UX Designer", "Application Date": "2023-02-20", "Status": "Application Received"},
+    ]
+    app_df = pd.DataFrame(mock_applications)
+    st.dataframe(app_df, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("Quick Actions")
+    col_cand_actions = st.columns(2)
+    with col_cand_actions[0]:
+        st.button("View Job Openings (Mock)", key="cand_view_jobs")
+    with col_cand_actions[1]:
+        st.button("Update My Profile (Mock)", key="cand_update_profile")
+    
+    st.markdown("---")
+    st.subheader("Recommended Resources (Mock)")
+    st.write("Here are some resources that might help you prepare for interviews or improve your resume:")
+    st.markdown("- **Interview Preparation Guide:** Learn common interview questions and strategies.")
+    st.markdown("- **Resume Tips & Tricks:** Enhance your resume for better visibility.")
+    st.markdown("- **Skill Development Courses:** Find courses to bridge skill gaps.")
+
 
 # ======================
-# Page Routing via function calls (remaining pages)
+# My Applications Page Function (Candidate)
 # ======================
+def my_applications_page():
+    st.markdown('<div class="dashboard-header">📄 My Applications</div>', unsafe_allow_html=True)
+    st.write(f"Here you can track the status of all your job applications.")
+
+    # Fetch candidate-specific applications from Firestore (mock for now)
+    # In a real scenario, applications would be linked to the candidate's UID.
+    # For now, we'll use a mock list.
+    st.info("This section would show your actual application history. For demonstration, here's some mock data.")
+    
+    mock_applications_data = [
+        {"Job ID": "SE001", "Job Title": "Senior Software Engineer", "Company": "Tech Solutions Inc.", "Applied Date": "2023-03-10", "Status": "Interview Scheduled", "Next Step": "Technical Interview on 2023-07-20"},
+        {"Job ID": "PM005", "Job Title": "Product Manager", "Company": "Innovate Corp", "Applied Date": "2023-02-28", "Status": "Under Review", "Next Step": "Waiting for HR screening"},
+        {"Job ID": "UXD002", "Job Title": "UX Designer", "Company": "Creative Agency", "Applied Date": "2023-01-25", "Status": "Rejected", "Next Step": "Feedback available upon request"},
+        {"Job ID": "DA010", "Job Title": "Data Analyst", "Company": "Data Insights Ltd.", "Applied Date": "2023-03-01", "Status": "Offer Extended", "Next Step": "Respond by 2023-07-25"},
+    ]
+    
+    applications_df = pd.DataFrame(mock_applications_data)
+    st.dataframe(applications_df, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("Application Details & Actions")
+    selected_app_title = st.selectbox("Select an application to view details:", [""] + applications_df["Job Title"].tolist())
+
+    if selected_app_title:
+        selected_app = applications_df[applications_df["Job Title"] == selected_app_title].iloc[0]
+        st.write(f"**Job Title:** {selected_app['Job Title']}")
+        st.write(f"**Company:** {selected_app['Company']}")
+        st.write(f"**Applied Date:** {selected_app['Applied Date']}")
+        st.write(f"**Current Status:** {selected_app['Status']}")
+        st.write(f"**Next Step:** {selected_app['Next Step']}")
+
+        if selected_app['Status'] == "Offer Extended":
+            st.success("Congratulations! You have an offer for this position.")
+            if st.button("Accept Offer (Mock)", key="accept_offer"):
+                st.info("You have mock-accepted the offer. HR will be notified.")
+            if st.button("Decline Offer (Mock)", key="decline_offer"):
+                st.info("You have mock-declined the offer.")
+        elif selected_app['Status'] == "Interview Scheduled":
+            st.info("Your interview is coming up!")
+            st.button("Reschedule Interview (Mock)", key="reschedule_interview")
+            st.button("Prepare for Interview (Mock)", key="prepare_interview")
+        elif selected_app['Status'] == "Rejected":
+            st.info("We regret to inform you that your application was not successful.")
+            if st.button("Request Feedback (Mock)", key="request_feedback"):
+                st.info("Your feedback request has been sent.")
+        else:
+            st.info("No specific actions available for this application status yet.")
+
+# ======================
+# Advanced Tools Page Function
+# ======================
+def advanced_tools_page():
+    st.markdown('<div class="dashboard-header">📈 Advanced Tools</div>', unsafe_allow_html=True)
+    st.write("This section provides access to advanced functionalities for power users.")
+
+    st.subheader("AI-Powered Insights (Mock)")
+    st.info("Integrate with advanced AI models for deeper insights into candidate behavior and market trends.")
+    st.button("Generate Candidate Persona (Mock)", key="generate_persona_btn")
+    st.button("Predict Hiring Success (Mock)", key="predict_success_btn")
+
+    st.markdown("---")
+    st.subheader("Customizable Workflows (Mock)")
+    st.info("Design and automate your recruitment workflows to streamline operations.")
+    st.button("Create New Workflow (Mock)", key="create_workflow_btn")
+    st.button("Manage Existing Workflows (Mock)", key="manage_workflow_btn")
+
+    st.markdown("---")
+    st.subheader("Data Export & Integration (Mock)")
+    st.info("Export your data or integrate with other HR systems.")
+    st.button("Export All Data (Mock)", key="export_data_btn")
+    st.button("Configure Integrations (Mock)", key="configure_integrations_btn")
+
+
+# ======================
+# Page Routing via function calls
+# ======================
+if tab == "🏠 Dashboard":
+    if is_candidate:
+        candidate_dashboard_page()
+    else:
+        recruiter_admin_dashboard_page()
+
 elif tab == "🧠 Resume Screener":
-    try:
-        # Import the screener page function (assuming it's in a separate file)
-        from screener import resume_screener_page
-        resume_screener_page() # Call the imported function
-        # The logging and pending approval logic here should ideally be handled within resume_screener_page itself
-        # after a successful screening operation. For now, keeping it here for demonstration.
-        if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
-            # Log activity only if new data was added to comprehensive_df
-            current_df_len = len(st.session_state['comprehensive_df'])
-            if st.session_state.get('last_screen_log_count', 0) < current_df_len:
-                log_activity_main(f"Performed resume screening for {current_df_len} candidates.")
-                st.session_state.last_screen_log_count = current_df_len
+    if is_candidate:
+        st.error("Access Denied: Candidates cannot access the Resume Screener.")
+    else:
+        try:
+            from screener import resume_screener_page
+            resume_screener_page()
+            if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+                current_df_len = len(st.session_state['comprehensive_df'])
+                if st.session_state.get('last_screen_log_count', 0) < current_df_len:
+                    log_activity_to_firestore(f"Performed resume screening for {current_df_len} candidates.", user=st.session_state.username)
+                    st.session_state.last_screen_log_count = current_df_len
 
-            # Example: Triggering a pending approval for a high-scoring candidate
-            for result in st.session_state['comprehensive_df'].to_dict('records'):
-                if result.get('Score (%)', 0) >= 90 and result['Candidate Name'] not in [app['candidate_name'] for app in st.session_state.get('pending_approvals', []) if app['status'] == 'pending']:
-                    if 'pending_approvals' not in st.session_state:
-                        st.session_state.pending_approvals = []
-                    st.session_state.pending_approvals.append({
-                        "candidate_name": result['Candidate Name'], # Corrected key
-                        "score": result['Score (%)'],
-                        "experience": result['Years Experience'],
-                        "jd_used": result.get('JD Used', 'N/A'),
-                        "status": "pending",
-                        "notes": f"High-scoring candidate from recent screening."
-                    })
-                    log_activity_main(f"Candidate '{result['Candidate Name']}' sent for approval (high score).")
-                    st.toast(f"Candidate {result['Candidate Name']} sent for approval!")
-
-    except ImportError:
-        st.error("`screener.py` not found or `resume_screener_page` function not defined. Please ensure 'screener.py' exists and contains the 'resume_screener_page' function.")
-    except Exception as e:
-        st.error(f"Error loading Resume Screener: {e}")
+                for result in st.session_state['comprehensive_df'].to_dict('records'):
+                    if result.get('Score (%)', 0) >= 90 and result['Candidate Name'] not in [app['candidate_name'] for app in st.session_state.get('pending_approvals', []) if app['status'] == 'pending']:
+                        if 'pending_approvals' not in st.session_state:
+                            st.session_state.pending_approvals = []
+                        st.session_state.pending_approvals.append({
+                            "candidate_name": result['Candidate Name'],
+                            "score": result['Score (%)'],
+                            "experience": result['Years Experience'],
+                            "jd_used": result.get('JD Used', 'N/A'),
+                            "status": "pending",
+                            "notes": f"High-scoring candidate from recent screening."
+                        })
+                        log_activity_to_firestore(f"Candidate '{result['Candidate Name']}' sent for approval (high score).", user=st.session_state.username)
+                        st.toast(f"Candidate {result['Candidate Name']} sent for approval!")
+        except ImportError:
+            st.error("`screener.py` not found or `resume_screener_page` function not defined. Please ensure 'screener.py' exists and contains the 'resume_screener_page' function.")
+        except Exception as e:
+            st.error(f"Error loading Resume Screener: {e}")
 
 elif tab == "📁 Manage JDs":
-    try:
-        with open("manage_jds.py", encoding="utf-8") as f:
-            exec(f.read())
-    except FileNotFoundError:
-        st.info("`manage_jds.py` not found. Please ensure the file exists in the same directory.")
-    except Exception as e:
-        st.error(f"Error loading Manage JDs: {e}")
+    if is_candidate:
+        st.error("Access Denied: Candidates cannot access Job Description Management.")
+    else:
+        try:
+            with open("manage_jds.py", encoding="utf-8") as f:
+                exec(f.read())
+        except FileNotFoundError:
+            st.info("`manage_jds.py` not found. Please ensure the file exists in the same directory.")
+        except Exception as e:
+            st.error(f"Error loading Manage JDs: {e}")
 
 elif tab == "📊 Screening Analytics":
-    analytics_dashboard_page()
-
-elif tab == "📈 Advanced Tools": # New page: Advanced Tools
-    # Import the advanced tools page function
-    from advanced import advanced_tools_page
-    # Pass the necessary global variables to the advanced_tools_page
-    advanced_tools_page(
-        app_id=FIREBASE_PROJECT_ID,
-        FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
-        FIRESTORE_BASE_URL=FIRESTORE_BASE_URL
-    )
-elif tab == "🤝 Collaboration Hub": # New page: Collaboration Hub
-    # Import and call the collaboration hub page function
-    from collaboration import collaboration_hub_page
-    # Pass the necessary global variables to the collaboration_hub_page
-    collaboration_hub_page(
-        app_id=FIREBASE_PROJECT_ID,
-        FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
-        FIRESTORE_BASE_URL=FIRESTORE_BASE_URL
-    )
+    if is_candidate:
+        st.error("Access Denied: Candidates cannot access Screening Analytics.")
+    else:
+        analytics_dashboard_page()
 
 elif tab == "📤 Email Candidates":
-    try:
-        # Import the email sender function (assuming it's in a separate file)
-        from email_sender import send_email_to_candidate
-        send_email_to_candidate() # Call the imported function
-    except ImportError:
-        st.error("`email_sender.py` not found or `send_email_to_candidate` function not defined. Please ensure 'email_sender.py' exists and contains the 'send_email_to_candidate' function.")
-    except Exception as e:
-        st.error(f"Error loading Email Candidates: {e}")
+    if is_candidate:
+        st.error("Access Denied: Candidates cannot email other candidates.")
+    else:
+        st.markdown('<div class="dashboard-header">📤 Email Candidates</div>', unsafe_allow_html=True)
+        st.info("This page allows you to compose and send emails to shortlisted candidates.")
+        st.warning("Note: This is a placeholder. Actual email sending functionality would require integration with an email service provider.")
+        
+        st.subheader("Compose Email")
+        recipient_type = st.radio("Send email to:", ["All Screened Candidates (Mock)", "Shortlisted Candidates (Mock)"], key="email_recipient_type")
+        subject = st.text_input("Subject:", "Regarding your application for [Job Title]", key="email_subject")
+        body = st.text_area("Email Body:", "Dear [Candidate Name],\n\nThank you for your application. We would like to invite you for an interview.\n\nBest regards,\n[Your Company]", height=200, key="email_body")
+        
+        if st.button("Send Mock Email", key="send_mock_email_button"):
+            st.success(f"Mock email sent to {recipient_type} with subject: '{subject}'")
+            log_activity_to_firestore(f"sent a mock email to '{recipient_type}'.", user=st.session_state.username)
 
 elif tab == "🔍 Search Resumes":
-    try:
-        with open("search.py", encoding="utf-8") as f:
-            exec(f.read())
-    except FileNotFoundError:
-        st.info("`search.py` not found. Please ensure the file exists in the same directory.")
-    except Exception as e:
-        st.error(f"Error loading Search Resumes: {e}")
+    if is_candidate:
+        st.error("Access Denied: Candidates cannot search resumes.")
+    else:
+        st.markdown('<div class="dashboard-header">🔍 Search Resumes</div>', unsafe_allow_html=True)
+        st.info("This page allows you to search through your screened resumes based on various criteria.")
+        st.warning("Note: This is a placeholder. A full search functionality would involve robust indexing and querying of resume data.")
+        
+        search_query = st.text_input("Search keywords (e.g., 'Python', 'Project Management'):", key="resume_search_query")
+        min_score_search = st.slider("Minimum Score (%):", 0, 100, 50, key="min_score_search")
+        min_exp_search = st.slider("Minimum Years Experience:", 0, 20, 2, key="min_exp_search")
+        
+        if st.button("Perform Mock Search", key="perform_mock_search_button"):
+            st.info(f"Performing mock search for '{search_query}' with min score {min_score_search}% and min experience {min_exp_search} years.")
+            st.write("*(Mock search results would appear here)*")
+            log_activity_to_firestore(f"performed a mock resume search for '{search_query}'.", user=st.session_state.username)
 
 elif tab == "📝 Candidate Notes":
-    try:
-        with open("notes.py", encoding="utf-8") as f:
-            exec(f.read())
-    except FileNotFoundError:
-        st.info("`notes.py` not found. Please ensure the file exists in the same directory.")
-    except Exception as e:
-        st.error(f"Error loading Candidate Notes: {e}")
+    if is_candidate:
+        st.error("Access Denied: Candidates cannot access Candidate Notes.")
+    else:
+        st.markdown('<div class="dashboard-header">📝 Candidate Notes</div>', unsafe_allow_html=True)
+        st.info("This page allows you to add and manage private notes for individual candidates.")
+        st.warning("Note: This is a placeholder. Actual note storage would require a database linked to candidate profiles.")
+        
+        candidate_name_note = st.text_input("Candidate Name:", key="candidate_name_note")
+        note_content = st.text_area("Your Private Note:", height=150, key="note_content")
+        
+        if st.button("Save Note (Mock)", key="save_note_button"):
+            if candidate_name_note and note_content:
+                st.success(f"Mock note saved for {candidate_name_note}: '{note_content}'")
+                log_activity_to_firestore(f"saved a mock note for '{candidate_name_note}'.", user=st.session_state.username)
+            else:
+                st.warning("Please enter candidate name and note content.")
+        
+        st.subheader("Recent Notes (Mock)")
+        st.write("*(Your recent notes would be displayed here)*")
+
+elif tab == "📈 Advanced Tools":
+    if is_candidate:
+        st.error("Access Denied: Candidates cannot access Advanced Tools.")
+    else:
+        advanced_tools_page()
+
+elif tab == "🤝 Collaboration Hub":
+    if is_candidate:
+        st.error("Access Denied: Candidates cannot access the Collaboration Hub.")
+    else:
+        try:
+            from collaboration import collaboration_hub_page
+            collaboration_hub_page(FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL)
+        except ImportError:
+            st.error("`collaboration.py` not found or `collaboration_hub_page` function not defined. Please ensure 'collaboration.py' exists and contains the 'collaboration_hub_page' function.")
+        except Exception as e:
+            st.error(f"Error loading Collaboration Hub: {e}")
+
+elif tab == "📄 My Applications":
+    if is_candidate:
+        my_applications_page()
+    else:
+        st.error("Access Denied: Recruiters/Admins do not have a 'My Applications' page.")
 
 elif tab == "❓ Feedback & Help":
-    # Import the feedback page function
-    from feedback import feedback_and_help_page
-    if 'user_email' not in st.session_state:
-        st.session_state['user_email'] = st.session_state.get('username', 'anonymous_user')
-    feedback_and_help_page()
+    try:
+        from feedback import feedback_and_help_page
+        if 'user_email' not in st.session_state:
+            st.session_state['user_email'] = st.session_state.get('username', 'anonymous_user')
+        feedback_and_help_page()
+    except ImportError:
+        st.error("`feedback.py` not found or `feedback_and_help_page` function not defined. Please ensure 'feedback.py' exists and contains the 'feedback_and_help_page' function.")
+    except Exception as e:
+        st.error(f"Error loading Feedback & Help page: {e}")
+
+elif tab == "⚙️ Admin Tools":
+    st.markdown('<div class="dashboard-header">⚙️ Admin Tools</div>', unsafe_allow_html=True)
+    if is_admin:
+        admin_tab_selection = st.radio(
+            "Admin Actions:",
+            ("Create User", "Reset Password", "Toggle User Status"),
+            key="admin_actions_radio"
+        )
+        if admin_tab_selection == "Create User":
+            admin_registration_section()
+        elif admin_tab_selection == "Reset Password":
+            admin_password_reset_section()
+        elif admin_tab_selection == "Toggle User Status":
+            admin_disable_enable_user_section()
+    else:
+        st.error("Access Denied: You do not have administrator privileges to view this page.")
 
 elif tab == "🚪 Logout":
-    log_activity_main(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out.")
+    log_activity_to_firestore(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out.", user=st.session_state.get('username', 'anonymous_user'))
     st.session_state.authenticated = False
     st.session_state.pop('username', None)
+    st.session_state.pop('user_id', None)
+    st.session_state.pop('user_company', None)
+    st.session_state.pop('user_type', None)
+    st.session_state.pop('id_token', None)
     st.success("✅ Logged out.")
     st.rerun()
