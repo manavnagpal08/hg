@@ -17,23 +17,22 @@ import firebase_admin
 from firebase_admin import credentials, initialize_app, firestore, get_app
 
 # --- Firebase Initialization (Safe Check) ---
+import firebase_admin
+from firebase_admin import credentials, initialize_app, firestore
+
 try:
-    try:
-        firebase_admin.get_app()  # Check if already initialized
-    except ValueError:
-        # Not initialized yet, so initialize with your service account
-        service_account_key_path = 'config/screenerproapp-firebase-adminsdk-fbsvc-85c227bdcf.json'
-        if os.path.exists(service_account_key_path):
-            cred = credentials.Certificate(service_account_key_path)
-            initialize_app(cred)
-        else:
-            st.warning(f"Service account key not found at {service_account_key_path}. Trying default credentials.")
-            initialize_app()
+    # Set environment variable for Application Default Credentials
+    key_path = os.path.abspath("config/firebase-key.json")
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key_path
+
+    if not firebase_admin._apps:
+        cred = credentials.ApplicationDefault()
+        initialize_app(cred)
 
     db = firestore.client()
     st.session_state.db = db
 except Exception as e:
-    st.warning(f"Firebase initialization warning: {e}. Firestore data persistence may not work.")
+    st.warning(f"🔥 Firebase init failed: {e}")
     st.session_state.db = None
 
 # All remaining original code follows from here
