@@ -142,6 +142,39 @@ def custom_reports_page():
 
 
         if not filtered_cs_df.empty:
+            st.markdown("#### Summary of Filtered Candidates:")
+            st.markdown(f"- **Total Candidates:** {len(filtered_cs_df)}")
+            st.markdown(f"- **Average Score:** {filtered_cs_df['Score (%)'].mean():.2f}%")
+            st.markdown(f"- **Average Years of Experience:** {filtered_cs_df['Years Experience'].mean():.1f} years")
+
+            if 'Tag' in filtered_cs_df.columns and not filtered_cs_df['Tag'].empty:
+                tag_counts = filtered_cs_df['Tag'].value_counts()
+                st.markdown("- **Candidate Tag Distribution:**")
+                for tag, count in tag_counts.items():
+                    st.markdown(f"  - {tag}: {count} candidate(s)")
+            
+            if 'Location' in filtered_cs_df.columns and not filtered_cs_df['Location'].empty:
+                location_counts = filtered_cs_df['Location'].value_counts()
+                if not location_counts.empty:
+                    st.markdown("- **Top Locations:**")
+                    for loc, count in location_counts.head(3).items():
+                        st.markdown(f"  - {loc}: {count} candidate(s)")
+
+            st.markdown("---")
+            st.markdown("#### Individual Candidate Summaries:")
+            for idx, row in filtered_cs_df.iterrows():
+                st.markdown(f"##### {row['Candidate Name']}")
+                st.markdown(f"""
+                - **Score:** {row['Score (%)']:.1f}% (Tag: {row['Tag']})
+                - **Experience:** {row['Years Experience']:.1f} years
+                - **JD Applied:** {row['JD Used']}
+                - **Contact:** {row['Email']} | {row['Phone Number']}
+                - **Location:** {row['Location']}
+                - **AI Insight:** {row['AI Suggestion']}
+                """)
+                st.markdown("---") # Separator for each candidate
+
+            st.markdown("#### Full Filtered Candidates Table:")
             display_cols_cs = ['Candidate Name', 'Score (%)', 'Years Experience', 'JD Used', 'Shortlisted', 'Tag', 'Location', 'CGPA (4.0 Scale)', 'Email', 'Phone Number']
             # Filter to only include columns that actually exist in the DataFrame
             display_cols_cs = [col for col in display_cols_cs if col in filtered_cs_df.columns]
@@ -283,8 +316,8 @@ def custom_reports_page():
             time_granularity = st.radio("Group by:", ["Daily", "Weekly", "Monthly"], horizontal=True, key="trend_granularity_report")
             
             # Ensure 'Date Screened' is truly datetime before resampling
-            df_screening_data['Date Screened'] = pd.to_datetime(df_screening_data['Date Screened'], errors='coerce')
             df_trends = df_screening_data.dropna(subset=['Date Screened']) # Drop rows where date conversion failed
+            df_trends['Date Screened'] = pd.to_datetime(df_trends['Date Screened'])
 
             if time_granularity == "Daily":
                 df_trends = df_trends.groupby('Date Screened').agg(
