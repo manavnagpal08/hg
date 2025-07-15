@@ -738,16 +738,18 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
                 st.info(f"**Overall Bias Score (Simulated):** {bias_score}")
             log_user_action(user_email, "JD_BIAS_CHECK_USED")
 
-    with tab_scheduling: # New Tab: Automated Interview Scheduling (Mock)
+    with tab_scheduling:
         st.subheader("🗓️ Automated Interview Scheduling")
         st.info("Streamline your interview process by automating scheduling, reminders, and feedback collection. Data is stored in Firebase.")
+        st.warning("📧 **Email Notifications are Simulated:** In this environment, actual emails cannot be sent directly. The messages below indicate what would happen in a real deployment with an integrated email service (e.g., SendGrid, Mailgun).")
 
-        # --- Load existing interviews and feedback from Firebase ---
-        # Ensure 'user_interviews' and 'user_feedback' are initialized in session state
+        # --- Load existing interviews, feedback, and interviewers from Firebase ---
         if 'user_interviews' not in st.session_state:
             st.session_state.user_interviews = []
         if 'user_feedback' not in st.session_state:
             st.session_state.user_feedback = []
+        if 'user_interviewers' not in st.session_state:
+            st.session_state.user_interviewers = []
 
         # Load data on page load
         success_interviews, loaded_interviews = load_collection_from_firestore(
@@ -765,8 +767,59 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
             st.session_state.user_feedback = loaded_feedback
         else:
             st.error(f"Failed to load feedback: {loaded_feedback}")
+        
+        success_interviewers, loaded_interviewers = load_collection_from_firestore(
+            f"artifacts/{app_id}/users/{user_email}/interviewers", FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
+        )
+        if success_interviewers:
+            st.session_state.user_interviewers = loaded_interviewers
+        else:
+            st.error(f"Failed to load interviewers: {loaded_interviewers}")
 
+        # --- Manage Interviewers Section ---
+        st.markdown("---")
+        with st.expander("👤 Manage Interviewers"):
+            st.markdown("##### Add New Interviewer")
+            with st.form("add_interviewer_form", clear_on_submit=True):
+                new_interviewer_name = st.text_input("Interviewer Name", key="new_interviewer_name_input")
+                new_interviewer_email = st.text_input("Interviewer Email", key="new_interviewer_email_input")
+                new_interviewer_general_availability = st.text_input("General Availability (e.g., Mon-Fri 9 AM - 5 PM)", key="new_interviewer_availability_input")
+                
+                add_interviewer_button = st.form_submit_button("Add Interviewer")
 
+                if add_interviewer_button:
+                    if new_interviewer_name and new_interviewer_email:
+                        interviewer_data = {
+                            "name": new_interviewer_name,
+                            "email": new_interviewer_email,
+                            "general_availability": new_interviewer_general_availability,
+                            "timestamp": datetime.now()
+                        }
+                        # Use interviewer email as doc ID for easy lookup
+                        success, response = save_document_to_firestore(
+                            f"artifacts/{app_id}/users/{user_email}/interviewers", 
+                            new_interviewer_email.replace('.', '_').replace('@', '_'), # Firebase document IDs cannot contain . or @
+                            interviewer_data, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
+                        )
+                        if success:
+                            st.success(f"Interviewer '{new_interviewer_name}' added successfully to Firebase!")
+                            log_user_action(user_email, "INTERVIEWER_ADDED", {"name": new_interviewer_name})
+                            st.rerun() # Rerun to refresh the list
+                        else:
+                            st.error(f"Failed to add interviewer: {response}")
+                            log_user_action(user_email, "INTERVIEWER_ADD_FAILED", {"name": new_interviewer_name, "error": response})
+                    else:
+                        st.warning("Please provide interviewer name and email.")
+            
+            st.markdown("##### Existing Interviewers")
+            if st.session_state.user_interviewers:
+                interviewer_df = pd.DataFrame(st.session_state.user_interviewers)
+                st.dataframe(interviewer_df[['name', 'email', 'general_availability']], use_container_width=True, hide_index=True)
+            else:
+                st.info("No interviewers added yet.")
+
+        # --- Schedule a New Interview Form ---
+        st.markdown("---")
         with st.form("interview_scheduling_form", clear_on_submit=True):
             st.markdown("##### Schedule a New Interview")
             col_s1, col_s2 = st.columns(2)
@@ -774,9 +827,23 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
                 candidate_name = st.text_input("Candidate Name", key="sched_cand_name")
                 candidate_email = st.text_input("Candidate Email", key="sched_cand_email")
                 interview_type = st.selectbox("Interview Type", ["Initial Screen", "Technical Interview (Round 1)", "Technical Interview (Round 2)", "Hiring Manager Interview", "Final Round"], key="sched_interview_type")
+            
             with col_s2:
-                interviewer_name = st.text_input("Interviewer Name", key="sched_interviewer_name")
-                interviewer_email = st.text_input("Interviewer Email", key="sched_interviewer_email")
+                # Dynamically populate interviewer selection
+                interviewer_options = ["Select Interviewer"] + [i['name'] for i in st.session_state.user_interviewers]
+                selected_interviewer_name = st.selectbox("Select Interviewer", interviewer_options, key="sched_interviewer_name_select")
+
+                selected_interviewer_email = ""
+                if selected_interviewer_name != "Select Interviewer":
+                    # Find the email for the selected interviewer
+                    for interviewer in st.session_state.user_interviewers:
+                        if interviewer['name'] == selected_interviewer_name:
+                            selected_interviewer_email = interviewer['email']
+                            break
+                    st.text_input("Interviewer Email (Auto-filled)", value=selected_interviewer_email, disabled=True, key="sched_interviewer_email_display")
+                else:
+                    st.text_input("Interviewer Email (Auto-filled)", value="", disabled=True, key="sched_interviewer_email_display_empty")
+
                 interview_date = st.date_input("Preferred Date", min_value=datetime.now().date(), key="sched_date")
                 interview_time = st.time_input("Preferred Time", value=datetime.now().time(), step=timedelta(minutes=30), key="sched_time")
             
@@ -786,15 +853,15 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
             schedule_button = st.form_submit_button("Schedule Interview")
 
             if schedule_button:
-                if not candidate_name or not candidate_email or not interviewer_name or not interviewer_email:
-                    st.error("Please fill in all required fields (Candidate Name/Email, Interviewer Name/Email).")
+                if not candidate_name or not candidate_email or selected_interviewer_name == "Select Interviewer" or not selected_interviewer_email:
+                    st.error("Please fill in all required fields (Candidate Name/Email, and select/add an Interviewer).")
                 else:
                     interview_data = {
                         "candidate_name": candidate_name,
                         "candidate_email": candidate_email,
                         "interview_type": interview_type,
-                        "interviewer_name": interviewer_name,
-                        "interviewer_email": interviewer_email,
+                        "interviewer_name": selected_interviewer_name,
+                        "interviewer_email": selected_interviewer_email,
                         "interview_datetime": datetime.combine(interview_date, interview_time),
                         "duration_minutes": interview_duration,
                         "notes": interview_notes,
@@ -807,13 +874,13 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
                     )
 
                     if success:
-                        st.success(f"✅ Interview scheduled for {candidate_name} with {interviewer_name} on {interview_date} at {interview_time} for {interview_duration} minutes ({interview_type}). (Data saved to Firebase)")
+                        st.success(f"✅ Interview scheduled for {candidate_name} with {selected_interviewer_name} on {interview_date} at {interview_time} for {interview_duration} minutes ({interview_type}). (Data saved to Firebase)")
                         st.write("---")
-                        st.markdown("##### Mock Notifications Sent:")
-                        st.info(f"📧 Email sent to Candidate ({candidate_email}): Your interview for {interview_type} is scheduled for {interview_date} at {interview_time}.")
-                        st.info(f"📧 Calendar invite sent to Interviewer ({interviewer_email}): Interview for {candidate_name} on {interview_date} at {interview_time}.")
-                        st.success("Reminders will be sent automatically 24 hours prior. (Mock)")
-                        log_user_action(user_email, "INTERVIEW_SCHEDULED_FIREBASE", {"candidate": candidate_name, "interviewer": interviewer_name, "type": interview_type})
+                        st.markdown("##### Simulated Notifications:")
+                        st.info(f"📧 **Simulated Email to Candidate ({candidate_email}):** Your interview for {interview_type} is scheduled for {interview_date.strftime('%Y-%m-%d')} at {interview_time.strftime('%I:%M %p')}.")
+                        st.info(f"📧 **Simulated Calendar Invite to Interviewer ({selected_interviewer_email}):** Interview for {candidate_name} on {interview_date.strftime('%Y-%m-%d')} at {interview_time.strftime('%I:%M %p')}.")
+                        st.success("Simulated reminders will be sent automatically 24 hours prior. (Mock)")
+                        log_user_action(user_email, "INTERVIEW_SCHEDULED_FIREBASE", {"candidate": candidate_name, "interviewer": selected_interviewer_name, "type": interview_type})
                         st.rerun() # Rerun to refresh the upcoming interviews list
                     else:
                         st.error(f"❌ Failed to save interview to Firebase: {response}")
@@ -823,19 +890,31 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
         st.subheader("Interviewer Availability (Mock)")
         st.info("View mock availability for interviewers to help with manual scheduling. (Mock data)")
         
-        interviewer_to_check = st.selectbox("Select Interviewer", ["Dr. Smith", "Ms. Jones", "Mr. Brown"], key="interviewer_avail_select")
+        # Populate interviewer dropdown from Firebase
+        interviewer_avail_options = ["Select Interviewer"] + [i['name'] for i in st.session_state.user_interviewers]
+        selected_avail_interviewer = st.selectbox("Select Interviewer", interviewer_avail_options, key="interviewer_avail_select")
         check_date = st.date_input("Check Availability for Date", min_value=datetime.now().date(), key="avail_check_date")
 
         if st.button("Check Availability", key="check_avail_button"):
-            st.markdown(f"##### Mock Availability for {interviewer_to_check} on {check_date}:")
-            # Simulate availability
-            if interviewer_to_check == "Dr. Smith":
-                st.success("✅ Available: 10:00 AM - 12:00 PM, 02:00 PM - 04:00 PM")
-            elif interviewer_to_check == "Ms. Jones":
-                st.success("✅ Available: 09:00 AM - 11:00 AM, 01:00 PM - 03:00 PM")
+            if selected_avail_interviewer == "Select Interviewer":
+                st.warning("Please select an interviewer to check availability.")
             else:
-                st.warning("⚠️ Limited Availability: 03:00 PM - 04:00 PM only")
-            log_user_action(user_email, "INTERVIEWER_AVAILABILITY_CHECKED", {"interviewer": interviewer_to_check, "date": check_date})
+                interviewer_general_avail = "N/A"
+                for interviewer in st.session_state.user_interviewers:
+                    if interviewer['name'] == selected_avail_interviewer:
+                        interviewer_general_avail = interviewer.get('general_availability', 'N/A')
+                        break
+
+                st.markdown(f"##### Mock Availability for {selected_avail_interviewer} on {check_date}:")
+                st.write(f"**General Availability:** {interviewer_general_avail}")
+                # Simulate specific availability based on general availability
+                if "Mon-Fri 9 AM - 5 PM" in interviewer_general_avail:
+                    st.success("✅ Available: 10:00 AM - 12:00 PM, 02:00 PM - 04:00 PM")
+                elif "Flexible" in interviewer_general_avail:
+                    st.info("⚠️ Flexible availability, please confirm directly.")
+                else:
+                    st.warning("⚠️ Limited Availability: Please contact directly for specific times.")
+                log_user_action(user_email, "INTERVIEWER_AVAILABILITY_CHECKED", {"interviewer": selected_avail_interviewer, "date": check_date})
 
         st.markdown("---")
         st.subheader("Automated Reminders Configuration (Mock)")
