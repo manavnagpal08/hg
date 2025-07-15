@@ -13,12 +13,15 @@ import statsmodels.api as sm
 import collections
 
 # Firebase imports
-from firebase_admin import credentials, initialize_app, firestore, apps # Corrected import for 'apps'
+from firebase_admin import credentials, initialize_app, firestore
+from firebase_admin import apps # Corrected import for 'apps'
 import json # Needed for json.loads(firebase_config_str)
 
 # --- Firebase Initialization (Re-enabled) ---
 try:
-    if not apps.get_app(): # Check if the default Firebase app is already initialized
+    # Check if the default Firebase app is already initialized
+    # Use apps.get_apps() to get a list of initialized apps and check if it's empty
+    if not apps.get_apps(): 
         # Use the global variables provided by the Canvas environment
         firebase_config_str = globals().get('__firebase_config', '{}')
         firebase_config = json.loads(firebase_config_str)
@@ -27,7 +30,9 @@ try:
             cred = credentials.Certificate(firebase_config)
             initialize_app(cred)
         else:
-            initialize_app() # Attempt to initialize with default credentials if available
+            # Attempt to initialize with default credentials if available
+            # This is typically used when running in a Google Cloud environment
+            initialize_app() 
     
     db = firestore.client() # Get Firestore client
     st.session_state.db = db # Store db client in session state for easy access
@@ -586,7 +591,7 @@ def analytics_dashboard_page():
     missing_essential_columns = [col for col in essential_core_columns if col not in df.columns]
 
     if missing_essential_columns:
-        st.error(f"Error: The loaded data is missing essential core columns: {', '.ToArray().join(missing_essential_columns)}."
+        st.error(f"Error: The loaded data is missing essential core columns: {', '.join(missing_essential_columns)}."
                  " Please ensure your screening process generates at least these required data fields.")
         st.stop()
 
@@ -804,7 +809,7 @@ def analytics_dashboard_page():
                 nbins=10,
                 title='Distribution of CGPA (Normalized to 4.0 Scale)',
                 labels={'CGPA (4.0 Scale)': 'CGPA'},
-                color_discrete_sequence=[px.colors.qualitative.Plotly[0]] if not dark_mode else [px.colors.qualitative.Dark2[0]]
+                color_discrete_sequence=px.colors.qualitative.Plotly[0] if not dark_mode else px.colors.qualitative.Dark2[0]
             )
             st.plotly_chart(fig_cgpa_hist, use_container_width=True)
         else:
