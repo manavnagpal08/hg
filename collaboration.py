@@ -22,8 +22,13 @@ except json.JSONDecodeError:
     firebase_config = {}
 
 # Initialize Firebase Admin SDK if not already initialized
+# This part is for server-side operations if needed, but for client-side,
+# we primarily use the REST API or client SDK which is handled by the canvas environment.
+# However, for `serverTimestamp()`, the Admin SDK is useful.
 if not firebase_admin._apps:
     try:
+        # Use a service account for Admin SDK if available, otherwise Application Default
+        # For Canvas, Application Default Credentials are often set up via GOOGLE_APPLICATION_CREDENTIALS env var
         cred = credentials.ApplicationDefault()
         firebase_admin.initialize_app(cred, name=app_id)
     except Exception as e:
@@ -33,21 +38,24 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 # --- Helper function for activity logging (re-used from main.py concept) ---
-def log_activity(message, user=None):
-    """Logs an activity with a timestamp to Firestore and session state."""
+def log_activity(message: str, user: str = None):
+    """
+    Logs an activity with a timestamp to Firestore and session state.
+    This helps track user actions and application events.
+    """
     if user is None:
         user = st.session_state.get('username', 'Anonymous User')
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"[{timestamp}] {user}: {message}"
 
-    # Add to session state log (for immediate display)
+    # Add to session state log (for immediate display in the Activity Feed tab)
     if 'activity_log' not in st.session_state:
         st.session_state.activity_log = []
     st.session_state.activity_log.insert(0, log_entry) # Add to the beginning for most recent first
     st.session_state.activity_log = st.session_state.activity_log[:50] # Keep log size manageable
 
-    # Persist to Firestore
+    # Persist to Firestore for long-term storage and cross-session visibility
     try:
         activity_collection_ref = db.collection(f"artifacts/{app_id}/public/data/activity_feed")
         activity_collection_ref.add({
@@ -57,18 +65,18 @@ def log_activity(message, user=None):
         })
     except Exception as e:
         st.error(f"Error logging activity to Firestore: {e}")
-
+        # Note: If this error persists, check your Firestore security rules for 'activity_feed' collection.
+        # It should allow authenticated users to write.
 
 def collaboration_hub_page():
     st.markdown('<div class="dashboard-header">🤝 Collaboration Hub</div>', unsafe_allow_html=True)
 
     st.write("This hub is designed for seamless team collaboration. Share notes, ideas, and updates with your HR team.")
 
-    # Display current user
+    # Display current user information
     current_username = st.session_state.get('username', 'Anonymous User')
-    # Use current_username as user_id for Firestore paths if a more robust Firebase Auth UID isn't available
-    # In a full Firebase Auth setup, you'd use `auth.get_user(auth.current_user.uid).email` or similar.
-    # For now, we'll rely on the username from session state for simplicity.
+    # Use current_username as a unique identifier for Firestore paths in this context.
+    # In a full Firebase Auth setup, `auth.currentUser.uid` would be the robust user ID.
     current_user_id = st.session_state.get('user_id', current_username)
     st.info(f"You are logged in as: **{current_username}** (User ID: `{current_user_id}`)")
     st.markdown("---")
@@ -89,7 +97,8 @@ def collaboration_hub_page():
             if new_note_content:
                 try:
                     # Define the collection path for public shared notes
-                    # This aligns with public data rules: /artifacts/{appId}/public/data/shared_notes
+                    # Firestore security rules for this collection should allow:
+                    # allow read, write: if request.auth != null;
                     notes_collection_ref = db.collection(f"artifacts/{app_id}/public/data/shared_notes")
 
                     notes_collection_ref.add({
@@ -115,18 +124,21 @@ def collaboration_hub_page():
             st.session_state.shared_notes = []
 
         # Set up a real-time listener for shared notes
-        @st.cache_resource(ttl=60) # Cache the listener setup to avoid multiple listeners
+        # @st.cache_resource ensures this setup function runs only once per session,
+        # preventing multiple listeners from being attached. The on_snapshot callback
+        # itself provides real-time updates to st.session_state.
+        @st.cache_resource(ttl=60)
         def setup_notes_listener():
             notes_collection_ref = db.collection(f"artifacts/{app_id}/public/data/shared_notes")
             # Order by timestamp descending to show most recent first
             notes_query = notes_collection_ref.order_by("timestamp", direction=Query.DESCENDING).limit(20)
 
-            # Callback function for snapshot listener
+            # Callback function for snapshot listener: updates session state when data changes
             def on_snapshot(col_snapshot, changes, read_time):
                 updated_notes = []
                 for doc_snapshot in col_snapshot.docs:
                     note_data = doc_snapshot.to_dict()
-                    # Convert timestamp object to string for display
+                    # Convert Firestore Timestamp object to string for display
                     if 'timestamp' in note_data and hasattr(note_data['timestamp'], 'isoformat'):
                         note_data['timestamp'] = note_data['timestamp'].isoformat()
                     updated_notes.append(note_data)
@@ -135,7 +147,7 @@ def collaboration_hub_page():
             notes_watcher = notes_query.on_snapshot(on_snapshot)
             return notes_watcher
 
-        # Ensure the listener is set up only once
+        # Ensure the listener is set up only once per Streamlit session
         if 'notes_listener_watcher' not in st.session_state:
             st.session_state.notes_listener_watcher = setup_notes_listener()
             log_activity("Firestore notes listener set up.", user="System")
@@ -144,7 +156,7 @@ def collaboration_hub_page():
         if st.session_state.shared_notes:
             for note in st.session_state.shared_notes:
                 timestamp_str = note.get('timestamp', 'N/A')
-                # Format timestamp if it's a string, otherwise keep as is
+                # Re-format timestamp string for better readability if needed
                 if isinstance(timestamp_str, str) and 'T' in timestamp_str:
                     try:
                         dt_object = datetime.fromisoformat(timestamp_str)
@@ -175,11 +187,13 @@ def collaboration_hub_page():
         if st.button("Add Task", key="add_task_button"):
             if new_task_description and new_task_assignee:
                 try:
+                    # Firestore security rules for this collection should allow:
+                    # allow read, write: if request.auth != null;
                     tasks_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_tasks")
                     tasks_collection_ref.add({
                         "description": new_task_description,
                         "assignee": new_task_assignee,
-                        "status": "pending",
+                        "status": "pending", # Initial status
                         "created_by": current_username,
                         "created_at": firestore.SERVER_TIMESTAMP
                     })
@@ -241,6 +255,7 @@ def collaboration_hub_page():
                         {task.get('description', 'No description')}
                     </p>
                 """, unsafe_allow_html=True)
+                # Only show "Mark as Complete" button if the task is pending
                 if task.get('status') == 'pending':
                     if st.button(f"Mark as Complete", key=f"complete_task_{task['id']}"):
                         try:
@@ -266,6 +281,8 @@ def collaboration_hub_page():
         if st.button("Post Announcement", key="post_announcement_button"):
             if new_announcement_title and new_announcement_content:
                 try:
+                    # Firestore security rules for this collection should allow:
+                    # allow read, write: if request.auth != null;
                     announcements_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_announcements")
                     announcements_collection_ref.add({
                         "title": new_announcement_title,
@@ -375,10 +392,12 @@ def collaboration_hub_page():
             if add_event_button:
                 if event_title and event_date and event_time:
                     try:
+                        # Firestore security rules for this collection should allow:
+                        # allow read, write: if request.auth != null;
                         events_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_events")
                         events_collection_ref.add({
                             "title": event_title,
-                            "date": str(event_date), # Store date as string
+                            "date": str(event_date), # Store date as string (YYYY-MM-DD)
                             "time": event_time,
                             "description": event_description,
                             "created_by": current_username,
@@ -463,6 +482,8 @@ def collaboration_hub_page():
             if add_resource_button:
                 if resource_name:
                     try:
+                        # Firestore security rules for this collection should allow:
+                        # allow read, write: if request.auth != null;
                         resources_collection_ref = db.collection(f"artifacts/{app_id}/public/data/resource_library")
                         resources_collection_ref.add({
                             "name": resource_name,
@@ -551,6 +572,8 @@ def collaboration_hub_page():
                         st.warning("Please provide at least two options for the poll.")
                     else:
                         try:
+                            # Firestore security rules for this collection should allow:
+                            # allow read, write: if request.auth != null;
                             polls_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_polls")
                             polls_collection_ref.add({
                                 "question": poll_question,
@@ -608,23 +631,24 @@ def collaboration_hub_page():
                     </p>
                 """, unsafe_allow_html=True)
 
-                # Check if user has already voted
+                # Check if user has already voted in this session
                 user_voted_key = f"voted_poll_{poll['id']}_{current_username}"
                 if st.session_state.get(user_voted_key):
-                    st.info("You have already voted on this poll.")
+                    st.info("You have already voted on this poll in this session.")
                 else:
                     selected_option = st.radio("Select your choice:", poll.get('options', []), key=f"poll_option_{poll['id']}")
                     if st.button("Submit Vote", key=f"submit_vote_{poll['id']}"):
                         if selected_option:
                             try:
                                 poll_ref = db.collection(f"artifacts/{app_id}/public/data/team_polls").document(poll['id'])
-                                # Increment the vote count for the selected option
-                                # This requires a transaction or FieldValue.increment for safe concurrent updates
-                                # For simplicity, directly updating here, but in production, use transactions.
+                                # Increment the vote count for the selected option.
+                                # For production, consider using Firestore transactions (db.transaction)
+                                # or FieldValue.increment for safer concurrent updates.
+                                # Example: poll_ref.update({"votes." + selected_option: firestore.Increment(1)})
                                 current_votes = poll.get('votes', {})
                                 current_votes[selected_option] = current_votes.get(selected_option, 0) + 1
                                 poll_ref.update({"votes": current_votes})
-                                st.session_state[user_voted_key] = True # Mark user as voted
+                                st.session_state[user_voted_key] = True # Mark user as voted in session
                                 st.success("Vote submitted successfully!")
                                 log_activity(f"voted on poll '{poll['question']}' for option '{selected_option}'.", user=current_username)
                                 st.rerun() # Rerun to update the displayed results
@@ -644,7 +668,8 @@ def collaboration_hub_page():
                     st.info("No votes yet.")
 
                 # Option to close poll (only for creator or admin)
-                if current_username == poll.get('created_by') or current_username in ("admin@forscreenerpro", "admin@forscreenerpro2", "manav.nagpal2005@gmail.com"):
+                admin_usernames = ("admin@forscreenerpro", "admin@forscreenerpro2", "manav.nagpal2005@gmail.com")
+                if current_username == poll.get('created_by') or current_username in admin_usernames:
                     if poll.get('active') and st.button("Close Poll", key=f"close_poll_{poll['id']}"):
                         try:
                             poll_ref = db.collection(f"artifacts/{app_id}/public/data/team_polls").document(poll['id'])
@@ -729,4 +754,3 @@ def collaboration_hub_page():
     ]
     pipeline_df = pd.DataFrame(mock_pipeline)
     st.dataframe(pipeline_df, use_container_width=True, hide_index=True)
-
