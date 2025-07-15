@@ -46,7 +46,7 @@ except Exception as e:
 
 # File to store user credentials
 USER_DB_FILE = "users.json"
-ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2")
+ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2", "manav.nagpal2005@gmail.com")
 
 def load_users():
     """Loads user data from the JSON file."""
@@ -150,10 +150,10 @@ def admin_password_reset_section():
     # Exclude all admin usernames from the list of users whose passwords can be reset
     user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
 
+    # Display a message if no other users are available
     if not user_options:
-        st.info("No other users to reset passwords for.")
-        return
-
+        st.info("No non-admin users available to reset passwords for.")
+    
     with st.form("admin_reset_password_form", clear_on_submit=True):
         selected_user = st.selectbox("Select User to Reset Password For", user_options, key="reset_user_select")
         new_password = st.text_input("New Password", type="password", key="new_pwd_reset")
@@ -162,34 +162,56 @@ def admin_password_reset_section():
         if reset_button:
             if not new_password:
                 st.error("Please enter a new password.")
-            else:
+            elif selected_user: # Only proceed if a user was selected (i.e., user_options was not empty)
                 users[selected_user]["password"] = hash_password(new_password)
                 save_users(users)
                 st.success(f"✅ Password for '{selected_user}' has been reset.")
+            else:
+                st.warning("Please select a user to reset their password.")
+
 
 def admin_disable_enable_user_section():
-    """Admin-driven user disable/enable form."""
+    """Admin-driven user disable/enable form and user list."""
     st.subheader("⛔ Toggle User Status (Admin Only)")
     users = load_users()
-    # Exclude all admin usernames from the list of users whose status can be toggled
-    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
+    # Exclude all admin usernames from the list of users to manage
+    non_admin_users = {user: data for user, data in users.items() if user not in ADMIN_USERNAME}
 
-    if not user_options:
-        st.info("No other users to manage status for.")
-        return
+    # Prepare data for display in a DataFrame
+    user_data_for_table = []
+    for username, data in non_admin_users.items():
+        user_data_for_table.append({
+            "Username (Email)": username,
+            "Company Name": data.get("company", "N/A"),
+            "Status": data.get("status", "N/A").capitalize()
+        })
+    
+    st.markdown("### Registered Users Overview")
+    if user_data_for_table:
+        st.dataframe(pd.DataFrame(user_data_for_table), use_container_width=True, hide_index=True)
+    else:
+        st.info("No non-admin users registered yet.")
+    st.markdown("---") # Separator for clarity
 
+    user_options = list(non_admin_users.keys())
+
+    # The selectbox and form should always render, even if user_options is empty.
+    # The selectbox will display "No options to display" if the list is empty.
     with st.form("admin_toggle_user_status_form", clear_on_submit=False): # Keep values after submit for easier toggling
         selected_user = st.selectbox("Select User to Toggle Status", user_options, key="toggle_user_select")
 
-        current_status = users[selected_user]["status"]
-        st.info(f"Current status of '{selected_user}': **{current_status.upper()}**")
+        if selected_user: # Only show current status and toggle button if a user is selected
+            current_status = users[selected_user]["status"]
+            st.info(f"Current status of '{selected_user}': **{current_status.upper()}**")
 
-        if st.form_submit_button(f"Toggle to {'Disable' if current_status == 'active' else 'Enable'} User"):
-            new_status = "disabled" if current_status == "active" else "active"
-            users[selected_user]["status"] = new_status
-            save_users(users)
-            st.success(f"✅ User '{selected_user}' status set to **{new_status.upper()}**.")
-            st.rerun() # Rerun to update the displayed status immediately
+            if st.form_submit_button(f"Toggle to {'Disable' if current_status == 'active' else 'Enable'} User"):
+                new_status = "disabled" if current_status == "active" else "active"
+                users[selected_user]["status"] = new_status
+                save_users(users)
+                st.success(f"✅ User '{selected_user}' status set to **{new_status.upper()}**.")
+                st.rerun() # Rerun to update the displayed status immediately
+        else:
+            st.info("Select a user from the dropdown above to manage their status.")
 
 
 # --- Firebase Data Persistence Functions (REST API) ---
@@ -410,7 +432,7 @@ def log_activity(message):
     st.session_state.activity_log = st.session_state.activity_log[:50]
 
 # --- Page Config ---
-st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
+st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="�")
 
 # Function to load external CSS
 def load_css(css_file_name):
@@ -1354,9 +1376,9 @@ elif tab == "📈 Advanced Tools": # New page: Advanced Tools
     st.write("Stay tuned for powerful functionalities like predictive analytics, skill gap analysis, and more!")
 
 elif tab == "🤝 Collaboration Hub": # New page: Collaboration Hub
-    st.markdown('<div class="dashboard-header">🤝 Collaboration Hub</div>', unsafe_allow_html=True)
-    st.info("Feature Coming Soon: This section will enable seamless collaboration among your HR team.")
-    st.write("Expect features like shared candidate pipelines, team notes, and real-time communication.")
+    # Import the collaboration hub page function
+    from collaboration import collaboration_hub_page
+    collaboration_hub_page()
 
 elif tab == "📤 Email Candidates":
     try:
@@ -1399,3 +1421,4 @@ elif tab == "🚪 Logout":
     st.session_state.pop('username', None)
     st.success("✅ Logged out.")
     st.rerun()
+�
