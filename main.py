@@ -204,28 +204,24 @@ def save_session_data_to_firestore():
 
         data_to_save = {}
         # Save comprehensive_df if it exists and is not empty
-        if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
-            # Convert DataFrame to JSON string to store in a single Firestore field
-            # This is necessary because Firestore doesn't directly support complex nested objects
-            # or large arrays of maps without specific structuring.
-            # Also, filter out 'Resume Raw Text' as it can be very large.
-            df_for_save = st.session_state['comprehensive_df'].drop(columns=['Resume Raw Text'], errors='ignore')
-            data_to_save['comprehensive_df_json'] = df_for_save.to_json(orient='records')
+        # After screening resumes
+        if 'comprehensive_df' in st.session_state:
+            st.dataframe(st.session_state['comprehensive_df'])
 
-        # You can add other session variables here if needed, ensure they are JSON serializable
-        # Example: data_to_save['last_jd_used'] = st.session_state.get('last_jd_used')
-        # Example: data_to_save['screening_cutoff_score'] = st.session_state.get('screening_cutoff_score')
-
-        if data_to_save:
-            try:
-                # This is one of the "4-5 lines of code" for saving
-                doc_ref.set(data_to_save)
-                st.toast("Session data saved to Firestore!")
-                log_activity(f"Session data saved for user '{user_id}'.")
-            except Exception as e:
-                st.error(f"Error saving session data to Firestore: {e}")
+    # ✅ INSERT SAVE BUTTON RIGHT HERE
+    if st.button("💾 Save to Firebase via REST"):
+        if not st.session_state['comprehensive_df'].empty:
+            save_session_data_to_firestore_rest(
+                st.session_state.get('username', 'anonymous'),
+                {
+                    "timestamp": str(datetime.now()),
+                    "screened_count": len(st.session_state['comprehensive_df']),
+                    "status": "saved from Streamlit Cloud"
+                }
+            )
         else:
-            st.info("No relevant session data to save.")
+            st.warning("Nothing to save — please run screening first.")
+
 
 def load_session_data_from_firestore():
     """
