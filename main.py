@@ -2,20 +2,323 @@ import streamlit as st
 import json
 import bcrypt
 import os
-import re # Import regex for email validation
-import pandas as pd # Ensure pandas is imported for DataFrame display
+import re
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
-import datetime
+from datetime import datetime
 import plotly.express as px
 import statsmodels.api as sm
 import collections
+
+# Firebase imports
+from firebase_admin import credentials, initialize_app, apps, firestore
+import json # Needed for json.loads(firebase_config_str)
+
+# --- Firebase Initialization (Re-enabled) ---
+try:
+    if not apps.get_app(): # Check if the default Firebase app is already initialized
+        # Use the global variables provided by the Canvas environment
+        firebase_config_str = globals().get('__firebase_config', '{}')
+        firebase_config = json.loads(firebase_config_str)
+
+        if firebase_config and 'type' in firebase_config:
+            cred = credentials.Certificate(firebase_config)
+            initialize_app(cred)
+        else:
+            initialize_app() # Attempt to initialize with default credentials if available
+    
+    db = firestore.client() # Get Firestore client
+    st.session_state.db = db # Store db client in session state for easy access
+    # st.success("Firebase initialized and connected to Firestore.") # Removed for cleaner UI
+except Exception as e:
+    st.warning(f"Firebase initialization warning: {e}. Firestore data persistence may not work.")
+    st.session_state.db = None # Set to None if initialization fails
 
 # File to store user credentials
 USER_DB_FILE = "users.json"
 # Define your admin usernames here as a tuple of strings
 ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2") 
+
+def load_users():
+    """Loads user data from the JSON file."""
+    if not os.path.exists(USER_DB_FILE):
+        with open(USER_DB_FILE, "w") as f:
+            json.dump({}, f)
+    with open(USER_DB_FILE, "r") as f:
+        users = json.load(f)
+        # Ensure each user has a 'status' key and 'company' key for backward compatibility
+        for username, data in users.items():
+            if isinstance(data, str): # Old format: "username": "hashed_password"
+                users[username] = {"password": data, "status": "active", "company": "N/A"}
+            elif "status" not in data:
+                data["status"] = "active"
+            if "company" not in data: # Add company field if missing
+                data["company"] = "N/A"
+        return users
+
+def save_users(users):
+    """Saves user data to the JSON file."""
+    with open(USER_DB_FILE, "w") as f:
+        json.dump(users, f, indent=4)
+
+def hash_password(password):
+    """Hashes a password using bcrypt."""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def check_password(password, hashed_password):
+    """Checks a password against its bcrypt hash."""
+    return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+def is_valid_email(email):
+    """Basic validation for email format."""
+    return re.match(r"[^@]+@[^@]+\.[^@]+", email)
+
+def register_section():
+    """Public self-registration form."""
+    st.subheader("📝 Create New Account")
+    with st.form("registration_form", clear_on_submit=True):
+        new_username = st.text_input("Choose Username (Email address required)", key="new_username_reg_public")
+        new_company_name = st.text_input("Company Name", key="new_company_name_reg_public") # New field
+        new_password = st.text_input("Choose Password", type="password", key="new_password_reg_public")
+        confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password_reg_public")
+        register_button = st.form_submit_button("Register New Account")
+
+        if register_button:
+            if not new_username or not new_password or not confirm_password or not new_company_name:
+                st.error("Please fill in all fields.")
+            elif not is_valid_email(new_username): # Email format validation
+                st.error("Please enter a valid email address for the username.")
+            elif new_password != confirm_password:
+                st.error("Passwords do not match.")
+            else:
+                users = load_users()
+                if new_username in users:
+                    st.error("Username already exists. Please choose a different one.")
+                else:
+                    users[new_username] = {
+                        "password": hash_password(new_password),
+                        "status": "active",
+                        "company": new_company_name # Store company name
+                    }
+                    save_users(users)
+                    st.success("✅ Registration successful! You can now switch to the 'Login' option.")
+                    # Manually set the session state to switch to Login option
+                    st.session_state.active_login_tab_selection = "Login"
+
+def admin_registration_section():
+    """Admin-driven user creation form."""
+    st.subheader("➕ Create New User Account (Admin Only)")
+    with st.form("admin_registration_form", clear_on_submit=True):
+        new_username = st.text_input("New User's Username (Email)", key="new_username_admin_reg")
+        new_company_name = st.text_input("New User's Company Name", key="new_company_name_admin_reg") # New field
+        new_password = st.text_input("New User's Password", type="password", key="new_password_admin_reg")
+        admin_register_button = st.form_submit_button("Add New User")
+
+    if admin_register_button:
+        if not new_username or not new_password or not new_company_name:
+            st.error("Please fill in all fields.")
+        elif not is_valid_email(new_username): # Email format validation
+            st.error("Please enter a valid email address for the username.")
+        else:
+            users = load_users()
+            if new_username in users:
+                st.error(f"User '{new_username}' already exists.")
+            else:
+                users[new_username] = {
+                    "password": hash_password(new_password),
+                    "status": "active",
+                    "company": new_company_name
+                }
+                save_users(users)
+                st.success(f"✅ User '{new_username}' added successfully!")
+
+def admin_password_reset_section():
+    """Admin-driven password reset form."""
+    st.subheader("🔑 Reset User Password (Admin Only)")
+    users = load_users()
+    # Exclude all admin usernames from the list of users whose passwords can be reset
+    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME] 
+    
+    if not user_options:
+        st.info("No other users to reset passwords for.")
+        return
+
+    with st.form("admin_reset_password_form", clear_on_submit=True):
+        selected_user = st.selectbox("Select User to Reset Password For", user_options, key="reset_user_select")
+        new_password = st.text_input("New Password", type="password", key="new_pwd_reset")
+        reset_button = st.form_submit_button("Reset Password")
+
+        if reset_button:
+            if not new_password:
+                st.error("Please enter a new password.")
+            else:
+                users[selected_user]["password"] = hash_password(new_password)
+                save_users(users)
+                st.success(f"✅ Password for '{selected_user}' has been reset.")
+
+def admin_disable_enable_user_section():
+    """Admin-driven user disable/enable form."""
+    st.subheader("⛔ Toggle User Status (Admin Only)")
+    users = load_users()
+    # Exclude all admin usernames from the list of users whose status can be toggled
+    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME] 
+
+    if not user_options:
+        st.info("No other users to manage status for.")
+        return
+        
+    with st.form("admin_toggle_user_status_form", clear_on_submit=False): # Keep values after submit for easier toggling
+        selected_user = st.selectbox("Select User to Toggle Status", user_options, key="toggle_user_select")
+        
+        current_status = users[selected_user]["status"]
+        st.info(f"Current status of '{selected_user}': **{current_status.upper()}**")
+
+        if st.form_submit_button(f"Toggle to {'Disable' if current_status == 'active' else 'Enable'} User"):
+            new_status = "disabled" if current_status == "active" else "active"
+            users[selected_user]["status"] = new_status
+            save_users(users)
+            st.success(f"✅ User '{selected_user}' status set to **{new_status.upper()}**.")
+            st.rerun() # Rerun to update the displayed status immediately
+
+
+# --- Firebase Data Persistence Functions ---
+def save_session_data_to_firestore():
+    """
+    Saves key session state data (like comprehensive_df) to Firestore for the current user.
+    """
+    if st.session_state.get('db') and st.session_state.get('username'):
+        db = st.session_state.db
+        user_id = st.session_state.username # Using username as user_id for simplicity
+        app_id = globals().get('__app_id', 'default-app-id')
+
+        # Document reference for user-specific session data
+        # Data stored in /artifacts/{appId}/users/{userId}/session_data/current_session
+        doc_ref = db.collection(f'artifacts/{app_id}/users/{user_id}/session_data').document('current_session')
+
+        data_to_save = {}
+        # Save comprehensive_df if it exists and is not empty
+        if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+            # Convert DataFrame to JSON string to store in a single Firestore field
+            # This is necessary because Firestore doesn't directly support complex nested objects
+            # or large arrays of maps without specific structuring.
+            # Also, filter out 'Resume Raw Text' as it can be very large.
+            df_for_save = st.session_state['comprehensive_df'].drop(columns=['Resume Raw Text'], errors='ignore')
+            data_to_save['comprehensive_df_json'] = df_for_save.to_json(orient='records')
+            
+        # You can add other session variables here if needed, ensure they are JSON serializable
+        # Example: data_to_save['last_jd_used'] = st.session_state.get('last_jd_used')
+        # Example: data_to_save['screening_cutoff_score'] = st.session_state.get('screening_cutoff_score')
+
+        if data_to_save:
+            try:
+                # This is one of the "4-5 lines of code" for saving
+                doc_ref.set(data_to_save) 
+                st.toast("Session data saved to Firestore!")
+                log_activity(f"Session data saved for user '{user_id}'.")
+            except Exception as e:
+                st.error(f"Error saving session data to Firestore: {e}")
+        else:
+            st.info("No relevant session data to save.")
+
+def load_session_data_from_firestore():
+    """
+    Loads key session state data from Firestore for the current user.
+    """
+    if st.session_state.get('db') and st.session_state.get('username'):
+        db = st.session_state.db
+        user_id = st.session_state.username
+        app_id = globals().get('__app_id', 'default-app-id')
+
+        doc_ref = db.collection(f'artifacts/{app_id}/users/{user_id}/session_data').document('current_session')
+        
+        try:
+            # This is one of the "4-5 lines of code" for loading
+            doc = doc_ref.get() 
+            if doc.exists:
+                data = doc.to_dict()
+                if 'comprehensive_df_json' in data:
+                    # Load DataFrame from JSON string
+                    st.session_state['comprehensive_df'] = pd.read_json(data['comprehensive_df_json'], orient='records')
+                    st.toast("Session data loaded from Firestore!")
+                    log_activity(f"Session data loaded for user '{user_id}'.")
+                
+                # Load other session variables if they were saved
+                # Example: st.session_state['last_jd_used'] = data.get('last_jd_used')
+                # Example: st.session_state['screening_cutoff_score'] = data.get('screening_cutoff_score')
+
+            else:
+                st.info("No previous session data found in Firestore.")
+        except Exception as e:
+            st.error(f"Error loading session data from Firestore: {e}")
+    else:
+        st.warning("Cannot load session data: Firestore not initialized or user not logged in.")
+
+
+def login_section():
+    """Handles user login and public registration."""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    if "username" not in st.session_state:
+        st.session_state.username = None
+    
+    # Initialize active_login_tab_selection if not present
+    if "active_login_tab_selection" not in st.session_state:
+        # Default to 'Register' if no users, otherwise 'Login'
+        if not os.path.exists(USER_DB_FILE) or len(load_users()) == 0:
+            st.session_state.active_login_tab_selection = "Register"
+        else:
+            st.session_state.active_login_tab_selection = "Login"
+
+
+    if st.session_state.authenticated:
+        return True
+
+    # Use st.radio to simulate tabs if st.tabs() default_index is not supported
+    tab_selection = st.radio(
+        "Select an option:",
+        ("Login", "Register"),
+        key="login_register_radio",
+        index=0 if st.session_state.active_login_tab_selection == "Login" else 1
+    )
+
+    if tab_selection == "Login":
+        st.subheader("🔐 HR Login")
+        st.info("If you don't have an account, please go to the 'Register' option first.") # Added instructional message
+        with st.form("login_form", clear_on_submit=False):
+            username = st.text_input("Username", key="username_login")
+            password = st.text_input("Password", type="password", key="password_login")
+            submitted = st.form_submit_button("Login")
+
+            if submitted:
+                users = load_users()
+                if username not in users:
+                    st.error("❌ Invalid username or password. Please register if you don't have an account.")
+                else:
+                    user_data = users[username]
+                    if user_data["status"] == "disabled":
+                        st.error("❌ Your account has been disabled. Please contact an administrator.")
+                    elif check_password(password, user_data["password"]):
+                        st.session_state.authenticated = True
+                        st.session_state.username = username
+                        st.session_state.user_company = user_data.get("company", "N/A") # Store company name
+                        st.success("✅ Login successful!")
+                        # --- Load session data after successful login ---
+                        load_session_data_from_firestore() # Call to load data
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid username or password.")
+    
+    elif tab_selection == "Register": # This will be the initially selected option for new users
+        register_section()
+
+    return st.session_state.authenticated
+
+# Helper function to check if the current user is an admin
+def is_current_user_admin():
+    # Check if the current username is in the ADMIN_USERNAME tuple
+    return st.session_state.get("authenticated", False) and st.session_state.get("username") in ADMIN_USERNAME
 
 # --- Helper for Activity Logging ---
 def log_activity(message):
@@ -31,20 +334,149 @@ def log_activity(message):
 st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
 
 # --- Dark Mode Toggle ---
-# This toggle will only appear AFTER successful login, as it's in the sidebar
-# and the login section clears the sidebar.
-if st.session_state.get('authenticated', False):
-    dark_mode = st.sidebar.toggle("🌙 Dark Mode", key="dark_mode_main")
-else:
-    dark_mode = False # Default to light mode on login screen
+dark_mode = st.sidebar.toggle("🌙 Dark Mode", key="dark_mode_main")
 
-# --- Function to load local CSS file ---
-def local_css(file_name):
-    with open(file_name) as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-
-# --- Load the external CSS file ---
-local_css("style.css")
+# --- Global Fonts & UI Styling ---
+st.markdown(f"""
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* Hide GitHub fork button, Streamlit menu and footer */
+#MainMenu {{visibility: hidden;}}
+footer {{visibility: hidden;}}
+header {{visibility: hidden;}} /* Optional: hides the top bar */
+html, body, [class*="css"] {{
+    font-family: 'Inter', sans-serif;
+    background-color: {'#1E1E1E' if dark_mode else '#F0F2F6'}; /* Darker background for dark mode */
+    color: {'#E0E0E0' if dark_mode else '#333333'}; /* Lighter text for dark mode */
+}}
+.main .block-container {{
+    padding: 2rem;
+    border-radius: 20px;
+    background: {'#2D2D2D' if dark_mode else 'rgba(255, 255, 255, 0.96)'};
+    box-shadow: 0 12px 30px rgba(0,0,0,{'0.3' if dark_mode else '0.1'});
+    animation: fadeIn 0.8s ease-in-out;
+}}
+@keyframes fadeIn {{
+    0% {{ opacity: 0; transform: translateY(20px); }}
+    100% {{ opacity: 1; transform: translateY(0); }}
+}}
+h1, h2, h3, h4, h5, h6 {{
+    color: {'#00cec9' if dark_mode else '#00cec9'}; /* Consistent teal for headers */
+    font-weight: 700;
+}}
+.dashboard-header {{
+    font-size: 2.2rem;
+    font-weight: 700;
+    color: {'#E0E0E0' if dark_mode else '#222'};
+    padding-bottom: 0.5rem;
+    border-bottom: 3px solid #00cec9;
+    display: inline-block;
+    margin-bottom: 2rem;
+    animation: slideInLeft 0.8s ease-out;
+}}
+@keyframes slideInLeft {{
+    0% {{ transform: translateX(-40px); opacity: 0; }}
+    100% {{ transform: translateX(0); opacity: 1; }}
+}}
+.stMetric {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,{'0.2' if dark_mode else '0.05'});
+    transition: transform 0.2s ease;
+}}
+.stMetric:hover {{
+    transform: translateY(-3px);
+}}
+.stMetric > div[data-testid="stMetricValue"] {{
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: {'#00cec9' if dark_mode else '#00cec9'};
+}}
+.stMetric > div[data-testid="stMetricLabel"] {{
+    font-size: 1rem;
+    color: {'#BBBBBB' if dark_mode else '#555555'};
+}}
+.stButton>button {{
+    background-color: #00cec9;
+    color: white;
+    border-radius: 8px;
+    padding: 0.6rem 1.2rem;
+    font-weight: 600;
+    border: none;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}}
+.stButton>button:hover {{
+    background-color: #00b0a8;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+}}
+.stExpander {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,{'0.2' if dark_mode else '0.05'});
+}}
+.stExpander > div > div > div > p {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stExpander > div[data-testid="stExpanderToggle"] {{
+    color: {'#00cec9' if dark_mode else '#00cec9'};
+}}
+.stExpander > div[data-testid="stExpanderToggle"] svg {{
+    fill: {'#00cec9' if dark_mode else '#00cec9'};
+}}
+.stSelectbox > div > div {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+    border-radius: 8px;
+}}
+.stSelectbox > label {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stTextInput > div > div > input {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+    border-radius: 8px;
+}}
+.stTextInput > label {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stTextArea > div > div {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+    border-radius: 8px;
+}}
+.stTextArea > label {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stRadio > label {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stRadio div[role="radiogroup"] label {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    margin: 0.2rem;
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stRadio div[role="radiogroup"] label:hover {{
+    background-color: {'#4A4A4A' if dark_mode else '#e0e2e6'};
+}}
+.stRadio div[role="radiogroup"] label[data-baseweb="radio"] span:first-child {{
+    background-color: {'#00cec9' if dark_mode else '#00cec9'} !important;
+}}
+.stCheckbox span {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stCheckbox div[data-testid="stCheckbox"] svg {{
+    fill: {'#00cec9' if dark_mode else '#00cec9'};
+}}
+</style>
+""", unsafe_allow_html=True)
 
 # Set Matplotlib style for dark mode if active
 if dark_mode:
@@ -56,79 +488,41 @@ else:
 
 
 # --- Branding ---
-# Branding outside of login section
-if st.session_state.get('authenticated', False):
-    st.sidebar.image("logo.png", width=200) # Placeholder logo
-    st.sidebar.title("🧠 ScreenerPro")
+st.sidebar.image("logo.png", width=200) # Placeholder logo
+st.sidebar.title("🧠 ScreenerPro")
 
 # --- Auth ---
-# Import login_section and is_current_user_admin, is_current_user_candidate here
-from login import login_section, is_current_user_admin, is_current_user_candidate, load_users
-
 if not login_section():
     st.stop()
 else:
     # Log successful login
     if st.session_state.get('last_login_logged_for_user') != st.session_state.username:
-        log_activity(f"User '{st.session_state.username}' logged in (Type: {st.session_state.user_type}).")
+        log_activity(f"User '{st.session_state.username}' logged in.")
         st.session_state.last_login_logged_for_user = st.session_state.username
 
-    # Display the new top header after successful login
-    username_display = st.session_state.get('username', 'Guest')
-    st.markdown(f"""
-    <div class="top-header">
-        <h1>ScreenerPro</h1>
-        <div class="profile">
-            👋 Hello, <b>{username_display}</b> | <a href="?nav=Logout">Logout</a>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Check for logout query parameter and trigger logout
-    query_params = st.query_params
-    if query_params.get("nav") == "Logout":
-        log_activity(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out via top header.")
-        st.session_state.authenticated = False
-        st.session_state.pop('username', None)
-        st.session_state.pop('user_type', None) # Clear user type on logout
-        st.success("✅ Logged out.")
-        # Clear query params to prevent re-logging out on refresh
-        st.query_params.clear()
-        st.rerun()
-
-
-# Determine user type
+# Determine if the logged-in user is an admin
 is_admin = is_current_user_admin()
-is_candidate = is_current_user_candidate()
 
 # Initialize comprehensive_df globally if it doesn't exist
 # This ensures it's always a DataFrame, even if empty, preventing potential KeyErrors
 if 'comprehensive_df' not in st.session_state:
     st.session_state['comprehensive_df'] = pd.DataFrame()
 
-# --- Navigation Control (using st.sidebar.radio with custom CSS) ---
-navigation_options = []
+# --- Navigation Control ---
+navigation_options = [
+    "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
+    "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes", "❓ Feedback & Help"
+]
 
-if is_candidate:
-    navigation_options = ["🌐 Candidate Portal", "❓ Feedback & Help", "🚪 Logout"]
-elif is_admin or st.session_state.get('user_type') == 'recruiter_admin': # Recruiter/Admin options
-    navigation_options = [
-        "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
-        "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes", "📈 Reports", "❓ Feedback & Help"
-    ]
-    if is_admin: # Only add Admin Tools if the user is an admin
-        navigation_options.append("⚙️ Admin Tools")
-    navigation_options.append("🚪 Logout") # Always add Logout last for recruiter/admin
+if is_admin: # Only add Admin Tools if the user is an admin
+    navigation_options.append("⚙️ Admin Tools")
 
-if not navigation_options: # Fallback if no user type is set (shouldn't happen if login works)
-    st.error("Authentication error: Unknown user type.")
-    st.stop()
+navigation_options.append("🚪 Logout") # Always add Logout last
 
-
-default_tab = st.session_state.get("tab_override", navigation_options[0]) # Default to first option based on user type
+default_tab = st.session_state.get("tab_override", "🏠 Dashboard")
 
 if default_tab not in navigation_options: # Handle cases where default_tab might be Admin Tools for non-admins
-    default_tab = navigation_options[0] # Fallback to first available tab
+    default_tab = "🏠 Dashboard"
 
 tab = st.sidebar.radio("📍 Navigate", navigation_options, index=navigation_options.index(default_tab))
 
@@ -139,35 +533,30 @@ if "tab_override" in st.session_state:
 # Analytics Dashboard Page Function
 # ======================
 def analytics_dashboard_page():
-    # This styling is specific to the analytics page content block, not global.
-    # It will apply the fadeInSlide animation.
-    # NOTE: The dark_mode conditional styling for analytics-box and h3 is now handled directly in style.css
-    # using CSS variables or by passing dark_mode state to JS if more complex.
-    # For now, we'll assume style.css handles dark mode for these elements.
-    st.markdown(f"""
+    st.markdown("""
     <style>
-    .analytics-box {{
+    .analytics-box {
         padding: 2rem;
-        background: {'#2D2D2D' if dark_mode else 'rgba(255, 255, 255, 0.96)'}; /* Use Streamlit's theme variable */
+        background: rgba(255, 255, 255, 0.96);
         border-radius: 20px;
-        box-shadow: 0 10px 30px rgba(0,0,0,{'0.3' if dark_mode else '0.08'});
+        box-shadow: 0 10px 30px rgba(0,0,0,0.08);
         animation: fadeInSlide 0.7s ease-in-out;
         margin-bottom: 2rem;
-    }}
-    @keyframes fadeInSlide {{
-        0% {{ opacity: 0; transform: translateY(20px); }}
-        100% {{ opacity: 1; transform: translateY(0); }}
-    }}
-    h3 {{
-        color: {'#00cec9' if dark_mode else '#00cec9'};
+    }
+    @keyframes fadeInSlide {
+        0% { opacity: 0; transform: translateY(20px); }
+        100% { opacity: 1; transform: translateY(0); }
+    }
+    h3 {
+        color: #00cec9;
         font-weight: 700;
-    }}
-    .stMetric {{
-        background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    }
+    .stMetric {
+        background-color: #f0f2f6;
         border-radius: 10px;
         padding: 1rem;
         margin-bottom: 1rem;
-    }}
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -197,7 +586,7 @@ def analytics_dashboard_page():
     missing_essential_columns = [col for col in essential_core_columns if col not in df.columns]
 
     if missing_essential_columns:
-        st.error(f"Error: The loaded data is missing essential core columns: {', '.join(missing_essential_columns)}."
+        st.error(f"Error: The loaded data is missing essential core columns: {', '.ToArray().join(missing_essential_columns)}."
                  " Please ensure your screening process generates at least these required data fields.")
         st.stop()
 
@@ -515,14 +904,13 @@ def analytics_dashboard_page():
 
 
 # ======================
-# 🏠 Dashboard Section (Recruiter/Admin Only)
+# 🏠 Dashboard Section
 # ======================
-if tab == "🏠 Dashboard" and not is_candidate:
+if tab == "🏠 Dashboard":
     st.markdown('<div class="dashboard-header">📊 Overview Dashboard</div>', unsafe_allow_html=True)
 
     # Initialize metrics
     resume_count = 0
-    # Create the 'data' directory if it doesn't exist
     if not os.path.exists("data"):
         os.makedirs("data")
     jd_count = len([f for f in os.listdir("data") if f.endswith(".txt")])
@@ -530,23 +918,21 @@ if tab == "🏠 Dashboard" and not is_candidate:
     avg_score = 0.0
     df_results = pd.DataFrame()
 
-    # Initialize cutoff_score and min_exp_required with default values to prevent NameError
     cutoff_score = st.session_state.get('screening_cutoff_score', 75)
     min_exp_required = st.session_state.get('screening_min_experience', 2)
-    max_exp_allowed = st.session_state.get('screening_max_experience', 10) # Added max experience
-    min_cgpa_required = st.session_state.get('screening_min_cgpa', 2.5) # Added min CGPA
+    max_exp_allowed = st.session_state.get('screening_max_experience', 10)
+    min_cgpa_required = st.session_state.get('screening_min_cgpa', 2.5)
 
-    # Load results from session state
     if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
         try:
-            df_results = st.session_state['comprehensive_df'].copy() # Use .copy() to avoid modifying original
+            df_results = st.session_state['comprehensive_df'].copy()
             resume_count = df_results["File Name"].nunique()
             
             shortlisted_df = df_results[
                 (df_results["Score (%)"] >= cutoff_score) &
                 (df_results["Years Experience"] >= min_exp_required) &
-                (df_results["Years Experience"] <= max_exp_allowed) & # Apply max experience filter
-                ((df_results['CGPA (4.0 Scale)'].isnull()) | (df_results['CGPA (4.0 Scale)'] >= min_cgpa_required)) # Apply CGPA filter
+                (df_results["Years Experience"] <= max_exp_allowed) &
+                ((df_results['CGPA (4.0 Scale)'].isnull()) | (df_results['CGPA (4.0 Scale)'] >= min_cgpa_required))
             ].copy()
             shortlisted = shortlisted_df.shape[0]
             avg_score = df_results["Score (%)"].mean()
@@ -558,7 +944,6 @@ if tab == "🏠 Dashboard" and not is_candidate:
         st.info("No screening results available in this session yet. Please run the Resume Screener.")
         shortlisted_df = pd.DataFrame()
 
-    # --- Key Metrics Display ---
     st.subheader("Key Performance Indicators")
     metric_cols = st.columns(4)
 
@@ -569,7 +954,6 @@ if tab == "🏠 Dashboard" and not is_candidate:
 
     st.markdown("---")
 
-    # --- Quick Actions ---
     st.subheader("Quick Actions")
     action_cols = st.columns(3)
     with action_cols[0]:
@@ -585,9 +969,20 @@ if tab == "🏠 Dashboard" and not is_candidate:
             st.session_state.tab_override = '📤 Email Candidates'
             st.rerun()
     
+    # --- Add Save/Load Buttons for Session Data ---
+    st.markdown("---")
+    st.subheader("Cloud Session Data Management")
+    cloud_data_cols = st.columns(2)
+    with cloud_data_cols[0]:
+        if st.button("💾 Save Current Session Data to Cloud", key="save_session_data_button"):
+            save_session_data_to_firestore()
+    with cloud_data_cols[1]:
+        if st.button("🔄 Load Session Data from Cloud", key="load_session_data_button"):
+            load_session_data_from_firestore()
+            st.rerun() # Rerun to apply loaded data to the UI
+
     st.markdown("---")
 
-    # --- Dashboard Widget Customization ---
     st.subheader("⚙️ Customize Your Dashboard")
     with st.expander("Select Widgets to Display"):
         if 'dashboard_widgets' not in st.session_state:
@@ -609,7 +1004,6 @@ if tab == "🏠 Dashboard" and not is_candidate:
 
     st.markdown("### 📊 Dashboard Insights")
 
-    # Optional: Dashboard Insights (Conditionally displayed)
     if not df_results.empty:
         try:
             # Ensure 'Tag' column is present before trying to use it for charts
@@ -794,64 +1188,9 @@ if tab == "🏠 Dashboard" and not is_candidate:
 
 
 # ======================
-# ⚙️ Admin Tools Section (Admin Only)
-# ======================
-elif tab == "⚙️ Admin Tools" and is_admin:
-    st.markdown('<div class="dashboard-header">⚙️ Admin Tools</div>', unsafe_allow_html=True)
-    if is_admin:
-        st.write("Welcome, Administrator! Here you can manage user accounts.")
-        st.markdown("---")
-        # Import admin functions here
-        from login import admin_registration_section, admin_password_reset_section, admin_disable_enable_user_section
-        admin_registration_section() # Create New User Form
-        st.markdown("---")
-        admin_password_reset_section() # Reset User Password Form
-        st.markdown("---")
-        admin_disable_enable_user_section() # Disable/Enable User Form
-        st.markdown("---")
-        st.subheader("👥 All Registered Users (Recruiter/Admin)")
-        st.warning("⚠️ **SECURITY WARNING:** This table displays usernames (email IDs) and **hashed passwords**. This is for **ADMINISTRATIVE DEBUGGING ONLY IN A SECURE ENVIRONMENT**. **NEVER expose this in a public or production application.**")
-        try:
-            users_data = load_users()
-            if users_data:
-                display_users = []
-                for user, data in users_data.items():
-                    hashed_pass = data.get("password", data) if isinstance(data, dict) else data
-                    status = data.get("status", "N/A") if isinstance(data, dict) else "N/A"
-                    company = data.get("company", "N/A") # <--- Get company data here
-                    display_users.append([user, hashed_pass, status, company]) # <--- Add company to the list
-                st.dataframe(pd.DataFrame(display_users, columns=["Email/Username", "Hashed Password (DO NOT EXPOSE)", "Status", "Company"]), use_container_width=True) # <--- Update columns list
-            else:
-                st.info("No users registered yet.")
-        except Exception as e:
-            st.error(f"Error loading user data: {e}")
-        
-        st.markdown("---")
-        st.subheader("👥 All Registered Users (Candidates)")
-        # Import load_candidate_users here
-        from login import load_candidate_users
-        try:
-            candidate_users_data = load_candidate_users()
-            if candidate_users_data:
-                display_candidate_users = []
-                for user, data in candidate_users_data.items():
-                    hashed_pass = data.get("password", data) if isinstance(data, dict) else data
-                    status = data.get("status", "N/A") if isinstance(data, dict) else "N/A"
-                    reg_date = data.get("registration_date", "N/A")
-                    display_candidate_users.append([user, hashed_pass, status, reg_date])
-                st.dataframe(pd.DataFrame(display_candidate_users, columns=["Email/Username", "Hashed Password (DO NOT EXPOSE)", "Status", "Registration Date"]), use_container_width=True)
-            else:
-                st.info("No candidate users registered yet.")
-        except Exception as e:
-            st.error(f"Error loading candidate user data: {e}")
-
-    else:
-        st.error("🔒 Access Denied: You must be an administrator to view this page.")
-
-# ======================
 # Page Routing via function calls (remaining pages)
 # ======================
-elif tab == "🧠 Resume Screener" and not is_candidate:
+elif tab == "🧠 Resume Screener":
     try:
         # Import the screener page function (assuming it's in a separate file)
         from screener import resume_screener_page
@@ -886,7 +1225,7 @@ elif tab == "🧠 Resume Screener" and not is_candidate:
     except Exception as e:
         st.error(f"Error loading Resume Screener: {e}")
 
-elif tab == "📁 Manage JDs" and not is_candidate:
+elif tab == "📁 Manage JDs":
     try:
         with open("manage_jds.py", encoding="utf-8") as f:
             exec(f.read())
@@ -895,10 +1234,10 @@ elif tab == "📁 Manage JDs" and not is_candidate:
     except Exception as e:
         st.error(f"Error loading Manage JDs: {e}")
 
-elif tab == "📊 Screening Analytics" and not is_candidate:
+elif tab == "📊 Screening Analytics":
     analytics_dashboard_page()
 
-elif tab == "📤 Email Candidates" and not is_candidate:
+elif tab == "📤 Email Candidates":
     try:
         # Import the email sender function (assuming it's in a separate file)
         from email_sender import send_email_to_candidate
@@ -908,7 +1247,7 @@ elif tab == "📤 Email Candidates" and not is_candidate:
     except Exception as e:
         st.error(f"Error loading Email Candidates: {e}")
 
-elif tab == "🔍 Search Resumes" and not is_candidate:
+elif tab == "🔍 Search Resumes":
     try:
         with open("search.py", encoding="utf-8") as f:
             exec(f.read())
@@ -917,7 +1256,7 @@ elif tab == "🔍 Search Resumes" and not is_candidate:
     except Exception as e:
         st.error(f"Error loading Search Resumes: {e}")
 
-elif tab == "📝 Candidate Notes" and not is_candidate:
+elif tab == "📝 Candidate Notes":
     try:
         with open("notes.py", encoding="utf-8") as f:
             exec(f.read())
@@ -926,42 +1265,16 @@ elif tab == "📝 Candidate Notes" and not is_candidate:
     except Exception as e:
         st.error(f"Error loading Candidate Notes: {e}")
 
-# --- Import and Call the new Reports Page ---
-elif tab == "📈 Reports" and not is_candidate:
-    try:
-        from report import custom_reports_page
-        custom_reports_page()
-    except ImportError:
-        st.error("`report.py` not found or `custom_reports_page` function not defined. Please ensure 'report.py' exists and contains the 'custom_reports_page' function.")
-    except Exception as e:
-        st.error(f"Error loading Custom Reports page: {e}")
-
-# --- New Candidate Portal Page ---
-elif tab == "🌐 Candidate Portal" and is_candidate:
-    try:
-        from candidate_portal import candidate_portal_page
-        candidate_portal_page()
-    except ImportError:
-        st.error("`candidate_portal.py` not found or `candidate_portal_page` function not defined. Please ensure 'candidate_portal.py' exists and contains the 'candidate_portal_page' function.")
-    except Exception as e:
-        st.error(f"Error loading Candidate Portal page: {e}")
-
-elif tab == "❓ Feedback & Help": # Accessible by both user types
-    try:
-        # Import the feedback page function
-        from feedback import feedback_and_help_page
-        if 'user_email' not in st.session_state:
-            st.session_state['user_email'] = st.session_state.get('username', 'anonymous_user')
-        feedback_and_help_page()
-    except ImportError:
-        st.error("`feedback.py` not found or `feedback_and_help_page` function not defined. Please ensure 'feedback.py' exists and contains the 'feedback_and_help_page' function.")
-    except Exception as e:
-        st.error(f"Error loading Feedback & Help: {e}")
+elif tab == "❓ Feedback & Help":
+    # Import the feedback page function
+    from feedback import feedback_and_help_page
+    if 'user_email' not in st.session_state:
+        st.session_state['user_email'] = st.session_state.get('username', 'anonymous_user')
+    feedback_and_help_page()
 
 elif tab == "🚪 Logout":
     log_activity(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out.")
     st.session_state.authenticated = False
     st.session_state.pop('username', None)
-    st.session_state.pop('user_type', None) # Clear user type on logout
     st.success("✅ Logged out.")
     st.rerun()
