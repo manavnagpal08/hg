@@ -31,7 +31,12 @@ def log_activity(message):
 st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
 
 # --- Dark Mode Toggle ---
-dark_mode = st.sidebar.toggle("🌙 Dark Mode", key="dark_mode_main")
+# This toggle will only appear AFTER successful login, as it's in the sidebar
+# and the login section clears the sidebar.
+if st.session_state.get('authenticated', False):
+    dark_mode = st.sidebar.toggle("🌙 Dark Mode", key="dark_mode_main")
+else:
+    dark_mode = False # Default to light mode on login screen
 
 # --- Function to load local CSS file ---
 def local_css(file_name):
@@ -51,19 +56,21 @@ else:
 
 
 # --- Branding ---
-st.sidebar.image("logo.png", width=200) # Placeholder logo
-st.sidebar.title("🧠 ScreenerPro")
+# Branding outside of login section
+if st.session_state.get('authenticated', False):
+    st.sidebar.image("logo.png", width=200) # Placeholder logo
+    st.sidebar.title("🧠 ScreenerPro")
 
 # --- Auth ---
-# Import login_section and is_current_user_admin here as they are used before page routing
-from login import login_section, is_current_user_admin, load_users
+# Import login_section and is_current_user_admin, is_current_user_candidate here
+from login import login_section, is_current_user_admin, is_current_user_candidate, load_users
 
 if not login_section():
     st.stop()
 else:
     # Log successful login
     if st.session_state.get('last_login_logged_for_user') != st.session_state.username:
-        log_activity(f"User '{st.session_state.username}' logged in.")
+        log_activity(f"User '{st.session_state.username}' logged in (Type: {st.session_state.user_type}).")
         st.session_state.last_login_logged_for_user = st.session_state.username
 
     # Display the new top header after successful login
@@ -83,14 +90,16 @@ else:
         log_activity(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out via top header.")
         st.session_state.authenticated = False
         st.session_state.pop('username', None)
+        st.session_state.pop('user_type', None) # Clear user type on logout
         st.success("✅ Logged out.")
         # Clear query params to prevent re-logging out on refresh
         st.query_params.clear()
         st.rerun()
 
 
-# Determine if the logged-in user is an admin
+# Determine user type
 is_admin = is_current_user_admin()
+is_candidate = is_current_user_candidate()
 
 # Initialize comprehensive_df globally if it doesn't exist
 # This ensures it's always a DataFrame, even if empty, preventing potential KeyErrors
@@ -98,22 +107,29 @@ if 'comprehensive_df' not in st.session_state:
     st.session_state['comprehensive_df'] = pd.DataFrame()
 
 # --- Navigation Control (using st.sidebar.radio with custom CSS) ---
-navigation_options = [
-    "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
-    "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes", "📈 Reports", "❓ Feedback & Help"
-]
+navigation_options = []
 
-if is_admin: # Only add Admin Tools if the user is an admin
-    navigation_options.append("⚙️ Admin Tools")
+if is_candidate:
+    navigation_options = ["🌐 Candidate Portal", "❓ Feedback & Help", "🚪 Logout"]
+elif is_admin or st.session_state.get('user_type') == 'recruiter_admin': # Recruiter/Admin options
+    navigation_options = [
+        "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
+        "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes", "📈 Reports", "❓ Feedback & Help"
+    ]
+    if is_admin: # Only add Admin Tools if the user is an admin
+        navigation_options.append("⚙️ Admin Tools")
+    navigation_options.append("🚪 Logout") # Always add Logout last for recruiter/admin
 
-navigation_options.append("🚪 Logout") # Always add Logout last
+if not navigation_options: # Fallback if no user type is set (shouldn't happen if login works)
+    st.error("Authentication error: Unknown user type.")
+    st.stop()
 
-default_tab = st.session_state.get("tab_override", "🏠 Dashboard")
+
+default_tab = st.session_state.get("tab_override", navigation_options[0]) # Default to first option based on user type
 
 if default_tab not in navigation_options: # Handle cases where default_tab might be Admin Tools for non-admins
-    default_tab = "🏠 Dashboard"
+    default_tab = navigation_options[0] # Fallback to first available tab
 
-# Reverted to st.sidebar.radio and applied custom CSS for button-like appearance
 tab = st.sidebar.radio("📍 Navigate", navigation_options, index=navigation_options.index(default_tab))
 
 if "tab_override" in st.session_state:
@@ -499,9 +515,9 @@ def analytics_dashboard_page():
 
 
 # ======================
-# 🏠 Dashboard Section
+# 🏠 Dashboard Section (Recruiter/Admin Only)
 # ======================
-if tab == "🏠 Dashboard":
+if tab == "🏠 Dashboard" and not is_candidate:
     st.markdown('<div class="dashboard-header">📊 Overview Dashboard</div>', unsafe_allow_html=True)
 
     # Initialize metrics
@@ -778,9 +794,9 @@ if tab == "🏠 Dashboard":
 
 
 # ======================
-# ⚙️ Admin Tools Section
+# ⚙️ Admin Tools Section (Admin Only)
 # ======================
-elif tab == "⚙️ Admin Tools":
+elif tab == "⚙️ Admin Tools" and is_admin:
     st.markdown('<div class="dashboard-header">⚙️ Admin Tools</div>', unsafe_allow_html=True)
     if is_admin:
         st.write("Welcome, Administrator! Here you can manage user accounts.")
@@ -793,7 +809,7 @@ elif tab == "⚙️ Admin Tools":
         st.markdown("---")
         admin_disable_enable_user_section() # Disable/Enable User Form
         st.markdown("---")
-        st.subheader("👥 All Registered Users")
+        st.subheader("👥 All Registered Users (Recruiter/Admin)")
         st.warning("⚠️ **SECURITY WARNING:** This table displays usernames (email IDs) and **hashed passwords**. This is for **ADMINISTRATIVE DEBUGGING ONLY IN A SECURE ENVIRONMENT**. **NEVER expose this in a public or production application.**")
         try:
             users_data = load_users()
@@ -809,13 +825,33 @@ elif tab == "⚙️ Admin Tools":
                 st.info("No users registered yet.")
         except Exception as e:
             st.error(f"Error loading user data: {e}")
+        
+        st.markdown("---")
+        st.subheader("👥 All Registered Users (Candidates)")
+        # Import load_candidate_users here
+        from login import load_candidate_users
+        try:
+            candidate_users_data = load_candidate_users()
+            if candidate_users_data:
+                display_candidate_users = []
+                for user, data in candidate_users_data.items():
+                    hashed_pass = data.get("password", data) if isinstance(data, dict) else data
+                    status = data.get("status", "N/A") if isinstance(data, dict) else "N/A"
+                    reg_date = data.get("registration_date", "N/A")
+                    display_candidate_users.append([user, hashed_pass, status, reg_date])
+                st.dataframe(pd.DataFrame(display_candidate_users, columns=["Email/Username", "Hashed Password (DO NOT EXPOSE)", "Status", "Registration Date"]), use_container_width=True)
+            else:
+                st.info("No candidate users registered yet.")
+        except Exception as e:
+            st.error(f"Error loading candidate user data: {e}")
+
     else:
         st.error("🔒 Access Denied: You must be an administrator to view this page.")
 
 # ======================
 # Page Routing via function calls (remaining pages)
 # ======================
-elif tab == "🧠 Resume Screener":
+elif tab == "🧠 Resume Screener" and not is_candidate:
     try:
         # Import the screener page function (assuming it's in a separate file)
         from screener import resume_screener_page
@@ -850,7 +886,7 @@ elif tab == "🧠 Resume Screener":
     except Exception as e:
         st.error(f"Error loading Resume Screener: {e}")
 
-elif tab == "📁 Manage JDs":
+elif tab == "📁 Manage JDs" and not is_candidate:
     try:
         with open("manage_jds.py", encoding="utf-8") as f:
             exec(f.read())
@@ -859,10 +895,10 @@ elif tab == "📁 Manage JDs":
     except Exception as e:
         st.error(f"Error loading Manage JDs: {e}")
 
-elif tab == "📊 Screening Analytics":
+elif tab == "📊 Screening Analytics" and not is_candidate:
     analytics_dashboard_page()
 
-elif tab == "📤 Email Candidates":
+elif tab == "📤 Email Candidates" and not is_candidate:
     try:
         # Import the email sender function (assuming it's in a separate file)
         from email_sender import send_email_to_candidate
@@ -872,7 +908,7 @@ elif tab == "📤 Email Candidates":
     except Exception as e:
         st.error(f"Error loading Email Candidates: {e}")
 
-elif tab == "🔍 Search Resumes":
+elif tab == "🔍 Search Resumes" and not is_candidate:
     try:
         with open("search.py", encoding="utf-8") as f:
             exec(f.read())
@@ -881,7 +917,7 @@ elif tab == "🔍 Search Resumes":
     except Exception as e:
         st.error(f"Error loading Search Resumes: {e}")
 
-elif tab == "📝 Candidate Notes":
+elif tab == "📝 Candidate Notes" and not is_candidate:
     try:
         with open("notes.py", encoding="utf-8") as f:
             exec(f.read())
@@ -891,7 +927,7 @@ elif tab == "📝 Candidate Notes":
         st.error(f"Error loading Candidate Notes: {e}")
 
 # --- Import and Call the new Reports Page ---
-elif tab == "📈 Reports":
+elif tab == "📈 Reports" and not is_candidate:
     try:
         from report import custom_reports_page
         custom_reports_page()
@@ -900,8 +936,17 @@ elif tab == "📈 Reports":
     except Exception as e:
         st.error(f"Error loading Custom Reports page: {e}")
 
+# --- New Candidate Portal Page ---
+elif tab == "🌐 Candidate Portal" and is_candidate:
+    try:
+        from candidate_portal import candidate_portal_page
+        candidate_portal_page()
+    except ImportError:
+        st.error("`candidate_portal.py` not found or `candidate_portal_page` function not defined. Please ensure 'candidate_portal.py' exists and contains the 'candidate_portal_page' function.")
+    except Exception as e:
+        st.error(f"Error loading Candidate Portal page: {e}")
 
-elif tab == "❓ Feedback & Help":
+elif tab == "❓ Feedback & Help": # Accessible by both user types
     try:
         # Import the feedback page function
         from feedback import feedback_and_help_page
@@ -917,5 +962,6 @@ elif tab == "🚪 Logout":
     log_activity(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out.")
     st.session_state.authenticated = False
     st.session_state.pop('username', None)
+    st.session_state.pop('user_type', None) # Clear user type on logout
     st.success("✅ Logged out.")
     st.rerun()
