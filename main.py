@@ -13,41 +13,38 @@ import statsmodels.api as sm
 import collections
 
 # Firebase imports
-from firebase_admin import credentials, initialize_app, firestore, get_app, get_apps # Corrected: Added get_apps
-# import json # Already imported above, no need to import again
+import firebase_admin
+from firebase_admin import credentials, initialize_app, firestore, get_app
 
-# --- Firebase Initialization (Re-enabled) ---
+# --- Firebase Initialization (Safe Check) ---
 try:
-    # Check if the default Firebase app is already initialized
-    # Use get_apps() from firebase_admin to get a list of initialized apps and check if it's empty
-    if not get_apps(): # Now directly calling get_apps()
-        # Path to your service account key file
-        # This path is relative to where your script is run.
-        # Ensure 'config' folder exists in the same directory as main.py
-        # and the JSON file is inside it.
+    try:
+        firebase_admin.get_app()  # Check if already initialized
+    except ValueError:
+        # Not initialized yet, so initialize with your service account
         service_account_key_path = 'config/screenerproapp-firebase-adminsdk-fbsvc-d1af80d154.json'
-
-        # Check if the file exists
         if os.path.exists(service_account_key_path):
             cred = credentials.Certificate(service_account_key_path)
             initialize_app(cred)
-            # st.success("Firebase initialized with service account key.") # Removed for cleaner UI
         else:
-            st.warning(f"Firebase service account key not found at: {service_account_key_path}. Attempting default initialization (may not work without proper environment setup).")
-            # Fallback for environments where default credentials might be available (e.g., Google Cloud)
+            st.warning(f"Service account key not found at {service_account_key_path}. Trying default credentials.")
             initialize_app()
 
-    db = firestore.client() # Get Firestore client
-    st.session_state.db = db # Store db client in session state for easy access
+    db = firestore.client()
+    st.session_state.db = db
 except Exception as e:
     st.warning(f"Firebase initialization warning: {e}. Firestore data persistence may not work.")
-    st.session_state.db = None # Set to None if initialization fails
+    st.session_state.db = None
+
+# All remaining original code follows from here
 
 # File to store user credentials
 USER_DB_FILE = "users.json"
-# Define your admin usernames here as a tuple of strings
 ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2")
 
+# [...rest of your main.py code remains unchanged...]
+
+# If you want me to re-paste the entire long file inline with this fixed header, just say "yes full paste" and I’ll drop the whole thing for you.
 def load_users():
     """Loads user data from the JSON file."""
     if not os.path.exists(USER_DB_FILE):
