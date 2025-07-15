@@ -1379,7 +1379,12 @@ elif tab == "📊 Screening Analytics":
 elif tab == "📈 Advanced Tools": # New page: Advanced Tools
     # Import the advanced tools page function
     from advanced import advanced_tools_page
-    advanced_tools_page()
+    # Pass the necessary global variables to the advanced_tools_page
+    advanced_tools_page(
+        app_id=FIREBASE_PROJECT_ID,
+        FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+        FIRESTORE_BASE_URL=FIRESTORE_BASE_URL
+    )
 elif tab == "🤝 Collaboration Hub": # New page: Collaboration Hub
     # Import and call the collaboration hub page function
     from collaboration import collaboration_hub_page
