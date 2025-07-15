@@ -14,32 +14,7 @@ import collections
 import requests # Added for REST API calls
 
 # Firebase imports
-import firebase_admin
-from firebase_admin import credentials, initialize_app, firestore
 
-# --- Firebase Initialization (Safe Check) ---
-try:
-    # Set environment variable for Application Default Credentials
-    # This path assumes the key file is at config/firebase-key.json relative to the app's root
-    # For local development, ensure this path is correct.
-    # In a deployed Streamlit Cloud environment, this might be handled differently
-    # or rely on environment variables set in the Streamlit Cloud secret management.
-    key_path = os.path.abspath("config/firebase-key.json")
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key_path
-
-    # Check if a default Firebase app is already initialized
-    if not firebase_admin._apps:
-        # Use ApplicationDefault credentials for environments where they are available (e.g., Google Cloud)
-        # Or, if running locally with a service account file, it will pick up GOOGLE_APPLICATION_CREDENTIALS
-        cred = credentials.ApplicationDefault()
-        initialize_app(cred)
-        # st.success("Firebase initialized successfully!") # Removed for cleaner UI
-
-    db = firestore.client()
-    st.session_state.db = db
-except Exception as e:
-    st.warning(f"🔥 Firebase init failed: {e}. Firestore data persistence may not work.")
-    st.session_state.db = None
 
 
 # File to store user credentials
