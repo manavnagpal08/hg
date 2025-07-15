@@ -594,8 +594,9 @@ def collaboration_hub_page(app_id: str, FIREBASE_WEB_API_KEY: str, FIRESTORE_BAS
 
     with tab_files:
         st.subheader("Shared Files (Metadata Storage Only)")
-        st.info("""
+        st.info(f"""
             This section allows you to manage *metadata* about shared files (like name, description, and URL).
+            Data is isolated for **{st.session_state.get('user_company', 'your company')}**.
             **Actual file storage (upload/download) is NOT supported here.**
             For real file storage, you would need to integrate with a dedicated cloud storage service (e.g., Firebase Storage, AWS S3, Google Cloud Storage) which handles binary data.
         """)
@@ -932,6 +933,10 @@ def collaboration_hub_page(app_id: str, FIREBASE_WEB_API_KEY: str, FIRESTORE_BAS
                                 current_votes[selected_option] = current_votes.get(selected_option, 0) + 1
                                 
                                 # Only update the 'votes' field
+                                payload = {"fields": {"votes": {"mapValue": {"fields": {
+                                    k: {"integerValue": str(v)} for k, v in current_votes.items()
+                                }}}}}
+                                
                                 success, response = save_document_to_firestore(
                                     doc_path,
                                     poll['id'],
