@@ -11,11 +11,39 @@ from datetime import datetime
 import plotly.express as px
 import statsmodels.api as sm
 import collections
-import requests # Added for REST API calls
 
-# Firebase imports
+# Firebase imports (Client-side alternative using REST if Admin SDK fails)
+import requests
 
+# --- Firebase REST Setup ---
+# ✅ Replace with your actual Firebase values
+FIREBASE_WEB_API_KEY = "AIzaSyDkYourRealAPIKey12345"  # <-- Replace this with your real API key
+FIREBASE_PROJECT_ID = "screenerproapp"  # <-- Replace this with your real Firebase project ID
+FIREBASE_FIRESTORE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
 
+def save_session_data_to_firestore_rest(username, session_data):
+    try:
+        if not username:
+            st.warning("No username found. Please log in.")
+            return
+
+        doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{username}/session_data/current_session"
+        url = f"{FIREBASE_FIRESTORE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
+
+        # Convert session_data to Firestore document fields
+        data = {
+            "fields": {
+                key: {"stringValue": str(value)} for key, value in session_data.items()
+            }
+        }
+
+        res = requests.patch(url, json=data)
+        if res.status_code in [200, 201]:
+            st.success("✅ Session data saved using REST API.")
+        else:
+            st.error(f"❌ REST Save failed: {res.status_code}, {res.text}")
+    except Exception as e:
+        st.error(f"🔥 REST Firebase error: {e}")
 
 # File to store user credentials
 USER_DB_FILE = "users.json"
