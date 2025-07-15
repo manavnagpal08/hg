@@ -16,7 +16,7 @@ import requests # Added for REST API calls
 # --- Firebase REST Setup ---
 # IMPORTANT: Replace "AIzaSyDkYourRealAPIKey12345" with your actual Firebase Web API Key
 # You can find this in your Firebase project settings -> Project settings -> General -> Web API Key
-FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'YOUR_FIREBASE_WEB_API_KEY') # Ensure this is your actual key
+FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'AIzaSyDjC7tdmpEkpsipgf9r1c3HlTO7C7BZ6Mw') # Ensure this is your actual key
 # Use __app_id from the Canvas environment for the project ID if available, otherwise use a default
 FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
 FIREBASE_FIRESTORE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
