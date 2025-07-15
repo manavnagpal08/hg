@@ -3,10 +3,11 @@ import json
 import bcrypt
 import os
 import re # Import regex for email validation
+import datetime # <--- ADDED THIS LINE
 
 USER_DB_FILE = "users.json"
 CANDIDATE_DB_FILE = "candidate_users.json" # New file for candidate credentials
-ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2") # Defined in main.py, but good to have a reference
+ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2", "manav.nagpal2005@gmail.com") # Defined in main.py, but good to have a reference
 
 # --- Helper Functions for User Management (Recruiter/Admin) ---
 def load_users():
