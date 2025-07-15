@@ -14,5 +14,3 @@ simplejson
 plotly
 statsmodels
 bcrypt
-streamlit-extras
-
