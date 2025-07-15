@@ -1,4 +1,3 @@
-# Version 1.17 - Removed Manual Shortlisting/Notes, Enhanced Filtering UI
 import streamlit as st
 import pdfplumber
 import pandas as pd
@@ -17,9 +16,6 @@ import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
 
-# Set Streamlit page configuration for wide layout
-st.set_page_config(layout="wide")
-
 # Download NLTK stopwords data if not already downloaded
 try:
     nltk.data.find('corpora/stopwords')
@@ -30,6 +26,7 @@ except LookupError:
 @st.cache_resource
 def load_ml_model():
     try:
+        # Ensure the model path is correct, assuming it's in the same directory
         model = SentenceTransformer("all-MiniLM-L6-v2")
         ml_model = joblib.load("ml_screening_model.pkl")
         return model, ml_model
@@ -1264,7 +1261,8 @@ def resume_screener_page():
                 "Missing Skills (Categorized)": dict(jd_categorized_skills),
                 "Semantic Similarity": semantic_similarity,
                 "Resume Raw Text": text,
-                "JD Used": jd_name_for_results
+                "JD Used": jd_name_for_results,
+                "Date Screened": datetime.now().date() # Add Date Screened here
             })
             
         progress_bar.empty()
@@ -1288,20 +1286,35 @@ def resume_screener_page():
         # --- Overall Candidate Comparison Chart ---
         st.markdown("## 📊 Candidate Score Comparison")
         st.caption("Visual overview of how each candidate ranks against the job requirements.")
+        # Check for dark mode to adjust plot colors
+        dark_mode = st.session_state.get("dark_mode_main", False)
+
         if not st.session_state['comprehensive_df'].empty:
             fig, ax = plt.subplots(figsize=(12, 7))
             # Define colors: Green for top, Yellow for moderate, Red for low
             colors = ['#4CAF50' if s >= cutoff else '#FFC107' if s >= (cutoff * 0.75) else '#F44346' for s in st.session_state['comprehensive_df']['Score (%)']]
             bars = ax.bar(st.session_state['comprehensive_df']['Candidate Name'], st.session_state['comprehensive_df']['Score (%)'], color=colors)
-            ax.set_xlabel("Candidate", fontsize=14)
-            ax.set_ylabel("Score (%)", fontsize=14)
-            ax.set_title("Resume Screening Scores Across Candidates", fontsize=16, fontweight='bold')
+            ax.set_xlabel("Candidate", fontsize=14, color='white' if dark_mode else 'black')
+            ax.set_ylabel("Score (%)", fontsize=14, color='white' if dark_mode else 'black')
+            ax.set_title("Resume Screening Scores Across Candidates", fontsize=16, fontweight='bold', color='white' if dark_mode else 'black')
             ax.set_ylim(0, 100)
-            plt.xticks(rotation=60, ha='right', fontsize=10)
-            plt.yticks(fontsize=10)
+            plt.xticks(rotation=60, ha='right', fontsize=10, color='white' if dark_mode else 'black')
+            plt.yticks(fontsize=10, color='white' if dark_mode else 'black')
+            ax.tick_params(axis='x', colors='white' if dark_mode else 'black')
+            ax.tick_params(axis='y', colors='white' if dark_mode else 'black')
+
+            # Set background and spine colors for dark mode
+            if dark_mode:
+                fig.patch.set_facecolor('#1E1E1E')
+                ax.set_facecolor('#2D2D2D')
+                ax.spines['bottom'].set_color('white')
+                ax.spines['top'].set_color('white')
+                ax.spines['left'].set_color('white')
+                ax.spines['right'].set_color('white')
+            
             for bar in bars:
                 yval = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f"{yval:.1f}", ha='center', va='bottom', fontsize=9)
+                ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f"{yval:.1f}", ha='center', va='bottom', fontsize=9, color='white' if dark_mode else 'black')
             plt.tight_layout()
             st.pyplot(fig)
             plt.close(fig)
@@ -1318,8 +1331,8 @@ def resume_screener_page():
             top_candidate = st.session_state['comprehensive_df'].iloc[0] # Get the top candidate (already sorted by score)
             
             # Safely format CGPA and Semantic Similarity for display
-            cgpa_display = f"{top_candidate['CGPA (4.0 Scale)']:.2f}" if top_candidate['CGPA (4.0 Scale)'] is not None else "N/A"
-            semantic_sim_display = f"{top_candidate['Semantic Similarity']:.2f}" if top_candidate['Semantic Similarity'] is not None else "N/A"
+            cgpa_display = f"{top_candidate['CGPA (4.0 Scale)']:.2f}" if pd.notna(top_candidate['CGPA (4.0 Scale)']) else "N/A"
+            semantic_sim_display = f"{top_candidate['Semantic Similarity']:.2f}" if pd.notna(top_candidate['Semantic Similarity']) else "N/A"
 
             st.markdown(f"### **{top_candidate['Candidate Name']}**")
             st.markdown(f"**Score:** {top_candidate['Score (%)']:.2f}% | **Experience:** {top_candidate['Years Experience']:.1f} years | **CGPA:** {cgpa_display} (4.0 Scale) | **Semantic Similarity:** {semantic_sim_display}")
@@ -1329,8 +1342,12 @@ def resume_screener_page():
             # Display Categorized Matched Skills for the top candidate
             st.markdown("#### Matched Skills Breakdown:")
             if top_candidate['Matched Keywords (Categorized)']:
-                for category, skills in top_candidate['Matched Keywords (Categorized)'].items():
-                    st.write(f"**{category}:** {', '.join(skills)}")
+                # Ensure it's a dictionary before iterating
+                if isinstance(top_candidate['Matched Keywords (Categorized)'], dict):
+                    for category, skills in top_candidate['Matched Keywords (Categorized)'].items():
+                        st.write(f"**{category}:** {', '.join(skills)}")
+                else:
+                    st.write(f"Raw Matched Keywords: {top_candidate['Matched Keywords']}")
             else:
                 st.write("No categorized matched skills found.")
 
@@ -1354,8 +1371,11 @@ def resume_screener_page():
                     if not found_category:
                         missing_categorized["Uncategorized"].append(skill)
                 
-                for category, skills in missing_categorized.items():
-                    st.write(f"**{category}:** {', '.join(skills)}")
+                if missing_categorized: # Check if there are any categorized missing skills
+                    for category, skills in missing_categorized.items():
+                        st.write(f"**{category}:** {', '.join(skills)}")
+                else:
+                    st.write("No categorized missing skills found for this candidate relative to the JD.")
             else:
                 st.write("No missing skills found for this candidate relative to the JD.")
 
@@ -1393,7 +1413,7 @@ def resume_screener_page():
         ].copy() # Use .copy() to avoid SettingWithCopyWarning
 
         if not auto_shortlisted_candidates.empty:
-            st.success(f"**{len(auto_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, CGPA ≥ {min_cgpa} or N/A).")
+            st.success(f"**{len(auto_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, and minimum CGPA ≥ {min_cgpa} or N/A).")
             
             # Display a concise table for automatically shortlisted candidates
             display_auto_shortlisted_cols = [
@@ -1414,7 +1434,7 @@ def resume_screener_page():
                     "Score (%)": st.column_config.ProgressColumn(
                         "Score (%)",
                         help="Matching score against job requirements",
-                        format="%f",
+                        format="%.1f", # Changed to .1f for consistency
                         min_value=0,
                         max_value=100,
                     ),
@@ -1522,6 +1542,7 @@ def resume_screener_page():
 
         if selected_filter_skills:
             for skill in selected_filter_skills:
+                # Use a regex for whole word match to prevent partial matches
                 filtered_display_df = filtered_display_df[filtered_display_df['Matched Keywords'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
 
         if search_query:
@@ -1529,6 +1550,7 @@ def resume_screener_page():
             filtered_display_df = filtered_display_df[
                 filtered_display_df['Candidate Name'].str.lower().str.contains(search_query_lower, na=False) |
                 filtered_display_df['Email'].str.lower().str.contains(search_query_lower, na=False) |
+                filtered_display_df['Phone Number'].str.lower().str.contains(search_query_lower, na=False) | # Added Phone Number to search
                 filtered_display_df['Location'].str.lower().str.contains(search_query_lower, na=False) |
                 filtered_display_df['Resume Raw Text'].str.lower().str.contains(search_query_lower, na=False)
             ]
@@ -1583,7 +1605,8 @@ def resume_screener_page():
             'AI Suggestion',
             'Matched Keywords',
             'Missing Skills',
-            'JD Used'
+            'JD Used',
+            'Date Screened' # Added Date Screened to the comprehensive table
         ]
         
         # Ensure all columns exist before trying to display them
@@ -1597,7 +1620,7 @@ def resume_screener_page():
                 "Score (%)": st.column_config.ProgressColumn(
                     "Score (%)",
                     help="Matching score against job requirements",
-                    format="%f",
+                    format="%.1f",
                     min_value=0,
                     max_value=100,
                 ),
@@ -1635,6 +1658,11 @@ def resume_screener_page():
                 "JD Used": st.column_config.Column(
                     "JD Used",
                     help="Job Description used for this screening"
+                ),
+                "Date Screened": st.column_config.DateColumn(
+                    "Date Screened",
+                    help="Date when the resume was screened",
+                    format="YYYY-MM-DD"
                 ),
                 "Phone Number": st.column_config.Column(
                     "Phone Number",
