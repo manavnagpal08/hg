@@ -1340,7 +1340,12 @@ elif tab == "📈 Advanced Tools": # New page: Advanced Tools
 elif tab == "🤝 Collaboration Hub": # New page: Collaboration Hub
     # Import and call the collaboration hub page function
     from collaboration import collaboration_hub_page
-    collaboration_hub_page()
+    # Pass the necessary global variables to the collaboration_hub_page
+    collaboration_hub_page(
+        app_id=FIREBASE_PROJECT_ID,
+        FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+        FIRESTORE_BASE_URL=FIRESTORE_BASE_URL
+    )
 
 elif tab == "📤 Email Candidates":
     try:
