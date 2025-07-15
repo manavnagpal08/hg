@@ -13,33 +13,13 @@ import statsmodels.api as sm
 import collections
 import requests # Added for REST API calls
 
-# Firebase imports - Admin SDK is still imported for initialization, but not for session data persistence
-import firebase_admin
-from firebase_admin import credentials, initialize_app, firestore
-
 # --- Firebase REST Setup ---
-# IMPORTANT: Leave FIREBASE_WEB_API_KEY as an empty string. Canvas will provide it at runtime.
-FIREBASE_WEB_API_KEY = ""
+# IMPORTANT: Replace "YOUR_FIREBASE_WEB_API_KEY" with your actual Firebase Web API Key
+# You can find this in your Firebase project settings -> Project settings -> General -> Web API Key
+FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'AIzaSyDkYourRealAPIKey12345') # Ensure this is your actual key
 # Use __app_id from the Canvas environment for the project ID if available, otherwise use a default
 FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
 FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
-
-
-# --- Firebase Initialization (Safe Check) ---
-# This block uses Firebase Admin SDK for initial setup, which is distinct from data persistence.
-try:
-    # Set environment variable for Application Default Credentials
-    # This path might need adjustment if running locally outside of Canvas's specific setup
-    key_path = os.path.abspath("config/screenerproapp-firebase-adminsdk-fbsvc-d1af80d154.json")
-    if os.path.exists(key_path): # Only set if the file exists
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key_path
-
-    if not firebase_admin._apps:
-        cred = credentials.ApplicationDefault()
-        initialize_app(cred)
-
-except Exception as e:
-    st.warning(f"🔥 Firebase Admin SDK init failed: {e}. Some features might be affected.")
 
 
 # File to store user credentials
@@ -147,74 +127,46 @@ def admin_password_reset_section():
     # Exclude all admin usernames from the list of users whose passwords can be reset
     user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
 
-    # Display a message if no other users are available, but don't return
     if not user_options:
-        st.info("No non-admin users available to reset passwords for.")
-        # Ensure selectbox has an empty list if no options to prevent error
-        selected_user = None
-    else:
-        selected_user = st.selectbox("Select User to Reset Password For", user_options, key="reset_user_select")
+        st.info("No other users to reset passwords for.")
+        return
 
     with st.form("admin_reset_password_form", clear_on_submit=True):
+        selected_user = st.selectbox("Select User to Reset Password For", user_options, key="reset_user_select")
         new_password = st.text_input("New Password", type="password", key="new_pwd_reset")
         reset_button = st.form_submit_button("Reset Password")
 
         if reset_button:
-            if not selected_user: # Check if a user was actually selected
-                st.warning("Please select a user to reset their password.")
-            elif not new_password:
+            if not new_password:
                 st.error("Please enter a new password.")
             else:
                 users[selected_user]["password"] = hash_password(new_password)
                 save_users(users)
                 st.success(f"✅ Password for '{selected_user}' has been reset.")
 
-
 def admin_disable_enable_user_section():
-    """Admin-driven user disable/enable form and user list."""
+    """Admin-driven user disable/enable form."""
     st.subheader("⛔ Toggle User Status (Admin Only)")
     users = load_users()
-    # Exclude all admin usernames from the list of users to manage
-    non_admin_users = {user: data for user, data in users.items() if user not in ADMIN_USERNAME}
+    # Exclude all admin usernames from the list of users whose status can be toggled
+    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
 
-    # Prepare data for display in a DataFrame
-    user_data_for_table = []
-    for username, data in non_admin_users.items():
-        user_data_for_table.append({
-            "Username (Email)": username,
-            "Company Name": data.get("company", "N/A"),
-            "Status": data.get("status", "N/A").capitalize()
-        })
-    
-    st.markdown("### Registered Users Overview")
-    if user_data_for_table:
-        st.dataframe(pd.DataFrame(user_data_for_table), use_container_width=True, hide_index=True)
-    else:
-        st.info("No non-admin users registered yet.")
-    st.markdown("---") # Separator for clarity
-
-    user_options = list(non_admin_users.keys())
-
-    # The selectbox should always render, even if user_options is empty.
-    # It will display "No options to display" if the list is empty.
     if not user_options:
-        st.info("No non-admin users available to manage status for.")
-        selected_user = None
-    else:
+        st.info("No other users to manage status for.")
+        return
+
+    with st.form("admin_toggle_user_status_form", clear_on_submit=False): # Keep values after submit for easier toggling
         selected_user = st.selectbox("Select User to Toggle Status", user_options, key="toggle_user_select")
 
-    # Only show current status and toggle button if a user is selected
-    if selected_user:
-        with st.form("admin_toggle_user_status_form", clear_on_submit=False): # Keep values after submit for easier toggling
-            current_status = users[selected_user]["status"]
-            st.info(f"Current status of '{selected_user}': **{current_status.upper()}**")
+        current_status = users[selected_user]["status"]
+        st.info(f"Current status of '{selected_user}': **{current_status.upper()}**")
 
-            if st.form_submit_button(f"Toggle to {'Disable' if current_status == 'active' else 'Enable'} User"):
-                new_status = "disabled" if current_status == "active" else "active"
-                users[selected_user]["status"] = new_status
-                save_users(users)
-                st.success(f"✅ User '{selected_user}' status set to **{new_status.upper()}**.")
-                st.rerun() # Rerun to update the displayed status immediately
+        if st.form_submit_button(f"Toggle to {'Disable' if current_status == 'active' else 'Enable'} User"):
+            new_status = "disabled" if current_status == "active" else "active"
+            users[selected_user]["status"] = new_status
+            save_users(users)
+            st.success(f"✅ User '{selected_user}' status set to **{new_status.upper()}**.")
+            st.rerun() # Rerun to update the displayed status immediately
 
 
 # --- Firebase Data Persistence Functions (REST API) ---
@@ -585,12 +537,12 @@ h1, h2, h3, h4, h5, h6 {{
     font-weight: 600;
     border: none;
     transition: all 0.3s ease;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    box_shadow: 0 4px 12px rgba(0,0,0,0.1);
 }}
 .stButton>button:hover {{
     background-color: #00b0a8;
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+    box_shadow: 0 6px 16px rgba(0,0,0,0.15);
 }}
 .stExpander {{
     background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
@@ -691,9 +643,8 @@ if 'comprehensive_df' not in st.session_state:
 navigation_options = [
     "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
     "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes",
-    "👥 Employee Management (HRIS)",
-    "📈 Workforce Planning",
-    "🤝 Collaboration Hub",
+    "📈 Advanced Tools", # New page
+    "🤝 Collaboration Hub", # New page
     "❓ Feedback & Help"
 ]
 
@@ -732,7 +683,7 @@ def analytics_dashboard_page():
         margin-bottom: 2rem;
     }
     @keyframes fadeInSlide {
-        0% { opacity: 0; transform: translateY(20px); }
+        0% {{ opacity: 0; transform: translateY(20px); }}
         100% {{ opacity: 1; transform: translateY(0); }}
     }
     h3 {
@@ -1425,18 +1376,52 @@ elif tab == "📁 Manage JDs":
 elif tab == "📊 Screening Analytics":
     analytics_dashboard_page()
 
-elif tab == "👥 Employee Management (HRIS)":
-    from employee_management import employee_management_page
-    employee_management_page(FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL)
-
-elif tab == "📈 Workforce Planning":    # NEW PAGE ROUTING
-    from workforce_planning import workforce_planning_page
-    workforce_planning_page(FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL)
-
-elif tab == "🤝 Collaboration Hub":
-    # Import the collaboration hub page function
+elif tab == "📈 Advanced Tools": # New page: Advanced Tools
+    # Import the advanced tools page function
+    from advanced import advanced_tools_page
+    # Pass the necessary global variables to the advanced_tools_page
+    advanced_tools_page(
+        app_id=FIREBASE_PROJECT_ID,
+        FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+        FIRESTORE_BASE_URL=FIRESTORE_BASE_URL
+    )
+elif tab == "🤝 Collaboration Hub": # New page: Collaboration Hub
+    # Import and call the collaboration hub page function
     from collaboration import collaboration_hub_page
-    collaboration_hub_page(FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL)
+    # Pass the necessary global variables to the collaboration_hub_page
+    collaboration_hub_page(
+        app_id=FIREBASE_PROJECT_ID,
+        FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+        FIRESTORE_BASE_URL=FIRESTORE_BASE_URL
+    )
+
+elif tab == "📤 Email Candidates":
+    try:
+        # Import the email sender function (assuming it's in a separate file)
+        from email_sender import send_email_to_candidate
+        send_email_to_candidate() # Call the imported function
+    except ImportError:
+        st.error("`email_sender.py` not found or `send_email_to_candidate` function not defined. Please ensure 'email_sender.py' exists and contains the 'send_email_to_candidate' function.")
+    except Exception as e:
+        st.error(f"Error loading Email Candidates: {e}")
+
+elif tab == "🔍 Search Resumes":
+    try:
+        with open("search.py", encoding="utf-8") as f:
+            exec(f.read())
+    except FileNotFoundError:
+        st.info("`search.py` not found. Please ensure the file exists in the same directory.")
+    except Exception as e:
+        st.error(f"Error loading Search Resumes: {e}")
+
+elif tab == "📝 Candidate Notes":
+    try:
+        with open("notes.py", encoding="utf-8") as f:
+            exec(f.read())
+    except FileNotFoundError:
+        st.info("`notes.py` not found. Please ensure the file exists in the same directory.")
+    except Exception as e:
+        st.error(f"Error loading Candidate Notes: {e}")
 
 elif tab == "❓ Feedback & Help":
     # Import the feedback page function
@@ -1444,23 +1429,6 @@ elif tab == "❓ Feedback & Help":
     if 'user_email' not in st.session_state:
         st.session_state['user_email'] = st.session_state.get('username', 'anonymous_user')
     feedback_and_help_page()
-
-elif tab == "⚙️ Admin Tools": # Admin Tools page routing
-    st.markdown('<div class="dashboard-header">⚙️ Admin Tools</div>', unsafe_allow_html=True)
-    if is_admin:
-        admin_tab_selection = st.radio(
-            "Admin Actions:",
-            ("Create User", "Reset Password", "Toggle User Status"),
-            key="admin_actions_radio"
-        )
-        if admin_tab_selection == "Create User":
-            admin_registration_section()
-        elif admin_tab_selection == "Reset Password":
-            admin_password_reset_section()
-        elif admin_tab_selection == "Toggle User Status":
-            admin_disable_enable_user_section()
-    else:
-        st.error("Access Denied: You do not have administrator privileges to view this page.")
 
 elif tab == "🚪 Logout":
     log_activity_main(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out.")
