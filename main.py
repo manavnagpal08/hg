@@ -13,33 +13,7 @@ import statsmodels.api as sm
 import collections
 
 # Firebase imports
-# Firebase imports
-import firebase_admin
-from firebase_admin import credentials, initialize_app, firestore, get_app
-
-# --- Firebase Initialization (Re-enabled) ---
-try:
-    # Check if Firebase app is already initialized
-    try:
-        firebase_admin.get_app()
-    except ValueError:
-        # Path to your service account key file
-        service_account_key_path = 'config/screenerproapp-firebase-adminsdk-fbsvc-d1af80d154.json'
-
-        # Check if the file exists
-        if os.path.exists(service_account_key_path):
-            cred = credentials.Certificate(service_account_key_path)
-            initialize_app(cred)
-        else:
-            st.warning(f"Service account key not found at: {service_account_key_path}. Trying default credentials.")
-            initialize_app()  # Try default app credentials (only works in GCP or properly configured env)
-
-    db = firestore.client()  # Get Firestore client
-    st.session_state.db = db
-except Exception as e:
-    st.warning(f"Firebase initialization failed: {e}")
-    st.session_state.db = None
-
+from firebase_admin import credentials, initialize_app, firestore, get_app, get_apps # Corrected: Added get_apps
 # import json # Already imported above, no need to import again
 
 # --- Firebase Initialization (Re-enabled) ---
