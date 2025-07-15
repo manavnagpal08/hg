@@ -82,9 +82,9 @@ def collaboration_hub_page():
     st.markdown("---")
 
     # --- Tabs for different collaboration features ---
-    tab_notes, tab_tasks, tab_announcements, tab_messages, tab_files, tab_calendar, tab_resources, tab_polls, tab_activity = st.tabs([
-        "📝 Shared Notes", "✅ Team Tasks", "📢 Announcements", "💬 Direct Messages (Mock)", "📂 File Sharing (Mock)",
-        "🗓️ Team Calendar", "📚 Resource Library", "📊 Quick Polls", "⚡ Activity Feed"
+    tab_notes, tab_tasks, tab_announcements, tab_members, tab_messages, tab_files, tab_calendar, tab_resources, tab_polls, tab_activity, tab_pipeline = st.tabs([
+        "📝 Shared Notes", "✅ Team Tasks", "📢 Announcements", "👥 Team Members", "💬 Direct Messages (Mock)", "📂 File Sharing (Mock)",
+        "🗓️ Team Calendar", "📚 Resource Library", "📊 Quick Polls", "⚡ Activity Feed", "📋 Candidate Pipeline (Mock)"
     ])
 
     with tab_notes:
@@ -350,29 +350,119 @@ def collaboration_hub_page():
         else:
             st.info("No announcements posted yet. Be the first to share important updates!")
 
+    with tab_members:
+        st.subheader("Team Member Management")
+        st.write("View current team members and add new ones to your organization.")
+
+        # Form to add new team members
+        with st.form("add_team_member_form", clear_on_submit=True):
+            new_member_name = st.text_input("New Member's Name:", key="new_member_name_input")
+            new_member_email = st.text_input("New Member's Email (will be their User ID):", key="new_member_email_input")
+            new_member_role = st.text_input("New Member's Role (e.g., 'Recruiter', 'HR Specialist'):", key="new_member_role_input")
+            add_member_button = st.form_submit_button("Add Team Member")
+
+            if add_member_button:
+                if new_member_name and new_member_email and new_member_role:
+                    # Basic email format validation
+                    if "@" not in new_member_email or "." not in new_member_email:
+                        st.error("Please enter a valid email address for the new member.")
+                    else:
+                        try:
+                            # Store team member profiles in a public collection
+                            # Firestore security rules: allow read, write: if request.auth != null;
+                            team_members_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_members")
+                            
+                            # Check if a member with this email already exists
+                            existing_member = team_members_collection_ref.document(new_member_email).get()
+                            if existing_member.exists:
+                                st.warning(f"A team member with email '{new_member_email}' already exists.")
+                            else:
+                                team_members_collection_ref.document(new_member_email).set({
+                                    "name": new_member_name,
+                                    "email": new_member_email,
+                                    "role": new_member_role,
+                                    "status": "active", # Default status
+                                    "added_by": current_username,
+                                    "added_at": firestore.SERVER_TIMESTAMP
+                                })
+                                st.success(f"Team member '{new_member_name}' added successfully!")
+                                log_activity(f"added new team member: '{new_member_name}' ({new_member_email}).", user=current_username)
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Error adding team member: {e}")
+                            log_activity(f"Error adding team member: {e}", user=current_username)
+                else:
+                    st.warning("Please fill in all fields for the new team member.")
+
+        st.markdown("---")
+        st.subheader("Current Team Members")
+
+        if 'team_members' not in st.session_state:
+            st.session_state.team_members = []
+
+        @st.cache_resource(ttl=60)
+        def setup_team_members_listener():
+            team_members_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_members")
+            team_members_query = team_members_collection_ref.order_by("added_at", direction=Query.ASCENDING).limit(50)
+
+            def on_snapshot(col_snapshot, changes, read_time):
+                updated_members = []
+                for doc_snapshot in col_snapshot.docs:
+                    member_data = doc_snapshot.to_dict()
+                    if 'added_at' in member_data and hasattr(member_data['added_at'], 'isoformat'):
+                        member_data['added_at'] = member_data['added_at'].isoformat()
+                    updated_members.append(member_data)
+                st.session_state.team_members = updated_members
+
+            team_members_watcher = team_members_query.on_snapshot(on_snapshot)
+            return team_members_watcher
+
+        if 'team_members_listener_watcher' not in st.session_state:
+            st.session_state.team_members_listener_watcher = setup_team_members_listener()
+            log_activity("Firestore team members listener set up.", user="System")
+
+        if st.session_state.team_members:
+            team_members_df = pd.DataFrame(st.session_state.team_members)
+            # Display only relevant columns for the table
+            display_cols = ['name', 'email', 'role', 'status', 'added_by']
+            st.dataframe(team_members_df[display_cols], use_container_width=True, hide_index=True)
+        else:
+            st.info("No team members added yet. Add new members using the form above!")
+
+
     with tab_messages:
         st.subheader("Direct Messages (Mock)")
-        st.info("This section will allow direct, private messaging between team members. (Feature Coming Soon!)")
+        st.info("This section is a placeholder for direct, private messaging between team members. A full implementation would require a more complex backend for secure, real-time communication.")
         st.write("For now, imagine sending a message to a specific team member:")
 
-        mock_recipient = st.selectbox("Select Recipient", ["Alice Johnson", "Bob Williams", "Charlie Brown"], key="mock_dm_recipient")
+        # Populate recipient list from actual team members if available, otherwise use mock
+        if st.session_state.get('team_members'):
+            recipient_options = [member['email'] for member in st.session_state.team_members]
+            if current_username in recipient_options:
+                recipient_options.remove(current_username) # Don't allow messaging self
+            if not recipient_options:
+                recipient_options = ["No other members available"]
+        else:
+            recipient_options = ["Alice Johnson (mock)", "Bob Williams (mock)", "Charlie Brown (mock)"]
+
+        mock_recipient = st.selectbox("Select Recipient", recipient_options, key="mock_dm_recipient")
         mock_message = st.text_area(f"Message to {mock_recipient}:", key="mock_dm_message")
 
         if st.button("Send Mock Message", key="send_mock_dm_button"):
-            if mock_message:
+            if mock_message and mock_recipient != "No other members available":
                 st.success(f"Mock message sent to {mock_recipient}: '{mock_message}'")
                 log_activity(f"sent a mock DM to '{mock_recipient}'.", user=current_username)
             else:
-                st.warning("Please type a message to send.")
+                st.warning("Please type a message and select a valid recipient to send.")
 
         st.markdown("---")
         st.subheader("Your Mock Message History")
-        st.info("Your sent and received direct messages will appear here.")
+        st.info("Your sent and received direct messages would appear here in a real implementation.")
         st.write("*(No actual messages are stored or sent in this mock feature)*")
 
     with tab_files:
         st.subheader("Shared Files (Mock)")
-        st.info("This section will enable secure file sharing among your HR team. (Feature Coming Soon!)")
+        st.info("This section is a placeholder for secure file sharing among your HR team. A full implementation would require integration with cloud storage (e.g., Firebase Storage) and robust security measures.")
         st.write("You will be able to upload, download, and manage shared documents here.")
         st.markdown("---")
         st.subheader("Recently Shared Files")
@@ -668,7 +758,7 @@ def collaboration_hub_page():
                     st.info("No votes yet.")
 
                 # Option to close poll (only for creator or admin)
-                admin_usernames = ("admin@forscreenerpro", "admin@forscreenerpro2", "manav.nagpal2005@gmail.com")
+                admin_usernames = ("admin@forscreenerpro", "admin@forscreenerpro2", "manav.nagpal2005@gmail.2005@gmail.com")
                 if current_username == poll.get('created_by') or current_username in admin_usernames:
                     if poll.get('active') and st.button("Close Poll", key=f"close_poll_{poll['id']}"):
                         try:
@@ -729,28 +819,28 @@ def collaboration_hub_page():
         else:
             st.info("No recent activity to display yet.")
 
+    with tab_pipeline:
+        st.subheader("Shared Candidate Pipeline (Mock)")
+        st.info("This section is a placeholder for a collaborative candidate pipeline. A full implementation would involve linking to actual candidate data and status updates, allowing team members to collectively manage and track candidates through the hiring process.")
+        st.write("Imagine a dynamic table here where team members can update candidate statuses, assign ownership, and add comments in real-time.")
+        
+        # Mock shared pipeline data for demonstration
+        mock_pipeline = [
+            {"Candidate": "Jane Doe", "Status": "Interview Scheduled", "Assigned To": "Alice Johnson"},
+            {"Candidate": "John Smith", "Status": "Offer Extended", "Assigned To": "Bob Williams"},
+            {"Candidate": "Emily White", "Status": "Screening", "Assigned To": "Charlie Brown"},
+            {"Candidate": "David Lee", "Status": "Onboarding", "Assigned To": "You"},
+        ]
+        pipeline_df = pd.DataFrame(mock_pipeline)
+        st.dataframe(pipeline_df, use_container_width=True, hide_index=True)
 
-    st.markdown("---")
+        st.markdown("---")
+        st.subheader("Pipeline Actions (Mock)")
+        st.write("These actions would allow team members to interact with the pipeline:")
+        col_pipe1, col_pipe2 = st.columns(2)
+        with col_pipe1:
+            st.button("Add Candidate to Pipeline (Mock)", key="mock_add_candidate")
+        with col_pipe2:
+            st.button("Update Candidate Status (Mock)", key="mock_update_status")
+        st.button("Assign Candidate to Team Member (Mock)", key="mock_assign_candidate")
 
-    st.subheader("Team Member List (Mock)")
-    st.info("This section will eventually show active team members and their status. For a real implementation, this would fetch data from Firebase Authentication or a dedicated user profile collection.")
-    # Mock list of team members
-    mock_team_members = [
-        {"name": "Alice Johnson", "role": "HR Manager", "status": "Online"},
-        {"name": "Bob Williams", "role": "Recruiter", "status": "Online"},
-        {"name": "Charlie Brown", "role": "HR Specialist", "status": "Offline"},
-    ]
-    team_df = pd.DataFrame(mock_team_members)
-    st.dataframe(team_df, use_container_width=True, hide_index=True)
-
-    st.markdown("---")
-    st.subheader("Shared Candidate Pipeline (Mock)")
-    st.info("This section will allow teams to manage and track candidates collaboratively. A full implementation would involve linking to actual candidate data and status updates.")
-    # Mock shared pipeline data
-    mock_pipeline = [
-        {"Candidate": "Jane Doe", "Status": "Interview Scheduled", "Assigned To": "Alice Johnson"},
-        {"Candidate": "John Smith", "Status": "Offer Extended", "Assigned To": "Bob Williams"},
-        {"Candidate": "Emily White", "Status": "Screening", "Assigned To": "Charlie Brown"},
-    ]
-    pipeline_df = pd.DataFrame(mock_pipeline)
-    st.dataframe(pipeline_df, use_container_width=True, hide_index=True)
