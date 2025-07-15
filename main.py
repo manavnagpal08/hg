@@ -13,35 +13,19 @@ import statsmodels.api as sm
 import collections
 import requests # Added for REST API calls
 
-# Firebase imports - Admin SDK is still imported for initialization, but not for session data persistence
-import firebase_admin
-from firebase_admin import credentials, initialize_app, firestore
-
 # --- Firebase REST Setup ---
 # IMPORTANT: Replace "AIzaSyDkYourRealAPIKey12345" with your actual Firebase Web API Key
 # You can find this in your Firebase project settings -> Project settings -> General -> Web API Key
-FIREBASE_WEB_API_KEY = "AIzaSyDkYourRealAPIKey12345"
+FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'YOUR_FIREBASE_WEB_API_KEY') # Ensure this is your actual key
 # Use __app_id from the Canvas environment for the project ID if available, otherwise use a default
 FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
 FIREBASE_FIRESTORE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
 
 
-# --- Firebase Initialization (Safe Check) ---
-# This block uses Firebase Admin SDK for initial setup, which is distinct from data persistence.
-try:
-    # Set environment variable for Application Default Credentials
-    key_path = os.path.abspath("config/screenerproapp-firebase-adminsdk-fbsvc-d1af80d154.json")
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key_path
-
-    if not firebase_admin._apps:
-        cred = credentials.ApplicationDefault()
-        initialize_app(cred)
-
-    # db = firestore.client() # Firestore client for Admin SDK (not used for session data anymore)
-    # st.session_state.db = db
-except Exception as e:
-    st.warning(f"🔥 Firebase Admin SDK init failed: {e}. Some features might be affected.")
-    # st.session_state.db = None # Not strictly needed if Admin SDK is only for init
+# --- Removed Firebase Admin SDK Initialization ---
+# The previous code here that imported firebase_admin and called initialize_app
+# has been removed to ensure only the REST API is used.
+# This resolves the 'invalid_grant: Invalid JWT Signature' error.
 
 
 # File to store user credentials
@@ -150,10 +134,10 @@ def admin_password_reset_section():
     # Exclude all admin usernames from the list of users whose passwords can be reset
     user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
 
-    # Display a message if no other users are available
     if not user_options:
-        st.info("No non-admin users available to reset passwords for.")
-    
+        st.info("No other users to reset passwords for.")
+        return
+
     with st.form("admin_reset_password_form", clear_on_submit=True):
         selected_user = st.selectbox("Select User to Reset Password For", user_options, key="reset_user_select")
         new_password = st.text_input("New Password", type="password", key="new_pwd_reset")
@@ -162,56 +146,34 @@ def admin_password_reset_section():
         if reset_button:
             if not new_password:
                 st.error("Please enter a new password.")
-            elif selected_user: # Only proceed if a user was selected (i.e., user_options was not empty)
+            else:
                 users[selected_user]["password"] = hash_password(new_password)
                 save_users(users)
                 st.success(f"✅ Password for '{selected_user}' has been reset.")
-            else:
-                st.warning("Please select a user to reset their password.")
-
 
 def admin_disable_enable_user_section():
-    """Admin-driven user disable/enable form and user list."""
+    """Admin-driven user disable/enable form."""
     st.subheader("⛔ Toggle User Status (Admin Only)")
     users = load_users()
-    # Exclude all admin usernames from the list of users to manage
-    non_admin_users = {user: data for user, data in users.items() if user not in ADMIN_USERNAME}
+    # Exclude all admin usernames from the list of users whose status can be toggled
+    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
 
-    # Prepare data for display in a DataFrame
-    user_data_for_table = []
-    for username, data in non_admin_users.items():
-        user_data_for_table.append({
-            "Username (Email)": username,
-            "Company Name": data.get("company", "N/A"),
-            "Status": data.get("status", "N/A").capitalize()
-        })
-    
-    st.markdown("### Registered Users Overview")
-    if user_data_for_table:
-        st.dataframe(pd.DataFrame(user_data_for_table), use_container_width=True, hide_index=True)
-    else:
-        st.info("No non-admin users registered yet.")
-    st.markdown("---") # Separator for clarity
+    if not user_options:
+        st.info("No other users to manage status for.")
+        return
 
-    user_options = list(non_admin_users.keys())
-
-    # The selectbox and form should always render, even if user_options is empty.
-    # The selectbox will display "No options to display" if the list is empty.
     with st.form("admin_toggle_user_status_form", clear_on_submit=False): # Keep values after submit for easier toggling
         selected_user = st.selectbox("Select User to Toggle Status", user_options, key="toggle_user_select")
 
-        if selected_user: # Only show current status and toggle button if a user is selected
-            current_status = users[selected_user]["status"]
-            st.info(f"Current status of '{selected_user}': **{current_status.upper()}**")
+        current_status = users[selected_user]["status"]
+        st.info(f"Current status of '{selected_user}': **{current_status.upper()}**")
 
-            if st.form_submit_button(f"Toggle to {'Disable' if current_status == 'active' else 'Enable'} User"):
-                new_status = "disabled" if current_status == "active" else "active"
-                users[selected_user]["status"] = new_status
-                save_users(users)
-                st.success(f"✅ User '{selected_user}' status set to **{new_status.upper()}**.")
-                st.rerun() # Rerun to update the displayed status immediately
-        else:
-            st.info("Select a user from the dropdown above to manage their status.")
+        if st.form_submit_button(f"Toggle to {'Disable' if current_status == 'active' else 'Enable'} User"):
+            new_status = "disabled" if current_status == "active" else "active"
+            users[selected_user]["status"] = new_status
+            save_users(users)
+            st.success(f"✅ User '{selected_user}' status set to **{new_status.upper()}**.")
+            st.rerun() # Rerun to update the displayed status immediately
 
 
 # --- Firebase Data Persistence Functions (REST API) ---
@@ -677,7 +639,7 @@ def analytics_dashboard_page():
         margin-bottom: 2rem;
     }
     @keyframes fadeInSlide {
-        0% { opacity: 0; transform: translateY(20px); }
+        0% {{ opacity: 0; transform: translateY(20px); }}
         100% {{ opacity: 1; transform: translateY(0); }}
     }
     h3 {
@@ -1376,7 +1338,7 @@ elif tab == "📈 Advanced Tools": # New page: Advanced Tools
     st.write("Stay tuned for powerful functionalities like predictive analytics, skill gap analysis, and more!")
 
 elif tab == "🤝 Collaboration Hub": # New page: Collaboration Hub
-    # Import the collaboration hub page function
+    # Import and call the collaboration hub page function
     from collaboration import collaboration_hub_page
     collaboration_hub_page()
 
@@ -1421,4 +1383,3 @@ elif tab == "🚪 Logout":
     st.session_state.pop('username', None)
     st.success("✅ Logged out.")
     st.rerun()
-
