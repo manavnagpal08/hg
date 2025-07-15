@@ -19,7 +19,7 @@ from firebase_admin import credentials, initialize_app, firestore
 
 # --- Firebase REST Setup ---
 # IMPORTANT: Leave FIREBASE_WEB_API_KEY as an empty string. Canvas will provide it at runtime.
-FIREBASE_WEB_API_KEY = "AIzaSyDkYourRealAPIKey12345"
+FIREBASE_WEB_API_KEY = ""
 # Use __app_id from the Canvas environment for the project ID if available, otherwise use a default
 FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
 FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
@@ -692,9 +692,7 @@ navigation_options = [
     "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
     "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes",
     "👥 Employee Management (HRIS)",
-    "🚀 Onboarding & Offboarding",
-    "📢 Recruitment Marketing", # NEW PAGE
-    "📈 Workforce Planning",    # NEW PAGE
+    "📈 Workforce Planning",
     "🤝 Collaboration Hub",
     "❓ Feedback & Help"
 ]
@@ -1430,14 +1428,6 @@ elif tab == "📊 Screening Analytics":
 elif tab == "👥 Employee Management (HRIS)":
     from employee_management import employee_management_page
     employee_management_page(FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL)
-
-elif tab == "🚀 Onboarding & Offboarding":
-    from onboarding_offboarding import onboarding_offboarding_page
-    onboarding_offboarding_page(FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL)
-
-elif tab == "📢 Recruitment Marketing": # NEW PAGE ROUTING
-    from recruitment_marketing import recruitment_marketing_page
-    recruitment_marketing_page(FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL)
 
 elif tab == "📈 Workforce Planning":    # NEW PAGE ROUTING
     from workforce_planning import workforce_planning_page
