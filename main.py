@@ -1,26 +1,3 @@
-import streamlit as st
-import json
-import bcrypt
-import os
-import re
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from wordcloud import WordCloud
-from datetime import datetime
-import plotly.express as px
-import statsmodels.api as sm
-import collections
-
-# Firebase imports (Client-side alternative using REST if Admin SDK fails)
-import requests
-
-# --- Firebase REST Setup ---
-# Replace this with your actual Firestore REST endpoint and Web API Key
-FIREBASE_WEB_API_KEY = "AIzaSyDjC7tdmpEkpsipgf9r1c3HlTO7C7BZ6Mw"
-FIREBASE_PROJECT_ID = "screenerproapp"
-FIREBASE_FIRESTORE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
-
 def save_session_data_to_firestore_rest(username, session_data):
     try:
         if not username:
@@ -48,6 +25,21 @@ def save_session_data_to_firestore_rest(username, session_data):
 # File to store user credentials
 USER_DB_FILE = "users.json"
 ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2")
+
+# Add this inside your Streamlit app logic where session data is available
+if st.button("💾 Save to Firebase via REST"):
+    if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+        save_session_data_to_firestore_rest(
+            st.session_state.get('username', 'anonymous'),
+            {
+                "timestamp": str(datetime.now()),
+                "screened_count": len(st.session_state['comprehensive_df']),
+                "status": "saved from Streamlit Cloud"
+            }
+        )
+    else:
+        st.warning("Nothing to save — please run screening first.")
+
 
 
 # [...rest of your main.py code remains unchanged...]
