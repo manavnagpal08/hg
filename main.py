@@ -412,6 +412,18 @@ def log_activity(message):
 # --- Page Config ---
 st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
 
+# Function to load external CSS
+def load_css(css_file_name):
+    """Loads CSS from a local file and injects it into the Streamlit app."""
+    try:
+        with open(css_file_name) as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    except FileNotFoundError:
+        st.warning(f"CSS file '{css_file_name}' not found. Please ensure it's in the same directory as main.py.")
+
+# Load the external CSS file
+load_css("style.css")
+
 # --- Dark Mode Toggle ---
 dark_mode = st.sidebar.toggle("🌙 Dark Mode", key="dark_mode_main")
 
