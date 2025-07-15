@@ -213,7 +213,9 @@ MOCK_SALARY_DF = pd.DataFrame(MOCK_SALARY_DATA)
 # --- Advanced Tools Page Function ---
 def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
     user_email = st.session_state.get('user_email', 'anonymous')
-    log_user_action(user_email, "ADVANCED_TOOLS_PAGE_ACCESSED")
+    # Get the company name from session state
+    user_company = st.session_state.get('user_company', 'default_company').replace(' ', '_').lower() # Sanitize for Firestore path
+    log_user_action(user_email, "ADVANCED_TOOLS_PAGE_ACCESSED", {"company": user_company})
 
     # Access dark_mode from session state, defaulting to False if not set
     dark_mode = st.session_state.get('dark_mode_main', False)
@@ -463,7 +465,7 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
             title='Average Team Proficiency by Skill',
             labels={'Proficiency (Avg)': 'Average Proficiency (1-5)', 'Skill': 'Skill'},
             color='Proficiency (Avg)',
-            color_continuous_scale=px.colors.sequential.Teal if not dark_mode else px.colors.sequential.Plasma
+            color_continuous_scale=px.colors.sequential.Teal if not dark_mode else px.colors.colors.sequential.Plasma
         )
         st.plotly_chart(fig_team_skills, use_container_width=True)
         st.caption("This chart shows average self-reported or assessed proficiency for key skills across the team.")
@@ -684,7 +686,7 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
             barmode='group',
             title='Diversity Metrics by Department',
             labels={'value': 'Percentage', 'variable': 'Diversity Metric'},
-            color_discrete_sequence=['#00cec9', '#fab1a0'] if not dark_mode else ['#00cec9', '#fab1a0']
+            color_discrete_sequence=['#00cec9', '#fab1a0'] if not dark_mode else px.colors.sequential.Dark2
         )
         st.plotly_chart(fig_dept_diversity, use_container_width=True)
 
@@ -708,7 +710,7 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
             title='Diversity Percentage Across Hiring Funnel',
             labels={'value': 'Percentage (%)', 'variable': 'Diversity Group'},
             markers=True,
-            color_discrete_sequence=['#00cec9', '#fab1a0'] if not dark_mode else ['#00cec9', '#fab1a0']
+            color_discrete_sequence=['#00cec9', '#fab1a0'] if not dark_mode else px.colors.sequential.Dark2
         )
         st.plotly_chart(fig_funnel, use_container_width=True)
         st.dataframe(funnel_data[['Stage', 'Total', 'Female %', 'URG %']], use_container_width=True, hide_index=True)
@@ -778,14 +780,20 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
         
         st.markdown("---")
         st.subheader("📧 Email Configuration")
-       
+        st.info("""
+            Email notifications for scheduled interviews are now simulated.
+            If you wish to enable real email sending, you will need to:
+            1.  **Replace the placeholder values** for `gmail_address` and `gmail_app_password` directly in the `advanced.py` code.
+            2.  Ensure your Gmail account has **2-Step Verification enabled** and you've generated a **16-character App Password**.
+            3.  **Note:** Direct SMTP connections from this Streamlit Canvas environment might still be blocked by network policies.
+        """)
         
         # --- HARDCODED GMAIL CREDENTIALS (REPLACE THESE PLACEHOLDERS) ---
         # If you want to enable real email sending, replace "YOUR_GMAIL_ADDRESS@gmail.com"
         # with your actual Gmail address and "YOUR_GMAIL_APP_PASSWORD" with the 16-character
         # App Password you generated from Google Account Security.
-        gmail_address = "screenerpro.ai@gmail.com"  # <--- REPLACE THIS WITH YOUR GMAIL
-        gmail_app_password = "hcss uefd gaae wrse"  # <--- REPLACE THIS WITH YOUR 16-CHARACTER APP PASSWORD
+        gmail_address = "YOUR_GMAIL_ADDRESS@gmail.com"  # <--- REPLACE THIS WITH YOUR GMAIL
+        gmail_app_password = "YOUR_GMAIL_APP_PASSWORD"  # <--- REPLACE THIS WITH YOUR 16-CHARACTER APP PASSWORD
         # --- END HARDCODED GMAIL CREDENTIALS ---
 
         # Store these in session state for consistency, but they are now hardcoded values
@@ -804,9 +812,9 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
         if 'user_interviewers' not in st.session_state:
             st.session_state.user_interviewers = []
 
-        # Load data on page load
+        # Load data on page load, using company-specific paths
         success_interviews, loaded_interviews = load_collection_from_firestore(
-            f"artifacts/{app_id}/users/{user_email}/interviews", FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
+            f"artifacts/{app_id}/companies/{user_company}/interviews", FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
         )
         if success_interviews:
             st.session_state.user_interviews = loaded_interviews
@@ -814,7 +822,7 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
             st.error(f"Failed to load interviews: {loaded_interviews}")
 
         success_feedback, loaded_feedback = load_collection_from_firestore(
-            f"artifacts/{app_id}/users/{user_email}/interview_feedback", FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
+            f"artifacts/{app_id}/companies/{user_company}/interview_feedback", FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
         )
         if success_feedback:
             st.session_state.user_feedback = loaded_feedback
@@ -822,7 +830,7 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
             st.error(f"Failed to load feedback: {loaded_feedback}")
         
         success_interviewers, loaded_interviewers = load_collection_from_firestore(
-            f"artifacts/{app_id}/users/{user_email}/interviewers", FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
+            f"artifacts/{app_id}/companies/{user_company}/interviewers", FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
         )
         if success_interviewers:
             st.session_state.user_interviewers = loaded_interviewers
@@ -852,17 +860,17 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
                         # Replace . and @ for valid Firebase document ID
                         doc_id = new_interviewer_email.replace('.', '_').replace('@', '_') 
                         success, response = save_document_to_firestore(
-                            f"artifacts/{app_id}/users/{user_email}/interviewers", 
+                            f"artifacts/{app_id}/companies/{user_company}/interviewers", 
                             doc_id,
                             interviewer_data, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
                         )
                         if success:
                             st.success(f"Interviewer '{new_interviewer_name}' added successfully to Firebase!")
-                            log_user_action(user_email, "INTERVIEWER_ADDED", {"name": new_interviewer_name})
+                            log_user_action(user_email, "INTERVIEWER_ADDED", {"name": new_interviewer_name, "company": user_company})
                             st.rerun() # Rerun to refresh the list
                         else:
                             st.error(f"Failed to add interviewer: {response}")
-                            log_user_action(user_email, "INTERVIEWER_ADD_FAILED", {"name": new_interviewer_name, "error": response})
+                            log_user_action(user_email, "INTERVIEWER_ADD_FAILED", {"name": new_interviewer_name, "error": response, "company": user_company})
                     else:
                         st.warning("Please provide interviewer name and email.")
             
@@ -925,7 +933,7 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
                     }
                     
                     success, response = add_document_to_firestore_collection(
-                        f"artifacts/{app_id}/users/{user_email}/interviews", interview_data, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
+                        f"artifacts/{app_id}/companies/{user_company}/interviews", interview_data, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
                     )
 
                     if success:
@@ -997,11 +1005,11 @@ The HR Team
                             st.info(f"📧 **Simulated Calendar Invite to Interviewer ({selected_interviewer_email}):** Interview for {candidate_name} on {interview_date.strftime('%Y-%m-%d')} at {interview_time.strftime('%I:%M %p')}.")
                         
                         st.success("Simulated reminders will be sent automatically 24 hours prior. (Mock)")
-                        log_user_action(user_email, "INTERVIEW_SCHEDULED_FIREBASE", {"candidate": candidate_name, "interviewer": selected_interviewer_name, "type": interview_type})
+                        log_user_action(user_email, "INTERVIEW_SCHEDULED_FIREBASE", {"candidate": candidate_name, "interviewer": selected_interviewer_name, "type": interview_type, "company": user_company})
                         st.rerun() # Rerun to refresh the upcoming interviews list
                     else:
                         st.error(f"❌ Failed to save interview to Firebase: {response}")
-                        log_user_action(user_email, "INTERVIEW_SCHEDULE_FAILED_FIREBASE", {"candidate": candidate_name, "error": response})
+                        log_user_action(user_email, "INTERVIEW_SCHEDULE_FAILED_FIREBASE", {"candidate": candidate_name, "error": response, "company": user_company})
 
         st.markdown("---")
         st.subheader("Interviewer Availability (Mock)")
@@ -1031,7 +1039,7 @@ The HR Team
                     st.info("⚠️ Flexible availability, please confirm directly.")
                 else:
                     st.warning("⚠️ Limited Availability: Please contact directly for specific times.")
-                log_user_action(user_email, "INTERVIEWER_AVAILABILITY_CHECKED", {"interviewer": selected_avail_interviewer, "date": check_date})
+                log_user_action(user_email, "INTERVIEWER_AVAILABILITY_CHECKED", {"interviewer": selected_avail_interviewer, "date": check_date, "company": user_company})
 
         st.markdown("---")
         st.subheader("Automated Reminders Configuration (Mock)")
@@ -1042,7 +1050,7 @@ The HR Team
         
         if st.button("Save Reminder Settings", key="save_reminders_button"):
             st.success(f"Reminder settings saved: Candidate {reminder_candidate_days} day(s) before, Interviewer {reminder_interviewer_hours} hour(s) before.")
-            log_user_action(user_email, "REMINDER_SETTINGS_SAVED")
+            log_user_action(user_email, "REMINDER_SETTINGS_SAVED", {"company": user_company})
 
 
         st.markdown("---")
@@ -1146,15 +1154,15 @@ The HR Team
                     "timestamp": datetime.now()
                 }
                 success, response = add_document_to_firestore_collection(
-                    f"artifacts/{app_id}/users/{user_email}/interview_feedback", feedback_data, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
+                    f"artifacts/{app_id}/companies/{user_company}/interview_feedback", feedback_data, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL
                 )
                 if success:
                     st.success(f"Feedback submitted for {feedback_candidate_name} by {feedback_interviewer} with rating {feedback_rating}. (Data saved to Firebase)")
-                    log_user_action(user_email, "INTERVIEW_FEEDBACK_SUBMITTED_FIREBASE", {"candidate": feedback_candidate_name, "rating": feedback_rating})
+                    log_user_action(user_email, "INTERVIEW_FEEDBACK_SUBMITTED_FIREBASE", {"candidate": feedback_candidate_name, "rating": feedback_rating, "company": user_company})
                     st.rerun() # Rerun to refresh feedback trends
                 else:
                     st.error(f"❌ Failed to save feedback to Firebase: {response}")
-                    log_user_action(user_email, "INTERVIEW_FEEDBACK_FAILED_FIREBASE", {"candidate": feedback_candidate_name, "error": response})
+                    log_user_action(user_email, "INTERVIEW_FEEDBACK_FAILED_FIREBASE", {"candidate": feedback_candidate_name, "error": response, "company": user_company})
             else:
                 st.warning("Please fill in all feedback fields.")
 
