@@ -13,7 +13,8 @@ import statsmodels.api as sm
 import collections
 
 # Firebase imports
-from firebase_admin import credentials, initialize_app, apps, firestore
+from firebase_admin import credentials, initialize_app, firestore
+from firebase_admin import app as apps # Corrected import for 'apps'
 import json # Needed for json.loads(firebase_config_str)
 
 # --- Firebase Initialization (Re-enabled) ---
