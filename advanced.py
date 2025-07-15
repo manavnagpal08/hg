@@ -780,20 +780,14 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
         
         st.markdown("---")
         st.subheader("📧 Email Configuration")
-        st.info("""
-            Email notifications for scheduled interviews are now simulated.
-            If you wish to enable real email sending, you will need to:
-            1.  **Replace the placeholder values** for `gmail_address` and `gmail_app_password` directly in the `advanced.py` code.
-            2.  Ensure your Gmail account has **2-Step Verification enabled** and you've generated a **16-character App Password**.
-            3.  **Note:** Direct SMTP connections from this Streamlit Canvas environment might still be blocked by network policies.
-        """)
+        
         
         # --- HARDCODED GMAIL CREDENTIALS (REPLACE THESE PLACEHOLDERS) ---
         # If you want to enable real email sending, replace "YOUR_GMAIL_ADDRESS@gmail.com"
         # with your actual Gmail address and "YOUR_GMAIL_APP_PASSWORD" with the 16-character
         # App Password you generated from Google Account Security.
-        gmail_address = "YOUR_GMAIL_ADDRESS@gmail.com"  # <--- REPLACE THIS WITH YOUR GMAIL
-        gmail_app_password = "YOUR_GMAIL_APP_PASSWORD"  # <--- REPLACE THIS WITH YOUR 16-CHARACTER APP PASSWORD
+        gmail_address = "screenerpro.ai@gmail.com"  # <--- REPLACE THIS WITH YOUR GMAIL
+        gmail_app_password = "hcss uefd gaae wrse"  # <--- REPLACE THIS WITH YOUR 16-CHARACTER APP PASSWORD
         # --- END HARDCODED GMAIL CREDENTIALS ---
 
         # Store these in session state for consistency, but they are now hardcoded values
