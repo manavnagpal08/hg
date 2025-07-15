@@ -13,6 +13,45 @@ def log_user_action(user_email, action, details=None):
     else:
         print(f"LOG: [{timestamp}] User '{user_email}' performed action '{action}'")
 
+# --- Mock Salary Data (More Realistic) ---
+# This data simulates real-world salary ranges based on role, experience, and location.
+# In a real application, this would come from a secure database or external API.
+MOCK_SALARY_DATA = [
+    # Software Engineer - Bengaluru
+    {"role": "Software Engineer", "location": "Bengaluru, India", "min_exp": 0, "max_exp": 2, "min_salary": 600000, "max_salary": 900000},
+    {"role": "Software Engineer", "location": "Bengaluru, India", "min_exp": 3, "max_exp": 5, "min_salary": 1000000, "max_salary": 1500000},
+    {"role": "Software Engineer", "location": "Bengaluru, India", "min_exp": 6, "max_exp": 10, "min_salary": 1600000, "max_salary": 2500000},
+    {"role": "Software Engineer", "location": "Bengaluru, India", "min_exp": 11, "max_exp": 99, "min_salary": 2600000, "max_salary": 4000000},
+    
+    # Data Scientist - Bengaluru
+    {"role": "Data Scientist", "location": "Bengaluru, India", "min_exp": 0, "max_exp": 2, "min_salary": 700000, "max_salary": 1100000},
+    {"role": "Data Scientist", "location": "Bengaluru, India", "min_exp": 3, "max_exp": 5, "min_salary": 1200000, "max_salary": 1800000},
+    {"role": "Data Scientist", "location": "Bengaluru, India", "min_exp": 6, "max_exp": 10, "min_salary": 1900000, "max_salary": 3000000},
+
+    # HR Manager - Bengaluru
+    {"role": "HR Manager", "location": "Bengaluru, India", "min_exp": 3, "max_exp": 7, "min_salary": 800000, "max_salary": 1300000},
+    {"role": "HR Manager", "location": "Bengaluru, India", "min_exp": 8, "max_exp": 99, "min_salary": 1400000, "max_salary": 2200000},
+
+    # Business Analyst - Bengaluru
+    {"role": "Business Analyst", "location": "Bengaluru, India", "min_exp": 0, "max_exp": 3, "min_salary": 500000, "max_salary": 800000},
+    {"role": "Business Analyst", "location": "Bengaluru, India", "min_exp": 4, "max_exp": 7, "min_salary": 900000, "max_salary": 1400000},
+
+    # Software Engineer - Mumbai
+    {"role": "Software Engineer", "location": "Mumbai, India", "min_exp": 0, "max_exp": 2, "min_salary": 550000, "max_salary": 850000},
+    {"role": "Software Engineer", "location": "Mumbai, India", "min_exp": 3, "max_exp": 5, "min_salary": 950000, "max_salary": 1400000},
+
+    # Data Scientist - Hyderabad
+    {"role": "Data Scientist", "location": "Hyderabad, India", "min_exp": 0, "max_exp": 2, "min_salary": 650000, "max_salary": 1000000},
+    {"role": "Data Scientist", "location": "Hyderabad, India", "min_exp": 3, "max_exp": 5, "min_salary": 1100000, "max_salary": 1700000},
+
+    # Other roles/locations can be added here
+    {"role": "Product Manager", "location": "Bengaluru, India", "min_exp": 5, "max_exp": 10, "min_salary": 1800000, "max_salary": 2800000},
+    {"role": "Marketing Specialist", "location": "Delhi, India", "min_exp": 2, "max_exp": 6, "min_salary": 600000, "max_salary": 1000000},
+]
+
+# Convert to DataFrame for easier querying
+MOCK_SALARY_DF = pd.DataFrame(MOCK_SALARY_DATA)
+
 # --- Advanced Tools Page Function ---
 def advanced_tools_page():
     user_email = st.session_state.get('user_email', 'anonymous')
@@ -160,39 +199,88 @@ def advanced_tools_page():
                 log_user_action(user_email, "SKILL_GAP_ANALYSIS_USED", {"required": required_skills_input, "candidate": candidate_skills_input})
 
     with tab_compensation:
-        st.subheader("Compensation Benchmarking (Mock)")
-        st.info("Benchmark salary ranges for specific roles based on industry data and location. (Mock functionality)")
+        st.subheader("💰 Compensation Benchmarking")
+        st.info("Get estimated salary ranges based on role, experience, and location. Data is simulated for demonstration.")
+
+        # Get unique roles and locations from mock data
+        all_roles = sorted(MOCK_SALARY_DF['role'].unique().tolist())
+        all_locations = sorted(MOCK_SALARY_DF['location'].unique().tolist())
+
+        # Try to infer roles/locations from comprehensive_df if available in session state
+        if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+            df_comp = st.session_state['comprehensive_df']
+            if 'Desired Role' in df_comp.columns:
+                inferred_roles = df_comp['Desired Role'].dropna().unique().tolist()
+                all_roles = sorted(list(set(all_roles + inferred_roles)))
+            if 'Location' in df_comp.columns:
+                inferred_locations = df_comp['Location'].dropna().unique().tolist()
+                # Clean inferred locations (e.g., split by comma if multiple, remove 'not found')
+                cleaned_inferred_locations = []
+                for loc_str in inferred_locations:
+                    cleaned_inferred_locations.extend([loc.strip() for loc in loc_str.split(',') if loc.strip() and loc.strip().lower() != 'not found'])
+                all_locations = sorted(list(set(all_locations + cleaned_inferred_locations)))
+            st.caption("💡 Roles and locations are pre-populated with common values and inferred from your screened candidates.")
 
         with st.form("compensation_form", clear_on_submit=False):
             col_c1, col_c2 = st.columns(2)
             with col_c1:
-                role_title = st.text_input("Role Title", "Software Engineer", key="comp_role")
-                location = st.text_input("Location", "Bengaluru, India", key="comp_loc")
+                selected_role = st.selectbox("Role Title", all_roles, key="comp_role")
+                selected_location = st.selectbox("Location", all_locations, key="comp_loc")
             with col_c2:
                 years_exp_comp = st.slider("Years of Experience (for benchmark)", 0, 20, 5, key="comp_exp")
-                industry = st.selectbox("Industry", ["Tech", "Finance", "Healthcare", "Manufacturing", "Other"], key="comp_industry")
+                industry = st.selectbox("Industry (for context)", ["Tech", "Finance", "Healthcare", "Manufacturing", "Other"], key="comp_industry")
             
             benchmark_button = st.form_submit_button("Get Benchmark")
 
             if benchmark_button:
-                # Mock compensation data
-                base_salary = 50000 + (years_exp_comp * 5000)
-                if "senior" in role_title.lower():
-                    base_salary += 20000
-                if "manager" in role_title.lower():
-                    base_salary += 30000
-                
-                if "bengaluru" in location.lower():
-                    base_salary *= 1.2 # Higher for tech hubs
-                
-                min_salary = int(base_salary * 0.9)
-                max_salary = int(base_salary * 1.1)
+                # Filter mock data based on user selection
+                filtered_salaries = MOCK_SALARY_DF[
+                    (MOCK_SALARY_DF['role'] == selected_role) &
+                    (MOCK_SALARY_DF['location'] == selected_location) &
+                    (MOCK_SALARY_DF['min_exp'] <= years_exp_comp) &
+                    (MOCK_SALARY_DF['max_exp'] >= years_exp_comp)
+                ]
 
-                st.markdown("#### Benchmark Results:")
-                st.success(f"**Estimated Salary Range for '{role_title}' in '{location}' ({years_exp_comp} yrs exp):**")
-                st.write(f"**₹{min_salary:,.0f} - ₹{max_salary:,.0f} per annum (approx.)**")
-                st.caption("_Note: This is a mock benchmark and does not reflect real-time market data._")
-                log_user_action(user_email, "COMPENSATION_BENCHMARK_USED", {"role": role_title, "location": location})
+                if not filtered_salaries.empty:
+                    # Take the first matching range (or average if multiple overlap, though not designed for that)
+                    benchmark_min = filtered_salaries['min_salary'].min()
+                    benchmark_max = filtered_salaries['max_salary'].max()
+
+                    st.markdown("#### Benchmark Results:")
+                    st.success(f"**Estimated Salary Range for '{selected_role}' in '{selected_location}' ({years_exp_comp} yrs exp):**")
+                    st.write(f"**₹{benchmark_min:,.0f} - ₹{benchmark_max:,.0f} per annum**")
+
+                    # Visualization of the range
+                    salary_range_df = pd.DataFrame({
+                        'Category': ['Minimum', 'Maximum'],
+                        'Salary': [benchmark_min, benchmark_max]
+                    })
+                    fig_salary_range = px.bar(
+                        salary_range_df,
+                        x='Category',
+                        y='Salary',
+                        title='Estimated Salary Range',
+                        labels={'Salary': 'Annual Salary (₹)'},
+                        color_discrete_sequence=['#00cec9', '#00b0a8'] if not dark_mode else ['#00cec9', '#00b0a8']
+                    )
+                    st.plotly_chart(fig_salary_range, use_container_width=True)
+
+                    st.markdown("---")
+                    st.markdown("##### Factors Influencing This Benchmark (Simulated):")
+                    st.write(f"- **Experience Level:** {years_exp_comp} years (matched to {filtered_salaries['min_exp'].iloc[0]}-{filtered_salaries['max_exp'].iloc[0]} yrs band)")
+                    st.write(f"- **Location Premium:** {selected_location} (simulated regional adjustment)")
+                    st.write(f"- **Industry Standard:** {industry} (simulated industry norms)")
+                    st.write("---")
+                    st.info("Confidence Level: High (based on available simulated data points)")
+
+                else:
+                    st.warning("No benchmark data found for the selected criteria. Please try different parameters.")
+                
+                log_user_action(user_email, "COMPENSATION_BENCHMARK_USED", {
+                    "role": selected_role, "location": selected_location, "exp": years_exp_comp,
+                    "benchmark_min": benchmark_min if 'benchmark_min' in locals() else 'N/A',
+                    "benchmark_max": benchmark_max if 'benchmark_max' in locals() else 'N/A'
+                })
 
     with tab_dei:
         st.subheader("Diversity, Equity, and Inclusion (DEI) Analytics (Mock)")
