@@ -1,47 +1,100 @@
 import streamlit as st
-import firebase_admin
-from firebase_admin import credentials, firestore
-from firebase_admin import auth
-from google.cloud.firestore import FieldFilter, Query
+import requests # For making HTTP requests to the REST API
 from datetime import datetime
 import json
 import os
 import pandas as pd # Import pandas for DataFrame
 
-# --- Firebase Initialization (Safe Check) ---
-# Global variables from Canvas environment
-app_id = os.environ.get('__app_id', 'default-app-id')
-firebase_config_str = os.environ.get('__firebase_config', '{}')
-initial_auth_token = os.environ.get('__initial_auth_token', None)
+# --- Firebase REST API Configuration ---
+# Global variables from Canvas environment (assuming they are set by the environment)
+# These are typically set in main.py, but we'll ensure they are accessible here.
+# For security, in a real app, the API_KEY might be handled server-side.
+FIREBASE_PROJECT_ID = os.environ.get('__app_id', 'default-app-id')
+# In a real scenario, you'd get FIREBASE_WEB_API_KEY from a secure source,
+# potentially passed from main.py or an environment variable.
+# For this Canvas environment, we'll assume it's available or use a placeholder.
+# You might need to manually set this in your main.py or environment if not automatically provided.
+FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'YOUR_FIREBASE_WEB_API_KEY') # Replace with your actual Web API Key
 
-# Parse firebase config
-try:
-    firebase_config = json.loads(firebase_config_str)
-except json.JSONDecodeError:
-    st.error("Error parsing Firebase config. Please check the `__firebase_config` variable.")
-    firebase_config = {}
+# Base URL for Firestore REST API
+FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
 
-# Initialize Firebase Admin SDK if not already initialized
-# This part is for server-side operations if needed, but for client-side,
-# we primarily use the REST API or client SDK which is handled by the canvas environment.
-# However, for `serverTimestamp()`, the Admin SDK is useful.
-if not firebase_admin._apps:
-    try:
-        # Use a service account for Admin SDK if available, otherwise Application Default
-        # For Canvas, Application Default Credentials are often set up via GOOGLE_APPLICATION_CREDENTIALS env var
-        cred = credentials.ApplicationDefault()
-        firebase_admin.initialize_app(cred, name=app_id)
-    except Exception as e:
-        st.warning(f"🔥 Firebase Admin SDK init failed: {e}. Some server-side features might be affected.")
+# --- Helper function for converting Python dict to Firestore REST API format ---
+def to_firestore_format(data: dict) -> dict:
+    """Converts a Python dictionary to Firestore REST API 'fields' format."""
+    fields = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            fields[key] = {"stringValue": value}
+        elif isinstance(value, int):
+            fields[key] = {"integerValue": str(value)} # Firestore expects string for integerValue
+        elif isinstance(value, float):
+            fields[key] = {"doubleValue": value}
+        elif isinstance(value, bool):
+            fields[key] = {"booleanValue": value}
+        elif isinstance(value, datetime):
+            fields[key] = {"timestampValue": value.isoformat() + "Z"} # ISO 8601 with 'Z' for UTC
+        elif isinstance(value, list):
+            # For lists, convert each item and wrap in arrayValue
+            array_values = []
+            for item in value:
+                if isinstance(item, str):
+                    array_values.append({"stringValue": item})
+                elif isinstance(item, int):
+                    array_values.append({"integerValue": str(item)})
+                elif isinstance(item, float):
+                    array_values.append({"doubleValue": item})
+                elif isinstance(item, bool):
+                    array_values.append({"booleanValue": item})
+                # Add more types as needed for list elements
+            fields[key] = {"arrayValue": {"values": array_values}}
+        elif isinstance(value, dict):
+            # For nested dictionaries (maps), recursively convert
+            fields[key] = {"mapValue": {"fields": to_firestore_format(value)}}
+        elif value is None:
+            fields[key] = {"nullValue": None}
+        else:
+            # Fallback for other types, try to stringify
+            fields[key] = {"stringValue": str(value)}
+    return {"fields": fields}
 
-# Get Firestore client
-db = firestore.client()
+# --- Helper function for converting Firestore REST API format to Python dict ---
+def from_firestore_format(firestore_data: dict) -> dict:
+    """Converts Firestore REST API 'fields' format to a Python dictionary."""
+    data = {}
+    if "fields" not in firestore_data:
+        return data # Or raise an error if expected
+    
+    for key, value_obj in firestore_data["fields"].items():
+        if "stringValue" in value_obj:
+            data[key] = value_obj["stringValue"]
+        elif "integerValue" in value_obj:
+            data[key] = int(value_obj["integerValue"])
+        elif "doubleValue" in value_obj:
+            data[key] = float(value_obj["doubleValue"])
+        elif "booleanValue" in value_obj:
+            data[key] = value_obj["booleanValue"]
+        elif "timestampValue" in value_obj:
+            # Remove 'Z' and parse
+            try:
+                data[key] = datetime.fromisoformat(value_obj["timestampValue"].replace('Z', ''))
+            except ValueError:
+                data[key] = value_obj["timestampValue"] # Keep as string if parsing fails
+        elif "arrayValue" in value_obj and "values" in value_obj["arrayValue"]:
+            # Recursively convert array elements
+            data[key] = [from_firestore_format({"fields": {"_": item}})["_"] for item in value_obj["arrayValue"]["values"]]
+        elif "mapValue" in value_obj and "fields" in value_obj["mapValue"]:
+            # Recursively convert map values
+            data[key] = from_firestore_format({"fields": value_obj["mapValue"]["fields"]})
+        elif "nullValue" in value_obj:
+            data[key] = None
+        # Add more types as needed
+    return data
 
-# --- Helper function for activity logging (re-used from main.py concept) ---
+# --- Helper function for activity logging ---
 def log_activity(message: str, user: str = None):
     """
-    Logs an activity with a timestamp to Firestore and session state.
-    This helps track user actions and application events.
+    Logs an activity with a timestamp to Firestore (via REST API) and session state.
     """
     if user is None:
         user = st.session_state.get('username', 'Anonymous User')
@@ -55,28 +108,59 @@ def log_activity(message: str, user: str = None):
     st.session_state.activity_log.insert(0, log_entry) # Add to the beginning for most recent first
     st.session_state.activity_log = st.session_state.activity_log[:50] # Keep log size manageable
 
-    # Persist to Firestore for long-term storage and cross-session visibility
+    # Persist to Firestore via REST API
     try:
-        activity_collection_ref = db.collection(f"artifacts/{app_id}/public/data/activity_feed")
-        activity_collection_ref.add({
+        collection_url = f"{FIRESTORE_BASE_URL}/artifacts/{app_id}/public/data/activity_feed?key={FIREBASE_WEB_API_KEY}"
+        payload = to_firestore_format({
             "message": message,
             "user": user,
-            "timestamp": firestore.SERVER_TIMESTAMP
+            "timestamp": datetime.now() # Use current datetime for logging
         })
-    except Exception as e:
-        st.error(f"Error logging activity to Firestore: {e}")
-        # IMPORTANT: If this error persists, double-check your Firestore security rules for the 'activity_feed' collection.
-        # Ensure it allows authenticated users to write, e.g., 'allow read, write: if request.auth != null;'
+        response = requests.post(collection_url, json=payload)
+        response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error logging activity to Firestore via REST API: {e}")
+        # Note: If this error persists, check your Firebase Web API Key and network.
+
+# --- Data Fetching Functions (replacing on_snapshot listeners) ---
+
+def fetch_collection_data(collection_path: str, order_by_field: str = None, limit: int = 20):
+    """Fetches documents from a Firestore collection via REST API."""
+    url = f"{FIRESTORE_BASE_URL}/{collection_path}?key={FIREBASE_WEB_API_KEY}"
+    
+    # For ordering and limiting, we need to use the runQuery endpoint for structured queries
+    # For simplicity, we'll fetch all and then sort/limit in Python for now.
+    # A more efficient way for large datasets would be to use the structuredQuery POST endpoint.
+    
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        
+        documents = []
+        if 'documents' in data:
+            for doc_entry in data['documents']:
+                doc_id = doc_entry['name'].split('/')[-1] # Extract document ID
+                doc_data = from_firestore_format(doc_entry)
+                doc_data['id'] = doc_id # Add document ID for updates/deletions
+                documents.append(doc_data)
+        
+        # Sort and limit in Python (less efficient for very large datasets, but simpler for REST GET)
+        if order_by_field and all(order_by_field in doc for doc in documents):
+            documents.sort(key=lambda x: x.get(order_by_field), reverse=True) # Assuming descending
+        
+        return documents[:limit]
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error fetching data from {collection_path} via REST API: {e}")
+        return []
 
 def collaboration_hub_page():
     st.markdown('<div class="dashboard-header">🤝 Collaboration Hub</div>', unsafe_allow_html=True)
 
     st.write("This hub is designed for seamless team collaboration. Share notes, ideas, and updates with your HR team.")
 
-    # Display current user information
     current_username = st.session_state.get('username', 'Anonymous User')
-    # Use current_username as a unique identifier for Firestore paths in this context.
-    # In a full Firebase Auth setup, `auth.currentUser.uid` would be the robust user ID.
     current_user_id = st.session_state.get('user_id', current_username)
     st.info(f"You are logged in as: **{current_username}** (User ID: `{current_user_id}`)")
     st.markdown("---")
@@ -90,26 +174,25 @@ def collaboration_hub_page():
     with tab_notes:
         st.subheader("Shared Team Notes")
 
-        # Input for new note
         new_note_content = st.text_area("Write a new shared note:", key="new_shared_note_input")
 
         if st.button("Add Note", key="add_note_button"):
             if new_note_content:
                 try:
-                    # Define the collection path for public shared notes
-                    # Firestore security rules for this collection should allow:
-                    # allow read, write: if request.auth != null;
-                    notes_collection_ref = db.collection(f"artifacts/{app_id}/public/data/shared_notes")
-
-                    notes_collection_ref.add({
+                    collection_path = f"artifacts/{app_id}/public/data/shared_notes"
+                    url = f"{FIRESTORE_BASE_URL}/{collection_path}?key={FIREBASE_WEB_API_KEY}"
+                    payload = to_firestore_format({
                         "author": current_username,
                         "content": new_note_content,
-                        "timestamp": firestore.SERVER_TIMESTAMP # Use server timestamp for consistency
+                        "timestamp": datetime.now()
                     })
+                    response = requests.post(url, json=payload)
+                    response.raise_for_status()
                     st.success("Note added successfully!")
                     log_activity(f"added a shared note.", user=current_username)
-                    st.rerun() # Rerun to clear the text area and refresh notes
-                except Exception as e:
+                    st.session_state.notes_needs_refresh = True # Flag for refresh
+                    st.rerun()
+                except requests.exceptions.RequestException as e:
                     st.error(f"Error adding note: {e}")
                     log_activity(f"Error adding shared note: {e}", user=current_username)
             else:
@@ -118,51 +201,19 @@ def collaboration_hub_page():
         st.markdown("---")
         st.subheader("Recent Shared Notes")
 
-        # Display existing notes in real-time using on_snapshot
-        # Initialize notes list in session state if not present
-        if 'shared_notes' not in st.session_state:
-            st.session_state.shared_notes = []
+        # Refresh button for notes
+        if st.button("Refresh Notes", key="refresh_notes_button") or st.session_state.get('notes_needs_refresh', True):
+            st.session_state.shared_notes = fetch_collection_data(
+                f"artifacts/{app_id}/public/data/shared_notes",
+                order_by_field="timestamp",
+                limit=20
+            )
+            st.session_state.notes_needs_refresh = False # Reset flag
 
-        # Set up a real-time listener for shared notes
-        # @st.cache_resource ensures this setup function runs only once per session,
-        # preventing multiple listeners from being attached. The on_snapshot callback
-        # itself provides real-time updates to st.session_state.
-        @st.cache_resource(ttl=60) # TTL (Time To Live) in seconds for the cache
-        def setup_notes_listener():
-            notes_collection_ref = db.collection(f"artifacts/{app_id}/public/data/shared_notes")
-            # Order by timestamp descending to show most recent first
-            notes_query = notes_collection_ref.order_by("timestamp", direction=Query.DESCENDING).limit(20)
-
-            # Callback function for snapshot listener: updates session state when data changes
-            def on_snapshot(col_snapshot, changes, read_time):
-                updated_notes = []
-                for doc_snapshot in col_snapshot.docs:
-                    note_data = doc_snapshot.to_dict()
-                    # Convert Firestore Timestamp object to string for display
-                    if 'timestamp' in note_data and hasattr(note_data['timestamp'], 'isoformat'):
-                        note_data['timestamp'] = note_data['timestamp'].isoformat()
-                    updated_notes.append(note_data)
-                st.session_state.shared_notes = updated_notes
-
-            notes_watcher = notes_query.on_snapshot(on_snapshot)
-            return notes_watcher
-
-        # Ensure the listener is set up only once per Streamlit session
-        if 'notes_listener_watcher' not in st.session_state:
-            st.session_state.notes_listener_watcher = setup_notes_listener()
-            log_activity("Firestore notes listener set up.", user="System")
-
-        # Display notes from session state
         if st.session_state.shared_notes:
             for note in st.session_state.shared_notes:
-                timestamp_str = note.get('timestamp', 'N/A')
-                # Re-format timestamp string for better readability if needed
-                if isinstance(timestamp_str, str) and 'T' in timestamp_str:
-                    try:
-                        dt_object = datetime.fromisoformat(timestamp_str)
-                        timestamp_str = dt_object.strftime("%Y-%m-%d %H:%M")
-                    except ValueError:
-                        pass # Keep original string if formatting fails
+                timestamp_obj = note.get('timestamp')
+                timestamp_str = timestamp_obj.strftime("%Y-%m-%d %H:%M") if isinstance(timestamp_obj, datetime) else str(timestamp_obj)
 
                 st.markdown(f"""
                 <div style="background-color: {'#3A3A3A' if st.session_state.get('dark_mode_main') else '#f0f2f6'}; padding: 15px; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
@@ -187,20 +238,22 @@ def collaboration_hub_page():
         if st.button("Add Task", key="add_task_button"):
             if new_task_description and new_task_assignee:
                 try:
-                    # Firestore security rules for this collection should allow:
-                    # allow read, write: if request.auth != null;
-                    tasks_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_tasks")
-                    tasks_collection_ref.add({
+                    collection_path = f"artifacts/{app_id}/public/data/team_tasks"
+                    url = f"{FIRESTORE_BASE_URL}/{collection_path}?key={FIREBASE_WEB_API_KEY}"
+                    payload = to_firestore_format({
                         "description": new_task_description,
                         "assignee": new_task_assignee,
-                        "status": "pending", # Initial status
+                        "status": "pending",
                         "created_by": current_username,
-                        "created_at": firestore.SERVER_TIMESTAMP
+                        "created_at": datetime.now()
                     })
+                    response = requests.post(url, json=payload)
+                    response.raise_for_status()
                     st.success("Task added successfully!")
                     log_activity(f"added a new task: '{new_task_description}'.", user=current_username)
+                    st.session_state.tasks_needs_refresh = True
                     st.rerun()
-                except Exception as e:
+                except requests.exceptions.RequestException as e:
                     st.error(f"Error adding task: {e}")
                     log_activity(f"Error adding task: {e}", user=current_username)
             else:
@@ -209,40 +262,18 @@ def collaboration_hub_page():
         st.markdown("---")
         st.subheader("Current Tasks")
 
-        if 'team_tasks' not in st.session_state:
-            st.session_state.team_tasks = []
-
-        @st.cache_resource(ttl=60)
-        def setup_tasks_listener():
-            tasks_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_tasks")
-            tasks_query = tasks_collection_ref.order_by("created_at", direction=Query.DESCENDING).limit(20)
-
-            def on_snapshot(col_snapshot, changes, read_time):
-                updated_tasks = []
-                for doc_snapshot in col_snapshot.docs:
-                    task_data = doc_snapshot.to_dict()
-                    task_data['id'] = doc_snapshot.id # Store document ID for updates
-                    if 'created_at' in task_data and hasattr(task_data['created_at'], 'isoformat'):
-                        task_data['created_at'] = task_data['created_at'].isoformat()
-                    updated_tasks.append(task_data)
-                st.session_state.team_tasks = updated_tasks
-
-            tasks_watcher = tasks_query.on_snapshot(on_snapshot)
-            return tasks_watcher
-
-        if 'tasks_listener_watcher' not in st.session_state:
-            st.session_state.tasks_listener_watcher = setup_tasks_listener()
-            log_activity("Firestore tasks listener set up.", user="System")
+        if st.button("Refresh Tasks", key="refresh_tasks_button") or st.session_state.get('tasks_needs_refresh', True):
+            st.session_state.team_tasks = fetch_collection_data(
+                f"artifacts/{app_id}/public/data/team_tasks",
+                order_by_field="created_at",
+                limit=20
+            )
+            st.session_state.tasks_needs_refresh = False
 
         if st.session_state.team_tasks:
             for task in st.session_state.team_tasks:
-                timestamp_str = task.get('created_at', 'N/A')
-                if isinstance(timestamp_str, str) and 'T' in timestamp_str:
-                    try:
-                        dt_object = datetime.fromisoformat(timestamp_str)
-                        timestamp_str = dt_object.strftime("%Y-%m-%d %H:%M")
-                    except ValueError:
-                        pass
+                timestamp_obj = task.get('created_at')
+                timestamp_str = timestamp_obj.strftime("%Y-%m-%d %H:%M") if isinstance(timestamp_obj, datetime) else str(timestamp_obj)
 
                 status_color = "green" if task.get('status') == "completed" else "orange"
                 st.markdown(f"""
@@ -255,16 +286,19 @@ def collaboration_hub_page():
                         {task.get('description', 'No description')}
                     </p>
                 """, unsafe_allow_html=True)
-                # Only show "Mark as Complete" button if the task is pending
                 if task.get('status') == 'pending':
                     if st.button(f"Mark as Complete", key=f"complete_task_{task['id']}"):
                         try:
-                            tasks_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_tasks")
-                            tasks_collection_ref.document(task['id']).update({"status": "completed"})
+                            doc_path = f"artifacts/{app_id}/public/data/team_tasks/{task['id']}"
+                            url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}&updateMask.fieldPaths=status"
+                            payload = to_firestore_format({"status": "completed"})
+                            response = requests.patch(url, json=payload) # Use PATCH for partial update
+                            response.raise_for_status()
                             st.success("Task marked as complete!")
                             log_activity(f"marked task '{task['description']}' as complete.", user=current_username)
+                            st.session_state.tasks_needs_refresh = True
                             st.rerun()
-                        except Exception as e:
+                        except requests.exceptions.RequestException as e:
                             st.error(f"Error updating task: {e}")
                             log_activity(f"Error updating task '{task['description']}': {e}", user=current_username)
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -281,19 +315,21 @@ def collaboration_hub_page():
         if st.button("Post Announcement", key="post_announcement_button"):
             if new_announcement_title and new_announcement_content:
                 try:
-                    # Firestore security rules for this collection should allow:
-                    # allow read, write: if request.auth != null;
-                    announcements_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_announcements")
-                    announcements_collection_ref.add({
+                    collection_path = f"artifacts/{app_id}/public/data/team_announcements"
+                    url = f"{FIRESTORE_BASE_URL}/{collection_path}?key={FIREBASE_WEB_API_KEY}"
+                    payload = to_firestore_format({
                         "title": new_announcement_title,
                         "content": new_announcement_content,
                         "author": current_username,
-                        "timestamp": firestore.SERVER_TIMESTAMP
+                        "timestamp": datetime.now()
                     })
+                    response = requests.post(url, json=payload)
+                    response.raise_for_status()
                     st.success("Announcement posted successfully!")
                     log_activity(f"posted an announcement: '{new_announcement_title}'.", user=current_username)
+                    st.session_state.announcements_needs_refresh = True
                     st.rerun()
-                except Exception as e:
+                except requests.exceptions.RequestException as e:
                     st.error(f"Error posting announcement: {e}")
                     log_activity(f"Error posting announcement: {e}", user=current_username)
             else:
@@ -302,39 +338,18 @@ def collaboration_hub_page():
         st.markdown("---")
         st.subheader("Recent Announcements")
 
-        if 'team_announcements' not in st.session_state:
-            st.session_state.team_announcements = []
-
-        @st.cache_resource(ttl=60)
-        def setup_announcements_listener():
-            announcements_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_announcements")
-            announcements_query = announcements_collection_ref.order_by("timestamp", direction=Query.DESCENDING).limit(10)
-
-            def on_snapshot(col_snapshot, changes, read_time):
-                updated_announcements = []
-                for doc_snapshot in col_snapshot.docs:
-                    announcement_data = doc_snapshot.to_dict()
-                    if 'timestamp' in announcement_data and hasattr(announcement_data['timestamp'], 'isoformat'):
-                        announcement_data['timestamp'] = announcement_data['timestamp'].isoformat()
-                    updated_announcements.append(announcement_data)
-                st.session_state.team_announcements = updated_announcements
-
-            announcements_watcher = announcements_query.on_snapshot(on_snapshot)
-            return announcements_watcher
-
-        if 'announcements_listener_watcher' not in st.session_state:
-            st.session_state.announcements_listener_watcher = setup_announcements_listener()
-            log_activity("Firestore announcements listener set up.", user="System")
+        if st.button("Refresh Announcements", key="refresh_announcements_button") or st.session_state.get('announcements_needs_refresh', True):
+            st.session_state.team_announcements = fetch_collection_data(
+                f"artifacts/{app_id}/public/data/team_announcements",
+                order_by_field="timestamp",
+                limit=10
+            )
+            st.session_state.announcements_needs_refresh = False
 
         if st.session_state.team_announcements:
             for announcement in st.session_state.team_announcements:
-                timestamp_str = announcement.get('timestamp', 'N/A')
-                if isinstance(timestamp_str, str) and 'T' in timestamp_str:
-                    try:
-                        dt_object = datetime.fromisoformat(timestamp_str)
-                        timestamp_str = dt_object.strftime("%Y-%m-%d %H:%M")
-                    except ValueError:
-                        pass
+                timestamp_obj = announcement.get('timestamp')
+                timestamp_str = timestamp_obj.strftime("%Y-%m-%d %H:%M") if isinstance(timestamp_obj, datetime) else str(timestamp_obj)
 
                 st.markdown(f"""
                 <div style="background-color: {'#3A3A3A' if st.session_state.get('dark_mode_main') else '#f0f2f6'}; padding: 15px; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
@@ -363,32 +378,35 @@ def collaboration_hub_page():
 
             if add_member_button:
                 if new_member_name and new_member_email and new_member_role:
-                    # Basic email format validation
                     if "@" not in new_member_email or "." not in new_member_email:
                         st.error("Please enter a valid email address for the new member.")
                     else:
                         try:
-                            # Store team member profiles in a public collection
-                            # Firestore security rules: allow read, write: if request.auth != null;
-                            team_members_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_members")
+                            # Use the email as the document ID for easy lookup and uniqueness
+                            doc_path = f"artifacts/{app_id}/public/data/team_members/{new_member_email}"
+                            url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
                             
-                            # Check if a member with this email already exists
-                            existing_member = team_members_collection_ref.document(new_member_email).get()
-                            if existing_member.exists:
+                            # Check if member exists (GET request)
+                            check_response = requests.get(url)
+                            if check_response.status_code == 200:
                                 st.warning(f"A team member with email '{new_member_email}' already exists.")
                             else:
-                                team_members_collection_ref.document(new_member_email).set({
+                                payload = to_firestore_format({
                                     "name": new_member_name,
                                     "email": new_member_email,
                                     "role": new_member_role,
                                     "status": "active", # Default status
                                     "added_by": current_username,
-                                    "added_at": firestore.SERVER_TIMESTAMP
+                                    "added_at": datetime.now()
                                 })
+                                # Use PATCH to create or update document by ID
+                                response = requests.patch(url, json=payload)
+                                response.raise_for_status()
                                 st.success(f"Team member '{new_member_name}' added successfully!")
                                 log_activity(f"added new team member: '{new_member_name}' ({new_member_email}).", user=current_username)
+                                st.session_state.members_needs_refresh = True
                                 st.rerun()
-                        except Exception as e:
+                        except requests.exceptions.RequestException as e:
                             st.error(f"Error adding team member: {e}")
                             log_activity(f"Error adding team member: {e}", user=current_username)
                 else:
@@ -397,33 +415,16 @@ def collaboration_hub_page():
         st.markdown("---")
         st.subheader("Current Team Members")
 
-        if 'team_members' not in st.session_state:
-            st.session_state.team_members = []
-
-        @st.cache_resource(ttl=60)
-        def setup_team_members_listener():
-            team_members_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_members")
-            team_members_query = team_members_collection_ref.order_by("added_at", direction=Query.ASCENDING).limit(50)
-
-            def on_snapshot(col_snapshot, changes, read_time):
-                updated_members = []
-                for doc_snapshot in col_snapshot.docs:
-                    member_data = doc_snapshot.to_dict()
-                    if 'added_at' in member_data and hasattr(member_data['added_at'], 'isoformat'):
-                        member_data['added_at'] = member_data['added_at'].isoformat()
-                    updated_members.append(member_data)
-                st.session_state.team_members = updated_members
-
-            team_members_watcher = team_members_query.on_snapshot(on_snapshot)
-            return team_members_watcher
-
-        if 'team_members_listener_watcher' not in st.session_state:
-            st.session_state.team_members_listener_watcher = setup_team_members_listener()
-            log_activity("Firestore team members listener set up.", user="System")
+        if st.button("Refresh Team Members", key="refresh_members_button") or st.session_state.get('members_needs_refresh', True):
+            st.session_state.team_members = fetch_collection_data(
+                f"artifacts/{app_id}/public/data/team_members",
+                order_by_field="added_at",
+                limit=50
+            )
+            st.session_state.members_needs_refresh = False
 
         if st.session_state.team_members:
             team_members_df = pd.DataFrame(st.session_state.team_members)
-            # Display only relevant columns for the table
             display_cols = ['name', 'email', 'role', 'status', 'added_by']
             st.dataframe(team_members_df[display_cols], use_container_width=True, hide_index=True)
         else:
@@ -437,9 +438,7 @@ def collaboration_hub_page():
 
         # Populate recipient list from actual team members if available, otherwise use mock
         if st.session_state.get('team_members'):
-            recipient_options = [member['email'] for member in st.session_state.team_members]
-            if current_username in recipient_options:
-                recipient_options.remove(current_username) # Don't allow messaging self
+            recipient_options = [member['email'] for member in st.session_state.team_members if member['email'] != current_username]
             if not recipient_options:
                 recipient_options = ["No other members available"]
         else:
@@ -482,21 +481,23 @@ def collaboration_hub_page():
             if add_event_button:
                 if event_title and event_date and event_time:
                     try:
-                        # Firestore security rules for this collection should allow:
-                        # allow read, write: if request.auth != null;
-                        events_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_events")
-                        events_collection_ref.add({
+                        collection_path = f"artifacts/{app_id}/public/data/team_events"
+                        url = f"{FIRESTORE_BASE_URL}/{collection_path}?key={FIREBASE_WEB_API_KEY}"
+                        payload = to_firestore_format({
                             "title": event_title,
                             "date": str(event_date), # Store date as string (YYYY-MM-DD)
                             "time": event_time,
                             "description": event_description,
                             "created_by": current_username,
-                            "created_at": firestore.SERVER_TIMESTAMP
+                            "created_at": datetime.now()
                         })
+                        response = requests.post(url, json=payload)
+                        response.raise_for_status()
                         st.success("Event added successfully!")
                         log_activity(f"added a new calendar event: '{event_title}'.", user=current_username)
+                        st.session_state.events_needs_refresh = True
                         st.rerun()
-                    except Exception as e:
+                    except requests.exceptions.RequestException as e:
                         st.error(f"Error adding event: {e}")
                         log_activity(f"Error adding event: {e}", user=current_username)
                 else:
@@ -505,40 +506,35 @@ def collaboration_hub_page():
         st.markdown("---")
         st.subheader("Upcoming Events")
 
-        if 'team_events' not in st.session_state:
-            st.session_state.team_events = []
-
-        @st.cache_resource(ttl=60)
-        def setup_events_listener():
-            events_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_events")
-            # Order by date and then time to show upcoming events correctly
-            events_query = events_collection_ref.order_by("date", direction=Query.ASCENDING).order_by("time", direction=Query.ASCENDING).limit(10)
-
-            def on_snapshot(col_snapshot, changes, read_time):
-                updated_events = []
-                for doc_snapshot in col_snapshot.docs:
-                    event_data = doc_snapshot.to_dict()
-                    if 'created_at' in event_data and hasattr(event_data['created_at'], 'isoformat'):
-                        event_data['created_at'] = event_data['created_at'].isoformat()
-                    updated_events.append(event_data)
-                st.session_state.team_events = updated_events
-
-            events_watcher = events_query.on_snapshot(on_snapshot)
-            return events_watcher
-
-        if 'events_listener_watcher' not in st.session_state:
-            st.session_state.events_listener_watcher = setup_events_listener()
-            log_activity("Firestore events listener set up.", user="System")
+        if st.button("Refresh Events", key="refresh_events_button") or st.session_state.get('events_needs_refresh', True):
+            st.session_state.team_events = fetch_collection_data(
+                f"artifacts/{app_id}/public/data/team_events",
+                order_by_field="date", # Order by date
+                limit=10
+            )
+            st.session_state.events_needs_refresh = False
 
         if st.session_state.team_events:
             # Filter out past events for "Upcoming Events" display
             today = datetime.now().date()
-            upcoming_events = [
-                event for event in st.session_state.team_events
-                if datetime.strptime(event.get('date', '1900-01-01'), '%Y-%m-%d').date() >= today
-            ]
+            upcoming_events = []
+            for event in st.session_state.team_events:
+                event_date_str = event.get('date', '1900-01-01')
+                try:
+                    event_date_obj = datetime.strptime(event_date_str, '%Y-%m-%d').date()
+                    if event_date_obj >= today:
+                        upcoming_events.append(event)
+                except ValueError:
+                    pass # Ignore malformed dates
+
+            # Sort by time for events on the same day
+            upcoming_events.sort(key=lambda x: (datetime.strptime(x['date'], '%Y-%m-%d').date(), x.get('time', '00:00')))
+
             if upcoming_events:
                 for event in upcoming_events:
+                    timestamp_obj = event.get('created_at')
+                    created_at_str = timestamp_obj.strftime("%Y-%m-%d %H:%M") if isinstance(timestamp_obj, datetime) else str(timestamp_obj)
+
                     st.markdown(f"""
                     <div style="background-color: {'#3A3A3A' if st.session_state.get('dark_mode_main') else '#f0f2f6'}; padding: 15px; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
                         <h4 style="color: {'#00cec9' if st.session_state.get('dark_mode_main') else '#00cec9'}; margin-bottom: 5px;">{event.get('title', 'No Title')}</h4>
@@ -549,7 +545,7 @@ def collaboration_hub_page():
                             {event.get('description', 'No description')}
                         </p>
                         <p style="font-size: 0.8em; color: {'#999999' if st.session_state.get('dark_mode_main') else '#888'}; margin-top: 5px;">
-                            Added by: {event.get('created_by', 'Unknown')}
+                            Added by: {event.get('created_by', 'Unknown')} at {created_at_str}
                         </p>
                     </div>
                     """, unsafe_allow_html=True)
@@ -572,21 +568,23 @@ def collaboration_hub_page():
             if add_resource_button:
                 if resource_name:
                     try:
-                        # Firestore security rules for this collection should allow:
-                        # allow read, write: if request.auth != null;
-                        resources_collection_ref = db.collection(f"artifacts/{app_id}/public/data/resource_library")
-                        resources_collection_ref.add({
+                        collection_path = f"artifacts/{app_id}/public/data/resource_library"
+                        url = f"{FIRESTORE_BASE_URL}/{collection_path}?key={FIREBASE_WEB_API_KEY}"
+                        payload = to_firestore_format({
                             "name": resource_name,
                             "url": resource_url,
                             "description": resource_description,
                             "category": resource_category,
                             "uploaded_by": current_username,
-                            "uploaded_at": firestore.SERVER_TIMESTAMP
+                            "uploaded_at": datetime.now()
                         })
+                        response = requests.post(url, json=payload)
+                        response.raise_for_status()
                         st.success("Resource added successfully!")
                         log_activity(f"added a new resource: '{resource_name}'.", user=current_username)
+                        st.session_state.resources_needs_refresh = True
                         st.rerun()
-                    except Exception as e:
+                    except requests.exceptions.RequestException as e:
                         st.error(f"Error adding resource: {e}")
                         log_activity(f"Error adding resource: {e}", user=current_username)
                 else:
@@ -595,39 +593,18 @@ def collaboration_hub_page():
         st.markdown("---")
         st.subheader("Available Resources")
 
-        if 'resource_library' not in st.session_state:
-            st.session_state.resource_library = []
-
-        @st.cache_resource(ttl=60)
-        def setup_resources_listener():
-            resources_collection_ref = db.collection(f"artifacts/{app_id}/public/data/resource_library")
-            resources_query = resources_collection_ref.order_by("uploaded_at", direction=Query.DESCENDING).limit(20)
-
-            def on_snapshot(col_snapshot, changes, read_time):
-                updated_resources = []
-                for doc_snapshot in col_snapshot.docs:
-                    resource_data = doc_snapshot.to_dict()
-                    if 'uploaded_at' in resource_data and hasattr(resource_data['uploaded_at'], 'isoformat'):
-                        resource_data['uploaded_at'] = resource_data['uploaded_at'].isoformat()
-                    updated_resources.append(resource_data)
-                st.session_state.resource_library = updated_resources
-
-            resources_watcher = resources_query.on_snapshot(on_snapshot)
-            return resources_watcher
-
-        if 'resources_listener_watcher' not in st.session_state:
-            st.session_state.resources_listener_watcher = setup_resources_listener()
-            log_activity("Firestore resources listener set up.", user="System")
+        if st.button("Refresh Resources", key="refresh_resources_button") or st.session_state.get('resources_needs_refresh', True):
+            st.session_state.resource_library = fetch_collection_data(
+                f"artifacts/{app_id}/public/data/resource_library",
+                order_by_field="uploaded_at",
+                limit=20
+            )
+            st.session_state.resources_needs_refresh = False
 
         if st.session_state.resource_library:
             for resource in st.session_state.resource_library:
-                timestamp_str = resource.get('uploaded_at', 'N/A')
-                if isinstance(timestamp_str, str) and 'T' in timestamp_str:
-                    try:
-                        dt_object = datetime.fromisoformat(timestamp_str)
-                        timestamp_str = dt_object.strftime("%Y-%m-%d %H:%M")
-                    except ValueError:
-                        pass
+                timestamp_obj = resource.get('uploaded_at')
+                timestamp_str = timestamp_obj.strftime("%Y-%m-%d %H:%M") if isinstance(timestamp_obj, datetime) else str(timestamp_obj)
 
                 st.markdown(f"""
                 <div style="background-color: {'#3A3A3A' if st.session_state.get('dark_mode_main') else '#f0f2f6'}; padding: 15px; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
@@ -662,21 +639,23 @@ def collaboration_hub_page():
                         st.warning("Please provide at least two options for the poll.")
                     else:
                         try:
-                            # Firestore security rules for this collection should allow:
-                            # allow read, write: if request.auth != null;
-                            polls_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_polls")
-                            polls_collection_ref.add({
+                            collection_path = f"artifacts/{app_id}/public/data/team_polls"
+                            url = f"{FIRESTORE_BASE_URL}/{collection_path}?key={FIREBASE_WEB_API_KEY}"
+                            payload = to_firestore_format({
                                 "question": poll_question,
                                 "options": options,
                                 "votes": {option: 0 for option in options}, # Initialize votes to 0
                                 "active": True,
                                 "created_by": current_username,
-                                "created_at": firestore.SERVER_TIMESTAMP
+                                "created_at": datetime.now()
                             })
+                            response = requests.post(url, json=payload)
+                            response.raise_for_status()
                             st.success("Poll created successfully!")
                             log_activity(f"created a new poll: '{poll_question}'.", user=current_username)
+                            st.session_state.polls_needs_refresh = True
                             st.rerun()
-                        except Exception as e:
+                        except requests.exceptions.RequestException as e:
                             st.error(f"Error creating poll: {e}")
                             log_activity(f"Error creating poll: {e}", user=current_username)
                 else:
@@ -685,39 +664,27 @@ def collaboration_hub_page():
         st.markdown("---")
         st.subheader("Active Polls")
 
-        if 'active_polls' not in st.session_state:
-            st.session_state.active_polls = []
-
-        @st.cache_resource(ttl=60)
-        def setup_polls_listener():
-            polls_collection_ref = db.collection(f"artifacts/{app_id}/public/data/team_polls")
-            # Only fetch active polls
-            polls_query = polls_collection_ref.where(filter=FieldFilter("active", "==", True)).order_by("created_at", direction=Query.DESCENDING).limit(5)
-
-            def on_snapshot(col_snapshot, changes, read_time):
-                updated_polls = []
-                for doc_snapshot in col_snapshot.docs:
-                    poll_data = doc_snapshot.to_dict()
-                    poll_data['id'] = doc_snapshot.id # Store document ID
-                    if 'created_at' in poll_data and hasattr(poll_data['created_at'], 'isoformat'):
-                        poll_data['created_at'] = poll_data['created_at'].isoformat()
-                    updated_polls.append(poll_data)
-                st.session_state.active_polls = updated_polls
-
-            polls_watcher = polls_query.on_snapshot(on_snapshot)
-            return polls_watcher
-
-        if 'polls_listener_watcher' not in st.session_state:
-            st.session_state.polls_listener_watcher = setup_polls_listener()
-            log_activity("Firestore polls listener set up.", user="System")
+        if st.button("Refresh Polls", key="refresh_polls_button") or st.session_state.get('polls_needs_refresh', True):
+            # For active polls, we need to filter. This requires a structured query POST request.
+            # For simplicity with GET, we'll fetch all and filter in Python.
+            all_polls = fetch_collection_data(
+                f"artifacts/{app_id}/public/data/team_polls",
+                order_by_field="created_at",
+                limit=5 # Limit for active polls
+            )
+            st.session_state.active_polls = [poll for poll in all_polls if poll.get('active') == True]
+            st.session_state.polls_needs_refresh = False
 
         if st.session_state.active_polls:
             for poll in st.session_state.active_polls:
+                timestamp_obj = poll.get('created_at')
+                timestamp_str = timestamp_obj.strftime("%Y-%m-%d %H:%M") if isinstance(timestamp_obj, datetime) else str(timestamp_obj)
+
                 st.markdown(f"""
                 <div style="background-color: {'#3A3A3A' if st.session_state.get('dark_mode_main') else '#f0f2f6'}; padding: 15px; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
                     <h4 style="color: {'#00cec9' if st.session_state.get('dark_mode_main') else '#00cec9'}; margin-bottom: 5px;">{poll.get('question', 'No Question')}</h4>
                     <p style="font-size: 0.9em; color: {'#BBBBBB' if st.session_state.get('dark_mode_main') else '#666'}; margin-bottom: 5px;">
-                        Created by: **{poll.get('created_by', 'Unknown')}**
+                        Created by: **{poll.get('created_by', 'Unknown')}** at {timestamp_str}
                     </p>
                 """, unsafe_allow_html=True)
 
@@ -730,19 +697,25 @@ def collaboration_hub_page():
                     if st.button("Submit Vote", key=f"submit_vote_{poll['id']}"):
                         if selected_option:
                             try:
-                                poll_ref = db.collection(f"artifacts/{app_id}/public/data/team_polls").document(poll['id'])
-                                # Increment the vote count for the selected option.
-                                # For production, consider using Firestore transactions (db.transaction)
-                                # or FieldValue.increment for safer concurrent updates.
-                                # Example: poll_ref.update({f"votes.{selected_option}": firestore.Increment(1)})
+                                doc_path = f"artifacts/{app_id}/public/data/team_polls/{poll['id']}"
+                                url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}&updateMask.fieldPaths=votes"
+                                
                                 current_votes = poll.get('votes', {})
                                 current_votes[selected_option] = current_votes.get(selected_option, 0) + 1
-                                poll_ref.update({"votes": current_votes})
+                                
+                                # Only update the 'votes' field
+                                payload = {"fields": {"votes": {"mapValue": {"fields": {
+                                    k: {"integerValue": str(v)} for k, v in current_votes.items()
+                                }}}}}
+                                
+                                response = requests.patch(url, json=payload)
+                                response.raise_for_status()
                                 st.session_state[user_voted_key] = True # Mark user as voted in session
                                 st.success("Vote submitted successfully!")
                                 log_activity(f"voted on poll '{poll['question']}' for option '{selected_option}'.", user=current_username)
+                                st.session_state.polls_needs_refresh = True
                                 st.rerun() # Rerun to update the displayed results
-                            except Exception as e:
+                            except requests.exceptions.RequestException as e:
                                 st.error(f"Error submitting vote: {e}")
                                 log_activity(f"Error submitting vote: {e}", user=current_username)
                         else:
@@ -758,16 +731,20 @@ def collaboration_hub_page():
                     st.info("No votes yet.")
 
                 # Option to close poll (only for creator or admin)
-                admin_usernames = ("admin@forscreenerpro", "admin@forscreenerpro2", "manav.nagpal2005@gmail.2005@gmail.com")
+                admin_usernames = ("admin@forscreenerpro", "admin@forscreenerpro2", "manav.nagpal2005@gmail.com")
                 if current_username == poll.get('created_by') or current_username in admin_usernames:
                     if poll.get('active') and st.button("Close Poll", key=f"close_poll_{poll['id']}"):
                         try:
-                            poll_ref = db.collection(f"artifacts/{app_id}/public/data/team_polls").document(poll['id'])
-                            poll_ref.update({"active": False})
+                            doc_path = f"artifacts/{app_id}/public/data/team_polls/{poll['id']}"
+                            url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}&updateMask.fieldPaths=active"
+                            payload = to_firestore_format({"active": False})
+                            response = requests.patch(url, json=payload)
+                            response.raise_for_status()
                             st.success("Poll closed successfully!")
                             log_activity(f"closed poll: '{poll['question']}'.", user=current_username)
+                            st.session_state.polls_needs_refresh = True
                             st.rerun()
-                        except Exception as e:
+                        except requests.exceptions.RequestException as e:
                             st.error(f"Error closing poll: {e}")
                             log_activity(f"Error closing poll: {e}", user=current_username)
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -778,39 +755,19 @@ def collaboration_hub_page():
         st.subheader("Recent Activity Feed")
         st.write("See a chronological log of recent actions within the Collaboration Hub across all users.")
 
-        if 'firestore_activity_log' not in st.session_state:
-            st.session_state.firestore_activity_log = []
-
-        @st.cache_resource(ttl=60)
-        def setup_activity_feed_listener():
-            activity_collection_ref = db.collection(f"artifacts/{app_id}/public/data/activity_feed")
-            activity_query = activity_collection_ref.order_by("timestamp", direction=Query.DESCENDING).limit(30)
-
-            def on_snapshot(col_snapshot, changes, read_time):
-                updated_activity = []
-                for doc_snapshot in col_snapshot.docs:
-                    activity_data = doc_snapshot.to_dict()
-                    if 'timestamp' in activity_data and hasattr(activity_data['timestamp'], 'isoformat'):
-                        activity_data['timestamp'] = activity_data['timestamp'].isoformat()
-                    updated_activity.append(activity_data)
-                st.session_state.firestore_activity_log = updated_activity
-
-            activity_watcher = activity_query.on_snapshot(on_snapshot)
-            return activity_watcher
-
-        if 'activity_feed_listener_watcher' not in st.session_state:
-            st.session_state.activity_feed_listener_watcher = setup_activity_feed_listener()
-            log_activity("Firestore activity feed listener set up.", user="System")
+        if st.button("Refresh Activity Feed", key="refresh_activity_button") or st.session_state.get('activity_needs_refresh', True):
+            st.session_state.firestore_activity_log = fetch_collection_data(
+                f"artifacts/{app_id}/public/data/activity_feed",
+                order_by_field="timestamp",
+                limit=30
+            )
+            st.session_state.activity_needs_refresh = False
 
         if st.session_state.firestore_activity_log:
             for entry in st.session_state.firestore_activity_log:
-                timestamp_str = entry.get('timestamp', 'N/A')
-                if isinstance(timestamp_str, str) and 'T' in timestamp_str:
-                    try:
-                        dt_object = datetime.fromisoformat(timestamp_str)
-                        timestamp_str = dt_object.strftime("%Y-%m-%d %H:%M")
-                    except ValueError:
-                        pass
+                timestamp_obj = entry.get('timestamp')
+                timestamp_str = timestamp_obj.strftime("%Y-%m-%d %H:%M") if isinstance(timestamp_obj, datetime) else str(timestamp_obj)
+
                 st.markdown(f"""
                 <div style="background-color: {'#3A3A3A' if st.session_state.get('dark_mode_main') else '#f0f2f6'}; padding: 10px; border-radius: 8px; margin-bottom: 5px; font-size: 0.9em; color: {'#E0E0E0' if st.session_state.get('dark_mode_main') else '#333'};">
                     **[{timestamp_str}] {entry.get('user', 'Unknown')}:** {entry.get('message', 'No message')}
