@@ -15,13 +15,14 @@ import json
 try:
     if 'firebase_initialized' not in st.session_state:
         # Use the global variables provided by the Canvas environment
-        app_id = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        firebase_config = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        # Correct Python syntax for accessing global variables with fallback
+        app_id = globals().get('__app_id', 'default-app-id')
+        firebase_config_str = globals().get('__firebase_config', '{}')
+        firebase_config = json.loads(firebase_config_str)
 
         # Initialize Firebase Admin SDK for server-side operations (like Firestore)
         # This part assumes you have a service account JSON file.
         # For Canvas, we'll use a placeholder and rely on the environment's setup.
-        # In a real deployment, you'd load your service account credentials.
         
         # Check if an app is already initialized to prevent re-initialization errors
         if not initialize_app(): # No specific app name, checks default app
@@ -34,7 +35,7 @@ try:
         st.success("Firebase initialized and connected to Firestore.")
 except Exception as e:
     st.error(f"Failed to initialize Firebase or connect to Firestore: {e}")
-    st.info("Ensure Firebase is correctly configured in your environment.")
+    st.info("Ensure Firebase is correctly configured in your environment and `firebase_admin` is installed.")
 
 def candidate_portal_page():
     """
