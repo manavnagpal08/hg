@@ -6,18 +6,8 @@ import os
 import pandas as pd # Import pandas for DataFrame
 
 # --- Firebase REST API Configuration ---
-# Global variables from Canvas environment (assuming they are set by the environment)
-# These are typically set in main.py, but we'll ensure they are accessible here.
-# For security, in a real app, the API_KEY might be handled server-side.
-FIREBASE_PROJECT_ID = os.environ.get('__app_id', 'default-app-id')
-# In a real scenario, you'd get FIREBASE_WEB_API_KEY from a secure source,
-# potentially passed from main.py or an environment variable.
-# For this Canvas environment, we'll assume it's available or use a placeholder.
-# You might need to manually set this in your main.py or environment if not automatically provided.
-FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'AIzaSyDjC7tdmpEkpsipgf9r1c3HlTO7C7BZ6Mw') # Replace with your actual Web API Key
-
-# Base URL for Firestore REST API
-FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
+# FIREBASE_WEB_API_KEY will be passed from main.py or assumed from environment
+# FIRESTORE_BASE_URL will be constructed using the passed app_id
 
 # --- Helper function for converting Python dict to Firestore REST API format ---
 def to_firestore_format(data: dict) -> dict:
@@ -46,11 +36,13 @@ def to_firestore_format(data: dict) -> dict:
                     array_values.append({"doubleValue": item})
                 elif isinstance(item, bool):
                     array_values.append({"booleanValue": item})
+                elif isinstance(item, dict): # Handle nested dicts in lists
+                    array_values.append({"mapValue": {"fields": to_firestore_format(item)['fields']}})
                 # Add more types as needed for list elements
             fields[key] = {"arrayValue": {"values": array_values}}
         elif isinstance(value, dict):
             # For nested dictionaries (maps), recursively convert
-            fields[key] = {"mapValue": {"fields": to_firestore_format(value)}}
+            fields[key] = {"mapValue": {"fields": to_firestore_format(value)['fields']}}
         elif value is None:
             fields[key] = {"nullValue": None}
         else:
@@ -82,7 +74,7 @@ def from_firestore_format(firestore_data: dict) -> dict:
                 data[key] = value_obj["timestampValue"] # Keep as string if parsing fails
         elif "arrayValue" in value_obj and "values" in value_obj["arrayValue"]:
             # Recursively convert array elements
-            data[key] = [from_firestore_format({"fields": {"_": item}})["_"] for item in value_obj["arrayValue"]["values"]]
+            data[key] = [from_firestore_format({"fields": {"_": item}})["_"] if "mapValue" not in item else from_firestore_format({"fields": item["mapValue"]["fields"]}) for item in value_obj["arrayValue"]["values"]]
         elif "mapValue" in value_obj and "fields" in value_obj["mapValue"]:
             # Recursively convert map values
             data[key] = from_firestore_format({"fields": value_obj["mapValue"]["fields"]})
@@ -92,13 +84,11 @@ def from_firestore_format(firestore_data: dict) -> dict:
     return data
 
 # --- Helper function for activity logging ---
-def log_activity(message: str, user: str = None):
+# This function now takes FIREBASE_WEB_API_KEY and FIRESTORE_BASE_URL as arguments
+def log_activity(message: str, user: str, FIREBASE_WEB_API_KEY: str, FIRESTORE_BASE_URL: str, app_id: str):
     """
     Logs an activity with a timestamp to Firestore (via REST API) and session state.
     """
-    if user is None:
-        user = st.session_state.get('username', 'Anonymous User')
-
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"[{timestamp}] {user}: {message}"
 
@@ -120,17 +110,12 @@ def log_activity(message: str, user: str = None):
         response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
     except requests.exceptions.RequestException as e:
         st.error(f"Error logging activity to Firestore via REST API: {e}")
-        # Note: If this error persists, check your Firebase Web API Key and network.
 
 # --- Data Fetching Functions (replacing on_snapshot listeners) ---
-
-def fetch_collection_data(collection_path: str, order_by_field: str = None, limit: int = 20):
+# These functions now take FIREBASE_WEB_API_KEY and FIRESTORE_BASE_URL as arguments
+def fetch_collection_data(collection_path: str, FIREBASE_WEB_API_KEY: str, FIRESTORE_BASE_URL: str, order_by_field: str = None, limit: int = 20):
     """Fetches documents from a Firestore collection via REST API."""
     url = f"{FIRESTORE_BASE_URL}/{collection_path}?key={FIREBASE_WEB_API_KEY}"
-    
-    # For ordering and limiting, we need to use the runQuery endpoint for structured queries
-    # For simplicity, we'll fetch all and then sort/limit in Python for now.
-    # A more efficient way for large datasets would be to use the structuredQuery POST endpoint.
     
     try:
         response = requests.get(url)
@@ -155,7 +140,9 @@ def fetch_collection_data(collection_path: str, order_by_field: str = None, limi
         st.error(f"Error fetching data from {collection_path} via REST API: {e}")
         return []
 
-def collaboration_hub_page():
+# --- Main Collaboration Hub Page Function ---
+# Now accepts app_id, FIREBASE_WEB_API_KEY, and FIRESTORE_BASE_URL as parameters
+def collaboration_hub_page(app_id: str, FIREBASE_WEB_API_KEY: str, FIRESTORE_BASE_URL: str):
     st.markdown('<div class="dashboard-header">🤝 Collaboration Hub</div>', unsafe_allow_html=True)
 
     st.write("This hub is designed for seamless team collaboration. Share notes, ideas, and updates with your HR team.")
@@ -189,12 +176,12 @@ def collaboration_hub_page():
                     response = requests.post(url, json=payload)
                     response.raise_for_status()
                     st.success("Note added successfully!")
-                    log_activity(f"added a shared note.", user=current_username)
+                    log_activity(f"added a shared note.", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                     st.session_state.notes_needs_refresh = True # Flag for refresh
                     st.rerun()
                 except requests.exceptions.RequestException as e:
                     st.error(f"Error adding note: {e}")
-                    log_activity(f"Error adding shared note: {e}", user=current_username)
+                    log_activity(f"Error adding shared note: {e}", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
             else:
                 st.warning("Please write something before adding a note.")
 
@@ -205,6 +192,8 @@ def collaboration_hub_page():
         if st.button("Refresh Notes", key="refresh_notes_button") or st.session_state.get('notes_needs_refresh', True):
             st.session_state.shared_notes = fetch_collection_data(
                 f"artifacts/{app_id}/public/data/shared_notes",
+                FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+                FIRESTORE_BASE_URL=FIRESTORE_BASE_URL,
                 order_by_field="timestamp",
                 limit=20
             )
@@ -250,12 +239,12 @@ def collaboration_hub_page():
                     response = requests.post(url, json=payload)
                     response.raise_for_status()
                     st.success("Task added successfully!")
-                    log_activity(f"added a new task: '{new_task_description}'.", user=current_username)
+                    log_activity(f"added a new task: '{new_task_description}'.", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                     st.session_state.tasks_needs_refresh = True
                     st.rerun()
                 except requests.exceptions.RequestException as e:
                     st.error(f"Error adding task: {e}")
-                    log_activity(f"Error adding task: {e}", user=current_username)
+                    log_activity(f"Error adding task: {e}", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
             else:
                 st.warning("Please provide a task description and assignee.")
 
@@ -265,6 +254,8 @@ def collaboration_hub_page():
         if st.button("Refresh Tasks", key="refresh_tasks_button") or st.session_state.get('tasks_needs_refresh', True):
             st.session_state.team_tasks = fetch_collection_data(
                 f"artifacts/{app_id}/public/data/team_tasks",
+                FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+                FIRESTORE_BASE_URL=FIRESTORE_BASE_URL,
                 order_by_field="created_at",
                 limit=20
             )
@@ -295,12 +286,12 @@ def collaboration_hub_page():
                             response = requests.patch(url, json=payload) # Use PATCH for partial update
                             response.raise_for_status()
                             st.success("Task marked as complete!")
-                            log_activity(f"marked task '{task['description']}' as complete.", user=current_username)
+                            log_activity(f"marked task '{task['description']}' as complete.", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                             st.session_state.tasks_needs_refresh = True
                             st.rerun()
                         except requests.exceptions.RequestException as e:
                             st.error(f"Error updating task: {e}")
-                            log_activity(f"Error updating task '{task['description']}': {e}", user=current_username)
+                            log_activity(f"Error updating task '{task['description']}': {e}", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                 st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.info("No tasks added yet. Add a new task above!")
@@ -326,12 +317,12 @@ def collaboration_hub_page():
                     response = requests.post(url, json=payload)
                     response.raise_for_status()
                     st.success("Announcement posted successfully!")
-                    log_activity(f"posted an announcement: '{new_announcement_title}'.", user=current_username)
+                    log_activity(f"posted an announcement: '{new_announcement_title}'.", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                     st.session_state.announcements_needs_refresh = True
                     st.rerun()
                 except requests.exceptions.RequestException as e:
                     st.error(f"Error posting announcement: {e}")
-                    log_activity(f"Error posting announcement: {e}", user=current_username)
+                    log_activity(f"Error posting announcement: {e}", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
             else:
                 st.warning("Please provide both a title and content for the announcement.")
 
@@ -341,6 +332,8 @@ def collaboration_hub_page():
         if st.button("Refresh Announcements", key="refresh_announcements_button") or st.session_state.get('announcements_needs_refresh', True):
             st.session_state.team_announcements = fetch_collection_data(
                 f"artifacts/{app_id}/public/data/team_announcements",
+                FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+                FIRESTORE_BASE_URL=FIRESTORE_BASE_URL,
                 order_by_field="timestamp",
                 limit=10
             )
@@ -403,12 +396,12 @@ def collaboration_hub_page():
                                 response = requests.patch(url, json=payload)
                                 response.raise_for_status()
                                 st.success(f"Team member '{new_member_name}' added successfully!")
-                                log_activity(f"added new team member: '{new_member_name}' ({new_member_email}).", user=current_username)
+                                log_activity(f"added new team member: '{new_member_name}' ({new_member_email}).", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                                 st.session_state.members_needs_refresh = True
                                 st.rerun()
                         except requests.exceptions.RequestException as e:
                             st.error(f"Error adding team member: {e}")
-                            log_activity(f"Error adding team member: {e}", user=current_username)
+                            log_activity(f"Error adding team member: {e}", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                 else:
                     st.warning("Please fill in all fields for the new team member.")
 
@@ -418,6 +411,8 @@ def collaboration_hub_page():
         if st.button("Refresh Team Members", key="refresh_members_button") or st.session_state.get('members_needs_refresh', True):
             st.session_state.team_members = fetch_collection_data(
                 f"artifacts/{app_id}/public/data/team_members",
+                FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+                FIRESTORE_BASE_URL=FIRESTORE_BASE_URL,
                 order_by_field="added_at",
                 limit=50
             )
@@ -450,7 +445,7 @@ def collaboration_hub_page():
         if st.button("Send Mock Message", key="send_mock_dm_button"):
             if mock_message and mock_recipient != "No other members available":
                 st.success(f"Mock message sent to {mock_recipient}: '{mock_message}'")
-                log_activity(f"sent a mock DM to '{mock_recipient}'.", user=current_username)
+                log_activity(f"sent a mock DM to '{mock_recipient}'.", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
             else:
                 st.warning("Please type a message and select a valid recipient to send.")
 
@@ -494,12 +489,12 @@ def collaboration_hub_page():
                         response = requests.post(url, json=payload)
                         response.raise_for_status()
                         st.success("Event added successfully!")
-                        log_activity(f"added a new calendar event: '{event_title}'.", user=current_username)
+                        log_activity(f"added a new calendar event: '{event_title}'.", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                         st.session_state.events_needs_refresh = True
                         st.rerun()
                     except requests.exceptions.RequestException as e:
                         st.error(f"Error adding event: {e}")
-                        log_activity(f"Error adding event: {e}", user=current_username)
+                        log_activity(f"Error adding event: {e}", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                 else:
                     st.warning("Please fill in event title, date, and time.")
 
@@ -509,6 +504,8 @@ def collaboration_hub_page():
         if st.button("Refresh Events", key="refresh_events_button") or st.session_state.get('events_needs_refresh', True):
             st.session_state.team_events = fetch_collection_data(
                 f"artifacts/{app_id}/public/data/team_events",
+                FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+                FIRESTORE_BASE_URL=FIRESTORE_BASE_URL,
                 order_by_field="date", # Order by date
                 limit=10
             )
@@ -581,12 +578,12 @@ def collaboration_hub_page():
                         response = requests.post(url, json=payload)
                         response.raise_for_status()
                         st.success("Resource added successfully!")
-                        log_activity(f"added a new resource: '{resource_name}'.", user=current_username)
+                        log_activity(f"added a new resource: '{resource_name}'.", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                         st.session_state.resources_needs_refresh = True
                         st.rerun()
                     except requests.exceptions.RequestException as e:
                         st.error(f"Error adding resource: {e}")
-                        log_activity(f"Error adding resource: {e}", user=current_username)
+                        log_activity(f"Error adding resource: {e}", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                 else:
                     st.warning("Please provide a resource name.")
 
@@ -596,6 +593,8 @@ def collaboration_hub_page():
         if st.button("Refresh Resources", key="refresh_resources_button") or st.session_state.get('resources_needs_refresh', True):
             st.session_state.resource_library = fetch_collection_data(
                 f"artifacts/{app_id}/public/data/resource_library",
+                FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+                FIRESTORE_BASE_URL=FIRESTORE_BASE_URL,
                 order_by_field="uploaded_at",
                 limit=20
             )
@@ -652,12 +651,12 @@ def collaboration_hub_page():
                             response = requests.post(url, json=payload)
                             response.raise_for_status()
                             st.success("Poll created successfully!")
-                            log_activity(f"created a new poll: '{poll_question}'.", user=current_username)
+                            log_activity(f"created a new poll: '{poll_question}'.", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                             st.session_state.polls_needs_refresh = True
                             st.rerun()
                         except requests.exceptions.RequestException as e:
                             st.error(f"Error creating poll: {e}")
-                            log_activity(f"Error creating poll: {e}", user=current_username)
+                            log_activity(f"Error creating poll: {e}", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                 else:
                     st.warning("Please provide a poll question and options.")
 
@@ -669,6 +668,8 @@ def collaboration_hub_page():
             # For simplicity with GET, we'll fetch all and filter in Python.
             all_polls = fetch_collection_data(
                 f"artifacts/{app_id}/public/data/team_polls",
+                FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+                FIRESTORE_BASE_URL=FIRESTORE_BASE_URL,
                 order_by_field="created_at",
                 limit=5 # Limit for active polls
             )
@@ -712,12 +713,12 @@ def collaboration_hub_page():
                                 response.raise_for_status()
                                 st.session_state[user_voted_key] = True # Mark user as voted in session
                                 st.success("Vote submitted successfully!")
-                                log_activity(f"voted on poll '{poll['question']}' for option '{selected_option}'.", user=current_username)
+                                log_activity(f"voted on poll '{poll['question']}' for option '{selected_option}'.", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                                 st.session_state.polls_needs_refresh = True
                                 st.rerun() # Rerun to update the displayed results
                             except requests.exceptions.RequestException as e:
                                 st.error(f"Error submitting vote: {e}")
-                                log_activity(f"Error submitting vote: {e}", user=current_username)
+                                log_activity(f"Error submitting vote: {e}", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                         else:
                             st.warning("Please select an option to vote.")
                 
@@ -741,12 +742,12 @@ def collaboration_hub_page():
                             response = requests.patch(url, json=payload)
                             response.raise_for_status()
                             st.success("Poll closed successfully!")
-                            log_activity(f"closed poll: '{poll['question']}'.", user=current_username)
+                            log_activity(f"closed poll: '{poll['question']}'.", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                             st.session_state.polls_needs_refresh = True
                             st.rerun()
                         except requests.exceptions.RequestException as e:
                             st.error(f"Error closing poll: {e}")
-                            log_activity(f"Error closing poll: {e}", user=current_username)
+                            log_activity(f"Error closing poll: {e}", user=current_username, FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL=FIRESTORE_BASE_URL, app_id=app_id)
                 st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.info("No active polls. Be the first to create one!")
@@ -758,6 +759,8 @@ def collaboration_hub_page():
         if st.button("Refresh Activity Feed", key="refresh_activity_button") or st.session_state.get('activity_needs_refresh', True):
             st.session_state.firestore_activity_log = fetch_collection_data(
                 f"artifacts/{app_id}/public/data/activity_feed",
+                FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+                FIRESTORE_BASE_URL=FIRESTORE_BASE_URL,
                 order_by_field="timestamp",
                 limit=30
             )
