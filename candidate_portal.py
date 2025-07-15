@@ -26,8 +26,18 @@ try:
         
         # Check if an app is already initialized to prevent re-initialization errors
         if not initialize_app(): # No specific app name, checks default app
-            cred = credentials.Certificate(firebase_config) # Assuming firebaseConfig is your service account dict
-            initialize_app(cred)
+            # If firebase_config is empty or doesn't contain a 'type' key (e.g., from service account)
+            # then it's likely running in a Canvas environment that handles credentials implicitly.
+            # Otherwise, attempt to load credentials from the provided config.
+            if firebase_config and 'type' in firebase_config:
+                cred = credentials.Certificate(firebase_config)
+                initialize_app(cred)
+            else:
+                # This path is for environments where Firebase is implicitly configured
+                # or where no explicit service account JSON is needed for the Admin SDK.
+                # In such cases, initialize_app() without arguments might work if default credentials are set up.
+                # If this is still failing, it implies the underlying environment is not correctly configured for Firebase Admin SDK.
+                initialize_app() # Attempt to initialize with default credentials if available
         
         st.session_state.firebase_initialized = True
         db = firestore.client()
@@ -64,7 +74,9 @@ def candidate_portal_page():
     # and each document has a 'candidate_email' field matching the logged-in user.
     try:
         # Query applications for the current candidate
-        applications_ref = db.collection('candidate_applications').where('candidate_email', '==', candidate_email)
+        # We need to use the app_id for the collection path as per Firestore rules
+        app_id = globals().get('__app_id', 'default-app-id')
+        applications_ref = db.collection(f'artifacts/{app_id}/public/data/candidate_applications').where('candidate_email', '==', candidate_email)
         docs = applications_ref.stream()
 
         applications_data = []
