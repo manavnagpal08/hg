@@ -1,0 +1,242 @@
+/* Hide GitHub fork button, Streamlit menu and footer */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;} /* Optional: hides the top bar */
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+    /* Background and color will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.main .block-container {
+    padding: 2rem;
+    border-radius: 20px;
+    /* Background and shadow will be set dynamically by Streamlit based on dark_mode toggle */
+    animation: fadeIn 0.8s ease-in-out;
+}
+@keyframes fadeIn {
+    0% { opacity: 0; transform: translateY(20px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+h1, h2, h3, h4, h5, h6 {
+    color: #00cec9; /* Consistent teal for headers */
+    font-weight: 700;
+}
+.dashboard-header {
+    font-size: 2.2rem;
+    font-weight: 800; /* Bolder header */
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+    padding-bottom: 0.5rem;
+    border-bottom: 3px solid #00cec9;
+    display: inline-block;
+    margin-bottom: 2rem;
+    animation: slideInLeft 0.8s ease-out;
+}
+@keyframes slideInLeft {
+    0% { transform: translateX(-40px); opacity: 0; }
+    100% { transform: translateX(0); opacity: 1; }
+}
+.stMetric {
+    /* Background, shadow, and color will be set dynamically by Streamlit based on dark_mode toggle */
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    transition: transform 0.2s ease, box-shadow 0.2s ease; /* Added transition */
+}
+.stMetric:hover {
+    transform: translateY(-5px); /* More pronounced lift */
+    /* Stronger shadow on hover will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stMetric > div[data-testid="stMetricValue"] {
+    font-size: 2.5rem;
+    font-weight: 800; /* Bolder metric value */
+    color: #00cec9;
+}
+.stMetric > div[data-testid="stMetricLabel"] {
+    font-size: 1rem;
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stButton>button {
+    background-color: #00cec9;
+    color: white;
+    border-radius: 8px;
+    padding: 0.6rem 1.2rem;
+    font-weight: 600;
+    border: none;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    cursor: pointer; /* Indicate clickable */
+}
+.stButton>button:hover {
+    background-color: #00b0a8;
+    transform: translateY(-3px); /* More pronounced lift */
+    box-shadow: 0 6px 16px rgba(0,0,0,0.2); /* Stronger shadow on hover */
+}
+.stExpander {
+    /* Background, shadow, and color will be set dynamically by Streamlit based on dark_mode toggle */
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    transition: all 0.3s ease; /* Smooth transition for expander */
+}
+.stExpander:hover {
+    /* Stronger shadow on hover will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stExpander > div > div > div > p {
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stExpander > div[data-testid="stExpanderToggle"] {
+    color: #00cec9;
+    font-weight: 600; /* Bolder expander title */
+}
+.stExpander > div[data-testid="stExpanderToggle"] svg {
+    fill: #00cec9;
+}
+.stSelectbox > div > div {
+    /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
+    border-radius: 8px;
+}
+.stSelectbox > label {
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stTextInput > div > div > input, .stTextArea > div > div {
+    /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
+    border-radius: 8px;
+    padding: 0.75rem 1rem; /* More padding */
+}
+.stTextInput > label, .stTextArea > label {
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stRadio > label {
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+}
+
+/* Custom styling for st.sidebar.radio to make it look like buttons */
+.stSidebar .stRadio div[role="radiogroup"] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem; /* Space between buttons */
+}
+.stSidebar .stRadio div[role="radiogroup"] label {
+    /* Background, color, shadow will be set dynamically by Streamlit based on dark_mode toggle */
+    border-radius: 12px;
+    padding: 0.8rem 1rem;
+    font-weight: 600;
+    border: none;
+    transition: all 0.2s ease;
+    width: 100%; /* Make buttons take full width */
+    text-align: left; /* Align text to left */
+    cursor: pointer;
+    display: flex; /* Use flex to align content and hide default radio */
+    align-items: center;
+}
+.stSidebar .stRadio div[role="radiogroup"] label span:first-child {
+    display: none; /* Hide the default radio circle */
+}
+.stSidebar .stRadio div[role="radiogroup"] label:hover {
+    /* Background and transform will be set dynamically by Streamlit based on dark_mode toggle */
+}
+/* Style for the selected radio button (using input:checked + div) */
+.stSidebar .stRadio div[role="radiogroup"] input:checked + div {
+    background-color: #00cec9;
+    color: white;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    transform: translateX(0);
+}
+/* Ensure the text inside the radio button is styled correctly */
+.stSidebar .stRadio div[role="radiogroup"] label p {
+    font-weight: 600; /* Make sidebar navigation labels bolder */
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stSidebar .stRadio div[role="radiogroup"] input:checked + div p {
+    color: white; /* Text color for selected button */
+}
+
+
+/* Custom styling for the dataframes */
+.stDataFrame {
+    border-radius: 10px;
+    overflow: hidden; /* Ensures rounded corners apply to content */
+    /* Shadow will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stDataFrame table {
+    /* Background and color will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stDataFrame th {
+    /* Background and color will be set dynamically by Streamlit based on dark_mode toggle */
+    font-weight: 700;
+}
+.stDataFrame tbody tr:nth-child(odd) {
+    /* Background will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stDataFrame tbody tr:nth-child(even) {
+    /* Background will be set dynamically by Streamlit based on dark_mode toggle */
+}
+
+
+/* Info/Warning/Error/Success boxes */
+.stAlert {
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    animation: fadeIn 0.5s ease-out;
+}
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn0 { /* Target info boxes specifically */
+    /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn0 svg { /* Info icon color */
+    /* Fill will be set dynamically by Streamlit based on dark_mode toggle */
+}
+
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn1 { /* Target success boxes */
+    /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn1 svg { /* Success icon color */
+    /* Fill will be set dynamically by Streamlit based on dark_mode toggle */
+}
+
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn2 { /* Target warning boxes */
+    /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn2 svg { /* Warning icon color */
+    /* Fill will be set dynamically by Streamlit based on dark_mode toggle */
+}
+
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn3 { /* Target error boxes */
+    /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn3 svg { /* Error icon color */
+    /* Fill will be set dynamically by Streamlit based on dark_mode toggle */
+}
+
+/* New Top Header Styles */
+.top-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+    /* Background, border, and shadow will be set dynamically by Streamlit based on dark_mode toggle */
+    margin-bottom: 2rem;
+    border-radius: 15px;
+}
+.top-header h1 {
+    margin: 0;
+    color: #00cec9;
+    font-size: 1.8rem;
+    font-weight: 800;
+}
+.top-header .profile {
+    font-size: 1rem;
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.top-header .profile b {
+    color: #00cec9;
+}
+.top-header .profile a {
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+    text-decoration: none;
+    font-weight: 600;
+    transition: color 0.2s ease;
+}
+.top-header .profile a:hover {
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+}
