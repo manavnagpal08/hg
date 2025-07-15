@@ -18,7 +18,7 @@ from login import login_section, is_current_user_admin, is_current_user_candidat
 # Import Firebase utility functions and constants
 from firebase_utils import (
     FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL,
-    get_firestore_document, update_firestore_document, log_activity_to_firestore,
+    get_firestore_document, set_firestore_document, log_activity_to_firestore, # Changed update_firestore_document to set_firestore_document
     to_firestore_format, from_firestore_format # Import these for session data handling
 )
 
@@ -54,7 +54,7 @@ def save_session_data_to_firestore_rest(user_id: str):
 
     try:
         collection_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{user_id}/session_data"
-        success, _ = update_firestore_document(collection_path, "user_session", clean_session_data)
+        success, _ = set_firestore_document(collection_path, "user_session", clean_session_data) # Changed to set_firestore_document
         if success:
             st.success("Session data saved to cloud successfully!")
             log_activity_to_firestore(f"User '{st.session_state.username}' saved session data.", user=st.session_state.username)
