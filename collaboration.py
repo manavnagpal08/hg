@@ -804,3 +804,4 @@ def collaboration_hub_page(app_id: str, FIREBASE_WEB_API_KEY: str, FIRESTORE_BAS
             st.button("Update Candidate Status (Mock)", key="mock_update_status")
         st.button("Assign Candidate to Team Member (Mock)", key="mock_assign_candidate")
 
+
