@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import collections
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta # Import timedelta for scheduling
 
 # --- Logging Function (can be shared or imported from main.py if needed) ---
 def log_user_action(user_email, action, details=None):
@@ -139,8 +139,8 @@ def advanced_tools_page():
     st.markdown('<div class="advanced-tools-header">📈 Advanced Tools</div>', unsafe_allow_html=True)
     st.markdown('<p class="advanced-tools-caption">Explore powerful HR analytics and automation tools to gain deeper insights and streamline your processes.</p>', unsafe_allow_html=True)
 
-    tab_predictive, tab_skill_gap, tab_compensation, tab_dei = st.tabs([
-        "🔮 Predictive Analytics", "🧩 Skill Gap Analysis", "💰 Compensation Benchmarking", "🤝 DEI Analytics"
+    tab_predictive, tab_skill_gap, tab_compensation, tab_dei, tab_scheduling = st.tabs([ # Added tab_scheduling
+        "🔮 Predictive Analytics", "🧩 Skill Gap Analysis", "💰 Compensation Benchmarking", "🤝 DEI Analytics", "🗓️ Interview Scheduling"
     ])
 
     with tab_predictive:
@@ -229,6 +229,32 @@ def advanced_tools_page():
                     st.info(f"💡 **Additional Skills (not required but present):** {', '.join(additional_skills).title()}")
 
                 log_user_action(user_email, "SKILL_GAP_ANALYSIS_USED", {"required": required_skills_input, "candidate": candidate_skills_input})
+        
+        st.markdown("---")
+        st.subheader("Team Skill Inventory (Mock Visualization)")
+        st.info("Visualize the distribution of key skills across your current team. (Mock data)")
+        
+        # Mock Team Skill Data
+        team_skills_data = {
+            'Skill': ['Python', 'SQL', 'Cloud Computing', 'Project Management', 'Data Analysis', 'Communication', 'Leadership'],
+            'Proficiency (Avg)': [4.2, 3.8, 3.0, 4.5, 3.5, 4.8, 4.0],
+            'Team Members': [15, 12, 8, 10, 14, 20, 7]
+        }
+        team_skills_df = pd.DataFrame(team_skills_data)
+
+        fig_team_skills = px.bar(
+            team_skills_df.sort_values('Proficiency (Avg)', ascending=False),
+            x='Proficiency (Avg)',
+            y='Skill',
+            orientation='h',
+            title='Average Team Proficiency by Skill',
+            labels={'Proficiency (Avg)': 'Average Proficiency (1-5)', 'Skill': 'Skill'},
+            color='Proficiency (Avg)',
+            color_continuous_scale=px.colors.sequential.Teal if not dark_mode else px.colors.sequential.Plasma
+        )
+        st.plotly_chart(fig_team_skills, use_container_width=True)
+        st.caption("This chart shows average self-reported or assessed proficiency for key skills across the team.")
+
 
     with tab_compensation:
         st.subheader("💰 Compensation Benchmarking")
@@ -322,6 +348,23 @@ def advanced_tools_page():
                     st.write(f"- **Average Equity/Stock:** {avg_equity_pct}%")
                     st.info("Confidence Level: **High** (direct match found in simulated data)")
 
+                    # New: Compare with Candidate's Expected Salary
+                    st.markdown("---")
+                    st.subheader("Compare with Candidate's Expected Salary")
+                    candidate_expected_salary = st.number_input("Candidate's Expected Annual Salary (₹)", min_value=0, value=int(avg_base_salary), step=10000, key="cand_expected_salary")
+                    
+                    if st.button("Compare", key="compare_salary_button"):
+                        if candidate_expected_salary < base_min:
+                            st.warning(f"Candidate's expectation (₹{candidate_expected_salary:,.0f}) is below the benchmark range (₹{base_min:,.0f} - ₹{base_max:,.0f}).")
+                            st.write("This could be an opportunity to offer a competitive package or indicate a mismatch in expectations.")
+                        elif candidate_expected_salary > base_max:
+                            st.warning(f"Candidate's expectation (₹{candidate_expected_salary:,.0f}) is above the benchmark range (₹{base_min:,.0f} - ₹{base_max:,.0f}).")
+                            st.write("This might require re-evaluation of the role's budget or negotiation strategy.")
+                        else:
+                            st.success(f"Candidate's expectation (₹{candidate_expected_salary:,.0f}) is within the benchmark range (₹{base_min:,.0f} - ₹{base_max:,.0f}).")
+                            st.write("This indicates a good alignment with market compensation.")
+                        log_user_action(user_email, "COMPENSATION_COMPARE_USED", {"expected_salary": candidate_expected_salary, "benchmark_min": base_min, "benchmark_max": base_max})
+
                 else:
                     st.warning("No precise benchmark data found for the selected criteria. Adjust parameters or consider a broader search.")
                     st.info("Confidence Level: **Low** (no direct match in simulated data)")
@@ -368,6 +411,24 @@ def advanced_tools_page():
         )
         st.plotly_chart(fig_age, use_container_width=True)
 
+        st.write("#### Diversity by Department (Mock Data)")
+        department_diversity_data = pd.DataFrame({
+            'Department': ['Engineering', 'Sales', 'HR', 'Marketing', 'Product'],
+            'Female Representation (%)': [np.random.uniform(20, 40), np.random.uniform(30, 50), np.random.uniform(50, 70), np.random.uniform(40, 60), np.random.uniform(25, 45)],
+            'Underrepresented Groups (%)': [np.random.uniform(10, 25), np.random.uniform(15, 30), np.random.uniform(10, 20), np.random.uniform(12, 28), np.random.uniform(8, 22)],
+        })
+        fig_dept_diversity = px.bar(
+            department_diversity_data,
+            x='Department',
+            y=['Female Representation (%)', 'Underrepresented Groups (%)'],
+            barmode='group',
+            title='Diversity Metrics by Department',
+            labels={'value': 'Percentage', 'variable': 'Diversity Metric'},
+            color_discrete_sequence=['#00cec9', '#fab1a0'] if not dark_mode else ['#00cec9', '#fab1a0']
+        )
+        st.plotly_chart(fig_dept_diversity, use_container_width=True)
+
+
         st.markdown("---")
         st.write("More DEI metrics (e.g., ethnicity, disability status) and bias detection features could be added here.")
         
@@ -378,22 +439,103 @@ def advanced_tools_page():
         
         if st.button("Check for Bias", key="check_bias_button"):
             biased_terms = []
-            if "aggressive" in jd_text_for_bias.lower():
-                biased_terms.append("aggressive (gender-coded)")
-            if "rockstar" in jd_text_for_bias.lower():
-                biased_terms.append("rockstar (can imply age/culture bias)")
-            if "ninja" in jd_text_for_bias.lower():
-                biased_terms.append("ninja (can imply culture bias)")
-            if "guru" in jd_text_for_bias.lower():
-                biased_terms.append("guru (can imply age bias)")
+            bias_score = 0
+            
+            # Gender-coded words
+            gender_coded = {"aggressive": "masculine", "dominant": "masculine", "leader": "masculine", "competitive": "masculine",
+                            "nurturing": "feminine", "supportive": "feminine", "collaborative": "feminine"}
+            for term, gender in gender_coded.items():
+                if term in jd_text_for_bias.lower():
+                    biased_terms.append(f"{term} ({gender}-coded)")
+                    bias_score += 1
+
+            # Age/culture/other words
+            other_biased = {"rockstar": "can imply age/culture bias", "ninja": "can imply culture bias", "guru": "can imply age bias",
+                            "digital native": "age bias", "young": "age bias", "energetic": "age bias"}
+            for term, reason in other_biased.items():
+                if term in jd_text_for_bias.lower():
+                    biased_terms.append(f"{term} ({reason})")
+                    bias_score += 1
 
             if biased_terms:
                 st.warning("⚠️ Potential biased language detected:")
                 for term in biased_terms:
                     st.write(f"- `{term}`: Consider using more neutral alternatives.")
-                st.markdown("Suggested alternatives: 'driven', 'high-achieving', 'expert', 'specialist'.")
+                st.markdown("Suggested alternatives: 'driven', 'high-achieving', 'expert', 'specialist', 'innovative', 'team-oriented'.")
+                st.error(f"**Overall Bias Score (Simulated):** {bias_score} (Higher score indicates more bias)")
             else:
                 st.success("✅ No obvious biased language detected in this text. Great job!")
+                st.info(f"**Overall Bias Score (Simulated):** {bias_score}")
             log_user_action(user_email, "JD_BIAS_CHECK_USED")
+
+    with tab_scheduling: # New Tab: Automated Interview Scheduling (Mock)
+        st.subheader("🗓️ Automated Interview Scheduling (Mock)")
+        st.info("Streamline your interview process by automating scheduling, reminders, and feedback collection. (Mock functionality)")
+
+        with st.form("interview_scheduling_form", clear_on_submit=True):
+            st.markdown("##### Schedule a New Interview")
+            col_s1, col_s2 = st.columns(2)
+            with col_s1:
+                candidate_name = st.text_input("Candidate Name", key="sched_cand_name")
+                candidate_email = st.text_input("Candidate Email", key="sched_cand_email")
+                interview_type = st.selectbox("Interview Type", ["Initial Screen", "Technical Interview (Round 1)", "Technical Interview (Round 2)", "Hiring Manager Interview", "Final Round"], key="sched_interview_type")
+            with col_s2:
+                interviewer_name = st.text_input("Interviewer Name", key="sched_interviewer_name")
+                interviewer_email = st.text_input("Interviewer Email", key="sched_interviewer_email")
+                interview_date = st.date_input("Preferred Date", min_value=datetime.now().date(), key="sched_date")
+                interview_time = st.time_input("Preferred Time", value=datetime.now().time(), step=timedelta(minutes=30), key="sched_time")
+            
+            interview_duration = st.slider("Interview Duration (minutes)", 30, 120, 60, step=15, key="sched_duration")
+            interview_notes = st.text_area("Internal Notes for Interviewers", height=80, key="sched_notes")
+
+            schedule_button = st.form_submit_button("Schedule Interview")
+
+            if schedule_button:
+                if not candidate_name or not candidate_email or not interviewer_name or not interviewer_email:
+                    st.error("Please fill in all required fields (Candidate Name/Email, Interviewer Name/Email).")
+                else:
+                    # Mock scheduling logic
+                    st.success(f"✅ Interview scheduled for {candidate_name} with {interviewer_name} on {interview_date} at {interview_time} for {interview_duration} minutes ({interview_type}).")
+                    st.write("---")
+                    st.markdown("##### Mock Notifications Sent:")
+                    st.info(f"📧 Email sent to Candidate ({candidate_email}): Your interview for {interview_type} is scheduled for {interview_date} at {interview_time}.")
+                    st.info(f"📧 Calendar invite sent to Interviewer ({interviewer_email}): Interview for {candidate_name} on {interview_date} at {interview_time}.")
+                    st.success("Reminders will be sent automatically 24 hours prior. (Mock)")
+                    log_user_action(user_email, "INTERVIEW_SCHEDULED", {"candidate": candidate_name, "interviewer": interviewer_name, "type": interview_type})
+
+        st.markdown("---")
+        st.subheader("Upcoming Interviews (Mock Data)")
+        st.info("View your upcoming interview schedule at a glance.")
+
+        # Mock Upcoming Interviews Data
+        upcoming_interviews = [
+            {"Candidate": "Alice Wonderland", "Role": "Data Scientist", "Type": "Technical (R1)", "Interviewer": "Dr. Smith", "Date": (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d"), "Time": "10:00 AM"},
+            {"Candidate": "Bob The Builder", "Role": "Project Manager", "Type": "Hiring Manager", "Interviewer": "Ms. Jones", "Date": (datetime.now() + timedelta(days=5)).strftime("%Y-%m-%d"), "Time": "02:30 PM"},
+            {"Candidate": "Charlie Chaplin", "Role": "Software Engineer", "Type": "Final Round", "Interviewer": "CEO", "Date": (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d"), "Time": "11:00 AM"},
+        ]
+        upcoming_interviews_df = pd.DataFrame(upcoming_interviews)
+        st.dataframe(upcoming_interviews_df, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("Interview Feedback Collection (Mock)")
+        st.info("Submit and review interview feedback easily.")
+
+        feedback_candidate = st.selectbox("Select Candidate for Feedback", ["Alice Wonderland", "Bob The Builder", "Charlie Chaplin", "New Candidate..."], key="feedback_cand_select")
+        if feedback_candidate == "New Candidate...":
+            feedback_candidate_name = st.text_input("Enter Candidate Name", key="new_feedback_cand_name")
+        else:
+            feedback_candidate_name = feedback_candidate
+
+        feedback_interviewer = st.text_input("Your Name (Interviewer)", value=st.session_state.get('username', 'Anonymous'), key="feedback_interviewer_name")
+        feedback_rating = st.slider("Overall Rating (1-5, 5=Strong Hire)", 1, 5, 3, key="feedback_rating")
+        feedback_comments = st.text_area("Comments", height=100, key="feedback_comments")
+
+        if st.button("Submit Feedback", key="submit_feedback_button"):
+            if feedback_candidate_name and feedback_interviewer and feedback_comments:
+                st.success(f"Feedback submitted for {feedback_candidate_name} by {feedback_interviewer} with rating {feedback_rating}.")
+                log_user_action(user_email, "INTERVIEW_FEEDBACK_SUBMITTED", {"candidate": feedback_candidate_name, "rating": feedback_rating})
+            else:
+                st.warning("Please fill in all feedback fields.")
+
 
     st.markdown("</div>", unsafe_allow_html=True)
