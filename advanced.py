@@ -131,14 +131,13 @@ def load_collection_from_firestore(collection_path, api_key, base_url):
         st.error(f"Firestore load error: {e}")
         return False, str(e)
 
-# --- Email Sending Function (Simulated for real API call) ---
+# --- Email Sending Function (for real API call) ---
 def send_actual_email(to_email, subject, body, api_key, sender_email):
     """
-    Simulates sending a real email via an external API.
-    !!! IMPORTANT: This function needs to be replaced with actual API calls to your chosen email service (e.g., SendGrid, Mailgun) !!!
-    !!! In this Streamlit Canvas environment, direct external API calls might be blocked. !!!
+    Attempts to send a real email via an external API.
+    !!! IMPORTANT: In this Streamlit Canvas environment, direct external API calls might be blocked. !!!
     """
-    if not api_key or api_key == "YOUR_EMAIL_SERVICE_API_KEY_HERE" or not sender_email or sender_email == "your_verified_sender_email@example.com":
+    if not api_key or not sender_email: # Removed placeholder checks as user will provide real values
         st.warning("Email sending skipped: Please configure your EMAIL_SERVICE_API_KEY and SENDER_EMAIL in the 'Email Configuration' section.")
         return False, "Email service API key or sender email not configured."
 
@@ -159,23 +158,11 @@ def send_actual_email(to_email, subject, body, api_key, sender_email):
     }
 
     try:
-        # Simulate network delay and response for demonstration in Canvas
-        import time
-        time.sleep(1) # Simulate API call delay
-
-        # Simulate success or failure (e.g., 90% chance of success)
-        if np.random.rand() > 0.1:
-            st.success(f"📧 Attempted to send real email to {to_email} (Simulated Success).")
-            return True, "Simulated email sent successfully."
-        else:
-            st.error(f"❌ Attempted to send real email to {to_email} (Simulated Failure). Check console for errors or API key configuration).")
-            return False, "Simulated email sending failed (e.g., network error, invalid API key)."
-
-        # --- UNCOMMENT AND CONFIGURE THE BELOW CODE FOR ACTUAL EMAIL SENDING ---
-        # response = requests.post(sendgrid_api_url, headers=headers, json=payload)
-        # response.raise_for_status() # Raise an exception for HTTP errors (e.g., 400, 401, 500)
-        # st.success(f"📧 Real email sent to {to_email}!")
-        # return True, response.json()
+        # --- ACTUAL EMAIL SENDING CODE (UNCOMMENTED) ---
+        response = requests.post(sendgrid_api_url, headers=headers, json=payload)
+        response.raise_for_status() # Raise an exception for HTTP errors (e.g., 400, 401, 500)
+        st.success(f"📧 Real email sent to {to_email}!")
+        return True, response.json()
     except requests.exceptions.RequestException as e:
         st.error(f"❌ Failed to send real email to {to_email} due to API error: {e}. Please check your API key, sender email, and network access.")
         return False, str(e)
@@ -189,7 +176,7 @@ def send_actual_email(to_email, subject, body, api_key, sender_email):
 # In a real application, this would come from a secure database or external API.
 MOCK_SALARY_DATA = [
     # Software Engineer - Bengaluru (Annual Salaries in INR Lakhs)
-    {"role": "Software Engineer", "seniority": "Junior", "location": "Bengaluru, India", "min_exp": 0, "max_exp": 1, "min_salary": 400000, "avg_bonus_pct": 5, "avg_equity_pct": 0},
+    {"role": "Software Engineer", "seniority": "Junior", "location": "Bengaluru, India", "min_exp": 0, "max_exp": 1, "min_salary": 400000, "max_salary": 600000, "avg_bonus_pct": 5, "avg_equity_pct": 0},
     {"role": "Software Engineer", "seniority": "Mid", "location": "Bengaluru, India", "min_exp": 2, "max_exp": 4, "min_salary": 800000, "max_salary": 1300000, "avg_bonus_pct": 8, "avg_equity_pct": 5},
     {"role": "Software Engineer", "seniority": "Senior", "location": "Bengaluru, India", "min_exp": 5, "max_exp": 8, "min_salary": 1500000, "max_salary": 2500000, "avg_bonus_pct": 10, "avg_equity_pct": 10},
     {"role": "Software Engineer", "seniority": "Lead/Principal", "location": "Bengaluru, India", "min_exp": 9, "max_exp": 99, "min_salary": 2800000, "max_salary": 4500000, "avg_bonus_pct": 12, "avg_equity_pct": 15},
@@ -800,8 +787,7 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
             **To send actual emails:**
             1.  **Replace `YOUR_EMAIL_SERVICE_API_KEY_HERE`** with your real API key from a service like SendGrid, Mailgun, etc.
             2.  **Replace `your_verified_sender_email@example.com`** with an email address you have verified with your email service.
-            3.  **Uncomment the `requests.post` call** and related success/error handling in the `send_actual_email` function in the code.
-            4.  **Note:** Direct external API calls might be blocked in this specific Streamlit Canvas environment. For reliable email sending, consider deploying your app to a server where you have full control over network access.
+            3.  **Note:** Direct external API calls might be blocked in this specific Streamlit Canvas environment. For reliable email sending, consider deploying your app to a server where you have full control over network access.
         """)
         
         # Store email configuration in session state for persistence within the session
@@ -810,8 +796,8 @@ def advanced_tools_page(app_id, FIREBASE_WEB_API_KEY, FIRESTORE_BASE_URL):
         if 'sender_email' not in st.session_state:
             st.session_state.sender_email = "your_verified_sender_email@example.com"
 
-        st.session_state.email_api_key = st.text_input("Email Service API Key", value=st.session_state.email_api_key, type="password", key="email_api_key_input")
-        st.session_state.sender_email = st.text_input("Verified Sender Email", value=st.session_state.sender_email, key="sender_email_input")
+        st.session_state.email_api_key = st.text_input("Email Service API Key", value=st.session_state.email_api_key, type="password", help="Enter your SendGrid, Mailgun, etc. API Key here.", key="email_api_key_input")
+        st.session_state.sender_email = st.text_input("Verified Sender Email", value=st.session_state.sender_email, help="Enter an email address verified with your email service.", key="sender_email_input")
         
         send_real_emails_toggle = st.checkbox("Attempt to Send Real Emails (Requires Configuration Above)", key="send_real_emails_toggle")
 
