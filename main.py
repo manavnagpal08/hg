@@ -13,7 +13,7 @@ import statsmodels.api as sm
 import collections
 import requests # Added for REST API calls
 
-# Firebase imports
+# Firebase imports - Admin SDK is still imported for initialization, but not for session data persistence
 import firebase_admin
 from firebase_admin import credentials, initialize_app, firestore
 
@@ -27,28 +27,21 @@ FIREBASE_FIRESTORE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBAS
 
 
 # --- Firebase Initialization (Safe Check) ---
+# This block uses Firebase Admin SDK for initial setup, which is distinct from data persistence.
 try:
     # Set environment variable for Application Default Credentials
-    # This path assumes the key file is at config/firebase-key.json relative to the app's root
-    # For local development, ensure this path is correct.
-    # In a deployed Streamlit Cloud environment, this might be handled differently
-    # or rely on environment variables set in the Streamlit Cloud secret management.
     key_path = os.path.abspath("config/screenerproapp-firebase-adminsdk-fbsvc-d1af80d154.json")
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key_path
 
-    # Check if a default Firebase app is already initialized
     if not firebase_admin._apps:
-        # Use ApplicationDefault credentials for environments where they are available (e.g., Google Cloud)
-        # Or, if running locally with a service account file, it will pick up GOOGLE_APPLICATION_CREDENTIALS
         cred = credentials.ApplicationDefault()
         initialize_app(cred)
-        # st.success("Firebase initialized successfully!") # Removed for cleaner UI
 
-    db = firestore.client()
-    st.session_state.db = db
+    # db = firestore.client() # Firestore client for Admin SDK (not used for session data anymore)
+    # st.session_state.db = db
 except Exception as e:
-    st.warning(f"🔥 Firebase init failed: {e}. Firestore data persistence may not work.")
-    st.session_state.db = None
+    st.warning(f"🔥 Firebase Admin SDK init failed: {e}. Some features might be affected.")
+    # st.session_state.db = None # Not strictly needed if Admin SDK is only for init
 
 
 # File to store user credentials
@@ -199,115 +192,56 @@ def admin_disable_enable_user_section():
             st.rerun() # Rerun to update the displayed status immediately
 
 
-# --- Firebase Data Persistence Functions (Admin SDK) ---
-def save_session_data_to_firestore():
-    """
-    Saves key session state data (like comprehensive_df) to Firestore for the current user
-    using the Firebase Admin SDK.
-    """
-    if st.session_state.get('db') and st.session_state.get('username'):
-        db = st.session_state.db
-        user_id = st.session_state.username # Using username as user_id for simplicity
-        app_id = globals().get('__app_id', 'default-app-id')
-
-        # Document reference for user-specific session data
-        # Data stored in /artifacts/{appId}/users/{userId}/session_data/current_session
-        doc_ref = db.collection(f'artifacts/{app_id}/users/{user_id}/session_data').document('current_session')
-
-        data_to_save = {}
-        # Save comprehensive_df if it exists and is not empty
-        if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
-            # Convert DataFrame to JSON string to store in a single Firestore field
-            # This is necessary because Firestore doesn't directly support complex nested objects
-            # or large arrays of maps without specific structuring.
-            # Also, filter out 'Resume Raw Text' as it can be very large.
-            df_for_save = st.session_state['comprehensive_df'].drop(columns=['Resume Raw Text'], errors='ignore')
-            data_to_save['comprehensive_df_json'] = df_for_save.to_json(orient='records')
-
-        # You can add other session variables here if needed, ensure they are JSON serializable
-        # Example: data_to_save['last_jd_used'] = st.session_state.get('last_jd_used')
-        # Example: data_to_save['screening_cutoff_score'] = st.session_state.get('screening_cutoff_score')
-
-        if data_to_save:
-            try:
-                doc_ref.set(data_to_save)
-                st.toast("Session data saved to Firestore (Admin SDK)!")
-                log_activity(f"Session data saved for user '{user_id}' via Admin SDK.")
-            except Exception as e:
-                st.error(f"Error saving session data to Firestore (Admin SDK): {e}")
-        else:
-            st.info("No relevant session data to save.")
-
-def load_session_data_from_firestore():
-    """
-    Loads key session state data from Firestore for the current user
-    using the Firebase Admin SDK.
-    """
-    if st.session_state.get('db') and st.session_state.get('username'):
-        db = st.session_state.db
-        user_id = st.session_state.username
-        app_id = globals().get('__app_id', 'default-app-id')
-
-        doc_ref = db.collection(f'artifacts/{app_id}/users/{user_id}/session_data').document('current_session')
-
-        try:
-            doc = doc_ref.get()
-            if doc.exists:
-                data = doc.to_dict()
-                if 'comprehensive_df_json' in data:
-                    # Load DataFrame from JSON string
-                    st.session_state['comprehensive_df'] = pd.read_json(data['comprehensive_df_json'], orient='records')
-                    st.toast("Session data loaded from Firestore (Admin SDK)!")
-                    log_activity(f"Session data loaded for user '{user_id}' via Admin SDK.")
-
-                # Load other session variables if they were saved
-                # Example: st.session_state['last_jd_used'] = data.get('last_jd_used')
-                # Example: st.session_state['screening_cutoff_score'] = data.get('screening_cutoff_score')
-
-            else:
-                st.info("No previous session data found in Firestore.")
-        except Exception as e:
-            st.error(f"Error loading session data from Firestore (Admin SDK): {e}")
-    else:
-        st.warning("Cannot load session data: Firestore not initialized or user not logged in.")
-
 # --- Firebase Data Persistence Functions (REST API) ---
-def save_session_data_to_firestore_rest(username, session_data):
+def save_session_data_to_firestore_rest(username):
     """
-    Saves data to Firestore using the REST API.
-    This is a simplified example and does not handle authentication tokens for the REST API.
-    For production, you would need to manage user authentication (e.g., ID tokens)
-    and include them in the Authorization header.
+    Saves comprehensive session data (including comprehensive_df) to Firestore
+    using the REST API for the current user.
     """
     try:
         if not username:
             st.warning("No username found. Please log in.")
             return
 
-        # The doc_path here should align with your Firestore security rules.
-        # For public data, it would be /artifacts/{appId}/public/data/{your_collection_name}
-        # For user-specific data, it would be /artifacts/{appId}/users/{userId}/{your_collection_name}
-        # Given the user's provided code, it looks like it's intended for user-specific logs.
-        # Let's adjust the path to align with private data rules for user-specific logs.
-        doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{username}/rest_logs/current_session_log"
+        # Define the document path for user-specific session data
+        # This path aligns with private data rules: /artifacts/{appId}/users/{userId}/session_data_rest/current_session
+        doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{username}/session_data_rest/current_session"
         url = f"{FIREBASE_FIRESTORE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
 
+        data_to_save = {}
+        if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+            # Convert DataFrame to JSON string to store in a single Firestore field
+            # Filter out 'Resume Raw Text' as it can be very large and is not needed for analytics.
+            df_for_save = st.session_state['comprehensive_df'].drop(columns=['Resume Raw Text'], errors='ignore')
+            data_to_save['comprehensive_df_json'] = df_for_save.to_json(orient='records')
+
+            # Extract shortlisted names and job locations for logging/summary
+            shortlisted_candidates = df_for_save[df_for_save['Shortlisted'].str.startswith('Yes')]['Candidate Name'].tolist()
+            job_locations = df_for_save['Location'].dropna().unique().tolist()
+
+            data_to_save['shortlisted_names'] = json.dumps(shortlisted_candidates) # Store as JSON string
+            data_to_save['job_locations_found'] = json.dumps(job_locations) # Store as JSON string
+            data_to_save['screened_count'] = len(df_for_save)
+            data_to_save['timestamp'] = str(datetime.now())
+            data_to_save['status'] = "saved from Streamlit Cloud"
+
+        else:
+            st.warning("No comprehensive data to save.")
+            return
+
         # Convert Python dictionary to Firestore's REST API format (Fields object)
-        # This assumes all values in session_data are simple strings, numbers, or booleans.
-        # For complex objects (like DataFrames), they would need to be JSON-serialized first.
         firestore_data = {
             "fields": {
-                key: {"stringValue": str(value)} for key, value in session_data.items()
+                key: {"stringValue": str(value)} if isinstance(value, (str, int, float, bool)) else {"stringValue": json.dumps(value)}
+                for key, value in data_to_save.items()
             }
         }
 
         # Use PATCH to update the document if it exists, or create it if it doesn't.
-        # For logging, POST is often used to create a new document with an auto-generated ID.
-        # Sticking to PATCH as per user's request.
         res = requests.patch(url, json=firestore_data)
         if res.status_code in [200, 201]:
-            st.success("✅ Session data saved using REST API.")
-            log_activity(f"Session data saved via REST for user '{username}'.")
+            st.success("✅ Session data saved to Cloud (REST API)!")
+            log_activity(f"Session data saved for user '{username}' via REST API.")
         else:
             st.error(f"❌ REST Save failed: {res.status_code}, {res.text}")
             log_activity(f"REST Save failed for user '{username}': {res.status_code}, {res.text}")
@@ -317,6 +251,58 @@ def save_session_data_to_firestore_rest(username, session_data):
     except Exception as e:
         st.error(f"🔥 An unexpected error occurred during REST save: {e}")
         log_activity(f"Unexpected REST save error for user '{username}': {e}")
+
+def load_session_data_from_firestore_rest(username):
+    """
+    Loads comprehensive session data from Firestore using the REST API
+    for the current user.
+    """
+    try:
+        if not username:
+            st.warning("No username found. Please log in.")
+            return
+
+        doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{username}/session_data_rest/current_session"
+        url = f"{FIREBASE_FIRESTORE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
+
+        res = requests.get(url)
+        if res.status_code == 200:
+            data = res.json()
+            fields = data.get('fields', {})
+
+            loaded_data = {}
+            for key, value_obj in fields.items():
+                if 'stringValue' in value_obj:
+                    # Attempt to parse JSON strings back to Python objects
+                    try:
+                        loaded_data[key] = json.loads(value_obj['stringValue'])
+                    except json.JSONDecodeError:
+                        loaded_data[key] = value_obj['stringValue']
+                elif 'integerValue' in value_obj:
+                    loaded_data[key] = int(value_obj['integerValue'])
+                elif 'doubleValue' in value_obj:
+                    loaded_data[key] = float(value_obj['doubleValue'])
+                elif 'booleanValue' in value_obj:
+                    loaded_data[key] = bool(value_obj['booleanValue'])
+                # Add other types if necessary (e.g., arrayValue, mapValue)
+
+            if 'comprehensive_df_json' in loaded_data:
+                st.session_state['comprehensive_df'] = pd.read_json(loaded_data['comprehensive_df_json'], orient='records')
+                st.toast("Session data loaded from Cloud (REST API)!")
+                log_activity(f"Session data loaded for user '{username}' via REST API.")
+            else:
+                st.info("No comprehensive data found in the loaded session data.")
+        elif res.status_code == 404:
+            st.info("No previous session data found in Cloud (REST API).")
+        else:
+            st.error(f"❌ REST Load failed: {res.status_code}, {res.text}")
+            log_activity(f"REST Load failed for user '{username}': {res.status_code}, {res.text}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"🔥 REST Firebase connection error: {e}")
+        log_activity(f"REST Firebase connection error for user '{username}': {e}")
+    except Exception as e:
+        st.error(f"🔥 An unexpected error occurred during REST load: {e}")
+        log_activity(f"Unexpected REST load error for user '{username}': {e}")
 
 
 def login_section():
@@ -368,7 +354,8 @@ def login_section():
                         st.session_state.user_company = user_data.get("company", "N/A") # Store company name
                         st.success("✅ Login successful!")
                         # --- Load session data after successful login ---
-                        load_session_data_from_firestore() # Call to load data
+                        # Load data using the REST API function
+                        load_session_data_from_firestore_rest(st.session_state.username)
                         st.rerun()
                     else:
                         st.error("❌ Invalid username or password.")
@@ -446,7 +433,7 @@ h1, h2, h3, h4, h5, h6 {{
     border-radius: 10px;
     padding: 1rem;
     margin-bottom: 1rem;
-    box-shadow: 0 4px 12px rgba(0,0,0,{'0.2' if dark_mode else '0.05'});
+    box_shadow: 0 4px 12px rgba(0,0,0,{'0.2' if dark_mode else '0.05'});
     transition: transform 0.2s ease;
 }}
 .stMetric:hover {{
@@ -1035,27 +1022,14 @@ if tab == "🏠 Dashboard":
     # --- Add Save/Load Buttons for Session Data ---
     st.markdown("---")
     st.subheader("Cloud Session Data Management")
-    cloud_data_cols = st.columns(3) # Changed to 3 columns to accommodate the new button
+    cloud_data_cols = st.columns(2) # Changed to 2 columns as Admin SDK functions are removed
     with cloud_data_cols[0]:
-        if st.button("💾 Save Current Session Data to Cloud", key="save_session_data_button"):
-            save_session_data_to_firestore()
+        if st.button("💾 Save Session Data to Cloud (REST API)", key="save_session_data_button"):
+            save_session_data_to_firestore_rest(st.session_state.get('username', 'anonymous'))
     with cloud_data_cols[1]:
-        if st.button("🔄 Load Session Data from Cloud", key="load_session_data_button"):
-            load_session_data_from_firestore()
+        if st.button("🔄 Load Session Data from Cloud (REST API)", key="load_session_data_button"):
+            load_session_data_from_firestore_rest(st.session_state.get('username', 'anonymous'))
             st.rerun() # Rerun to apply loaded data to the UI
-    with cloud_data_cols[2]: # New button for REST save
-        if st.button("💾 Save to Firebase via REST", key="save_to_firebase_rest_button"):
-            if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
-                save_session_data_to_firestore_rest(
-                    st.session_state.get('username', 'anonymous'),
-                    {
-                        "timestamp": str(datetime.now()),
-                        "screened_count": len(st.session_state['comprehensive_df']),
-                        "status": "saved from Streamlit Cloud"
-                    }
-                )
-            else:
-                st.warning("Nothing to save — please run screening first.")
 
     st.markdown("---")
 
