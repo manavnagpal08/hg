@@ -15,28 +15,30 @@ import collections
 # Firebase imports
 from firebase_admin import credentials, initialize_app, firestore
 from firebase_admin import apps # Corrected import for 'apps'
-import json # Needed for json.loads(firebase_config_str)
+# import json # Already imported above, no need to import again
 
 # --- Firebase Initialization (Re-enabled) ---
 try:
     # Check if the default Firebase app is already initialized
-    # Use apps.get_apps() to get a list of initialized apps and check if it's empty
-    if not apps.get_apps(): 
-        # Use the global variables provided by the Canvas environment
-        firebase_config_str = globals().get('__firebase_config', '{}')
-        firebase_config = json.loads(firebase_config_str)
+    if not apps.get_apps():
+        # Path to your service account key file
+        # This path is relative to where your script is run.
+        # Ensure 'config' folder exists in the same directory as main.py
+        # and the JSON file is inside it.
+        service_account_key_path = 'config/screenerproapp-firebase-adminsdk-fbsvc-d1af80d154.json'
 
-        if firebase_config and 'type' in firebase_config:
-            cred = credentials.Certificate(firebase_config)
+        # Check if the file exists
+        if os.path.exists(service_account_key_path):
+            cred = credentials.Certificate(service_account_key_path)
             initialize_app(cred)
+            # st.success("Firebase initialized with service account key.") # Removed for cleaner UI
         else:
-            # Attempt to initialize with default credentials if available
-            # This is typically used when running in a Google Cloud environment
-            initialize_app() 
-    
+            st.warning(f"Firebase service account key not found at: {service_account_key_path}. Attempting default initialization (may not work without proper environment setup).")
+            # Fallback for environments where default credentials might be available (e.g., Google Cloud)
+            initialize_app()
+
     db = firestore.client() # Get Firestore client
     st.session_state.db = db # Store db client in session state for easy access
-    # st.success("Firebase initialized and connected to Firestore.") # Removed for cleaner UI
 except Exception as e:
     st.warning(f"Firebase initialization warning: {e}. Firestore data persistence may not work.")
     st.session_state.db = None # Set to None if initialization fails
@@ -44,7 +46,7 @@ except Exception as e:
 # File to store user credentials
 USER_DB_FILE = "users.json"
 # Define your admin usernames here as a tuple of strings
-ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2") 
+ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2")
 
 def load_users():
     """Loads user data from the JSON file."""
@@ -126,6 +128,7 @@ def admin_registration_section():
             st.error("Please fill in all fields.")
         elif not is_valid_email(new_username): # Email format validation
             st.error("Please enter a valid email address for the username.")
+            st.error("Please enter a valid email address for the username.")
         else:
             users = load_users()
             if new_username in users:
@@ -144,8 +147,8 @@ def admin_password_reset_section():
     st.subheader("🔑 Reset User Password (Admin Only)")
     users = load_users()
     # Exclude all admin usernames from the list of users whose passwords can be reset
-    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME] 
-    
+    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
+
     if not user_options:
         st.info("No other users to reset passwords for.")
         return
@@ -168,15 +171,15 @@ def admin_disable_enable_user_section():
     st.subheader("⛔ Toggle User Status (Admin Only)")
     users = load_users()
     # Exclude all admin usernames from the list of users whose status can be toggled
-    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME] 
+    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
 
     if not user_options:
         st.info("No other users to manage status for.")
         return
-        
+
     with st.form("admin_toggle_user_status_form", clear_on_submit=False): # Keep values after submit for easier toggling
         selected_user = st.selectbox("Select User to Toggle Status", user_options, key="toggle_user_select")
-        
+
         current_status = users[selected_user]["status"]
         st.info(f"Current status of '{selected_user}': **{current_status.upper()}**")
 
@@ -211,7 +214,7 @@ def save_session_data_to_firestore():
             # Also, filter out 'Resume Raw Text' as it can be very large.
             df_for_save = st.session_state['comprehensive_df'].drop(columns=['Resume Raw Text'], errors='ignore')
             data_to_save['comprehensive_df_json'] = df_for_save.to_json(orient='records')
-            
+
         # You can add other session variables here if needed, ensure they are JSON serializable
         # Example: data_to_save['last_jd_used'] = st.session_state.get('last_jd_used')
         # Example: data_to_save['screening_cutoff_score'] = st.session_state.get('screening_cutoff_score')
@@ -219,7 +222,7 @@ def save_session_data_to_firestore():
         if data_to_save:
             try:
                 # This is one of the "4-5 lines of code" for saving
-                doc_ref.set(data_to_save) 
+                doc_ref.set(data_to_save)
                 st.toast("Session data saved to Firestore!")
                 log_activity(f"Session data saved for user '{user_id}'.")
             except Exception as e:
@@ -237,10 +240,10 @@ def load_session_data_from_firestore():
         app_id = globals().get('__app_id', 'default-app-id')
 
         doc_ref = db.collection(f'artifacts/{app_id}/users/{user_id}/session_data').document('current_session')
-        
+
         try:
             # This is one of the "4-5 lines of code" for loading
-            doc = doc_ref.get() 
+            doc = doc_ref.get()
             if doc.exists:
                 data = doc.to_dict()
                 if 'comprehensive_df_json' in data:
@@ -248,7 +251,7 @@ def load_session_data_from_firestore():
                     st.session_state['comprehensive_df'] = pd.read_json(data['comprehensive_df_json'], orient='records')
                     st.toast("Session data loaded from Firestore!")
                     log_activity(f"Session data loaded for user '{user_id}'.")
-                
+
                 # Load other session variables if they were saved
                 # Example: st.session_state['last_jd_used'] = data.get('last_jd_used')
                 # Example: st.session_state['screening_cutoff_score'] = data.get('screening_cutoff_score')
@@ -267,7 +270,7 @@ def login_section():
         st.session_state.authenticated = False
     if "username" not in st.session_state:
         st.session_state.username = None
-    
+
     # Initialize active_login_tab_selection if not present
     if "active_login_tab_selection" not in st.session_state:
         # Default to 'Register' if no users, otherwise 'Login'
@@ -314,7 +317,7 @@ def login_section():
                         st.rerun()
                     else:
                         st.error("❌ Invalid username or password.")
-    
+
     elif tab_selection == "Register": # This will be the initially selected option for new users
         register_section()
 
@@ -330,7 +333,7 @@ def log_activity(message):
     """Logs an activity with a timestamp to the session state."""
     if 'activity_log' not in st.session_state:
         st.session_state.activity_log = []
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.session_state.activity_log.insert(0, f"[{timestamp}] {message}") # Add to the beginning for most recent first
     # Keep log size manageable, e.g., last 50 activities
     st.session_state.activity_log = st.session_state.activity_log[:50]
@@ -778,7 +781,7 @@ def analytics_dashboard_page():
                     st.info("No common skills to display in the WordCloud for filtered data.")
             else:
                 st.info("No 'Matched Keywords' data available or column not found for WordCloud.")
-        
+
         with col_wc2:
             st.markdown("#### ❌ Top Missing Skills")
             if 'Missing Skills' in filtered_df.columns and not filtered_df['Missing Skills'].empty:
@@ -859,7 +862,7 @@ def analytics_dashboard_page():
                 if isinstance(categorized_dict, dict):
                     for category, skills_list in categorized_dict.items():
                         all_categorized_skills_counts[category] += len(skills_list)
-            
+
             if all_categorized_skills_counts:
                 skills_cat_df = pd.DataFrame(all_categorized_skills_counts.items(), columns=['Category', 'Count']).sort_values('Count', ascending=False)
                 fig_skills_cat = px.bar(
@@ -884,7 +887,7 @@ def analytics_dashboard_page():
             all_locations = []
             for loc_str in filtered_df['Location'].dropna():
                 all_locations.extend([loc.strip() for loc in loc_str.split(',') if loc.strip() and loc.strip().lower() != 'not found'])
-            
+
             if all_locations:
                 location_counts = pd.Series(all_locations).value_counts().reset_index()
                 location_counts.columns = ['Location', 'Count']
@@ -932,7 +935,7 @@ if tab == "🏠 Dashboard":
         try:
             df_results = st.session_state['comprehensive_df'].copy()
             resume_count = df_results["File Name"].nunique()
-            
+
             shortlisted_df = df_results[
                 (df_results["Score (%)"] >= cutoff_score) &
                 (df_results["Years Experience"] >= min_exp_required) &
@@ -973,7 +976,7 @@ if tab == "🏠 Dashboard":
         if st.button("📧 Email Shortlisted", key="dashboard_email_button_large"):
             st.session_state.tab_override = '📤 Email Candidates'
             st.rerun()
-    
+
     # --- Add Save/Load Buttons for Session Data ---
     st.markdown("---")
     st.subheader("Cloud Session Data Management")
@@ -1039,13 +1042,13 @@ if tab == "🏠 Dashboard":
                     labels = ['0-2 yrs', '3-5 yrs', '6-10 yrs', '10-20 yrs', '20+ yrs'] # Adjusted labels
                     df_results['Experience Group'] = pd.cut(df_results['Years Experience'], bins=bins, labels=labels, right=False)
                     exp_counts = df_results['Experience Group'].value_counts().sort_index()
-                    
+
                     # Use Plotly for better interactivity and dark mode handling
                     fig_plotly_bar = px.bar(exp_counts, x=exp_counts.index, y=exp_counts.values, title='Experience Distribution',
                                             labels={'x': 'Experience Range', 'y': 'Number of Candidates'},
                                             color_discrete_sequence=px.colors.sequential.Plasma if dark_mode else px.colors.sequential.Viridis)
                     st.plotly_chart(fig_plotly_bar, use_container_width=True)
-            
+
             # This table is always useful, so it's not tied to a widget checkbox
             st.markdown("##### 📋 Candidate Quality Summary")
             tag_summary = df_results['Tag'].value_counts().reset_index()
@@ -1061,7 +1064,7 @@ if tab == "🏠 Dashboard":
                     skill_counts = pd.Series(all_skills).value_counts().head(5)
                     if not skill_counts.empty:
                         fig_skills, ax3 = plt.subplots(figsize=(5.8, 3))
-                        
+
                         if dark_mode:
                             palette = sns.color_palette("magma", len(skill_counts))
                         else:
@@ -1076,7 +1079,7 @@ if tab == "🏠 Dashboard":
                         ax3.set_xlabel("Frequency", fontsize=11, color='white' if dark_mode else 'black')
                         ax3.set_ylabel("Skill", fontsize=11, color='white' if dark_mode else 'black')
                         ax3.tick_params(labelsize=10, colors='white' if dark_mode else 'black')
-                        
+
                         for i, v in enumerate(skill_counts.values):
                             ax3.text(v + 0.3, i, str(v), color='white' if dark_mode else 'black', va='center', fontweight='bold', fontsize=9)
                         fig_skills.tight_layout()
@@ -1088,7 +1091,7 @@ if tab == "🏠 Dashboard":
                     st.info("No 'Matched Keywords' column found in results for skill analysis.")
         except Exception as e:
             st.warning(f"⚠️ Could not render insights due to data error: {e}")
-    
+
     st.markdown("---")
 
     # --- New Dashboard Widgets ---
@@ -1110,11 +1113,11 @@ if tab == "🏠 Dashboard":
         st.subheader("Top Performing Job Descriptions")
         if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
             df_all_results = st.session_state['comprehensive_df'].copy()
-            
+
             # --- START FIX: Ensure 'JD Used' column exists for display ---
             if 'JD Used' not in df_all_results.columns:
                 # This is a fallback/mock for demonstration if screener.py doesn't add it
-                df_all_results['JD Used'] = 'Default Job Description' 
+                df_all_results['JD Used'] = 'Default Job Description'
                 st.warning("Note: 'JD Used' column not found in screening results. Using 'Default Job Description' for display. Please update your screener to track the JD used.")
             # --- END FIX ---
 
@@ -1127,7 +1130,7 @@ if tab == "🏠 Dashboard":
                     ((df_all_results['CGPA (4.0 Scale)'].isnull()) | (df_all_results['CGPA (4.0 Scale)'] >= min_cgpa_required)) # Apply CGPA filter
                 ]['JD Used'].value_counts().reset_index()
                 shortlisted_per_jd.columns = ['Job Description', 'Shortlisted Count']
-                
+
                 if not shortlisted_per_jd.empty:
                     st.dataframe(shortlisted_per_jd, use_container_width=True, hide_index=True)
                 else:
@@ -1136,7 +1139,7 @@ if tab == "🏠 Dashboard":
                 st.info("Still unable to determine top performing JDs. 'JD Used' column is missing even after fallback.")
         else:
             st.info("No screening results available to determine top performing JDs.")
-        
+
         if st.button("Manage All Job Descriptions", key="manage_all_jds_dashboard"):
             st.session_state.tab_override = '📁 Manage JDs'
             st.rerun()
@@ -1169,7 +1172,7 @@ if tab == "🏠 Dashboard":
                         st.write(f"**JD Used:** {candidate['jd_used']}")
                         st.write(f"**Experience:** {candidate['experience']} years")
                         st.write(f"**Notes:** {candidate['notes']}")
-                        
+
                         col_approve, col_reject = st.columns(2)
                         with col_approve:
                             if st.button(f"✅ Approve {candidate['candidate_name']}", key=f"approve_{i}"):
