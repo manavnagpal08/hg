@@ -210,9 +210,20 @@ def save_session_data_to_firestore_rest(username):
 
         data_to_save = {}
         if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
-            # Convert DataFrame to JSON string to store in a single Firestore field
+            # Create a copy to avoid modifying the original session state DataFrame directly
+            df_for_save = st.session_state['comprehensive_df'].copy()
+
+            # Ensure 'Shortlisted' column exists before accessing it
+            if 'Shortlisted' not in df_for_save.columns:
+                # Use a default cutoff if not already set in session state
+                shortlist_threshold = st.session_state.get('screening_cutoff_score', 75)
+                df_for_save['Shortlisted'] = df_for_save['Score (%)'].apply(
+                    lambda x: f"Yes (Score >= {shortlist_threshold}%)" if x >= shortlist_threshold else "No"
+                )
+                log_activity("Derived 'Shortlisted' column for saving as it was missing.")
+
             # Filter out 'Resume Raw Text' as it can be very large and is not needed for analytics.
-            df_for_save = st.session_state['comprehensive_df'].drop(columns=['Resume Raw Text'], errors='ignore')
+            df_for_save = df_for_save.drop(columns=['Resume Raw Text'], errors='ignore')
             data_to_save['comprehensive_df_json'] = df_for_save.to_json(orient='records')
 
             # Extract shortlisted names and job locations for logging/summary
