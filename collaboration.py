@@ -65,8 +65,8 @@ def log_activity(message: str, user: str = None):
         })
     except Exception as e:
         st.error(f"Error logging activity to Firestore: {e}")
-        # Note: If this error persists, check your Firestore security rules for 'activity_feed' collection.
-        # It should allow authenticated users to write.
+        # IMPORTANT: If this error persists, double-check your Firestore security rules for the 'activity_feed' collection.
+        # Ensure it allows authenticated users to write, e.g., 'allow read, write: if request.auth != null;'
 
 def collaboration_hub_page():
     st.markdown('<div class="dashboard-header">🤝 Collaboration Hub</div>', unsafe_allow_html=True)
@@ -127,7 +127,7 @@ def collaboration_hub_page():
         # @st.cache_resource ensures this setup function runs only once per session,
         # preventing multiple listeners from being attached. The on_snapshot callback
         # itself provides real-time updates to st.session_state.
-        @st.cache_resource(ttl=60)
+        @st.cache_resource(ttl=60) # TTL (Time To Live) in seconds for the cache
         def setup_notes_listener():
             notes_collection_ref = db.collection(f"artifacts/{app_id}/public/data/shared_notes")
             # Order by timestamp descending to show most recent first
@@ -644,7 +644,7 @@ def collaboration_hub_page():
                                 # Increment the vote count for the selected option.
                                 # For production, consider using Firestore transactions (db.transaction)
                                 # or FieldValue.increment for safer concurrent updates.
-                                # Example: poll_ref.update({"votes." + selected_option: firestore.Increment(1)})
+                                # Example: poll_ref.update({f"votes.{selected_option}": firestore.Increment(1)})
                                 current_votes = poll.get('votes', {})
                                 current_votes[selected_option] = current_votes.get(selected_option, 0) + 1
                                 poll_ref.update({"votes": current_votes})
