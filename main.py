@@ -13,8 +13,7 @@ import statsmodels.api as sm
 import collections
 
 # Firebase imports
-from firebase_admin import credentials, initialize_app, firestore
-from firebase_admin import app as apps # Corrected import for 'apps'
+from firebase_admin import credentials, initialize_app, firestore, apps # Corrected import for 'apps'
 import json # Needed for json.loads(firebase_config_str)
 
 # --- Firebase Initialization (Re-enabled) ---
@@ -74,7 +73,7 @@ def check_password(password, hashed_password):
 
 def is_valid_email(email):
     """Basic validation for email format."""
-    return re.match(r"[^@]+@[^@]+\.[^@]+", email)
+    return re.match(r"[^@]+@[^@]+\.\w+", email)
 
 def register_section():
     """Public self-registration form."""
