@@ -23,9 +23,11 @@ FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
 FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
 
 # Base URL for the public certificate page (update this if you host it elsewhere)
-# For local testing, you might use a placeholder like "http://localhost:8000/certificate.html"
-# In a real deployment, this would be your actual domain.
-CERTIFICATE_BASE_URL = "https://manavnagpal08.github.io/certification/"
+# For GitHub Pages, it's typically: "https://<YOUR_GITHUB_USERNAME>.github.io/<YOUR_REPOSITORY_NAME>/certificate.html"
+CERTIFICATE_BASE_URL = "https://manavnagpal08.github.io/certification/certificate.html"
+
+# Certification Threshold
+CERTIFICATION_THRESHOLD = 85 # Score needed to qualify for a certificate
 
 
 # File to store user credentials
@@ -904,7 +906,85 @@ else:
 
         st.dataframe(
             filtered_df[display_cols_for_table].sort_values(by="Score (%)", ascending=False),
-            use_container_width=True
+            use_container_width=True,
+            column_config={
+                "Certificate URL": st.column_config.LinkColumn(
+                    "Certificate Link",
+                    help="Click to view and download the official Screener Pro Certification.",
+                    display_text="View Certificate" # Text to display for the link
+                ),
+                "Score (%)": st.column_config.ProgressColumn(
+                    "Score (%)",
+                    help="Matching score against job requirements",
+                    format="%.1f",
+                    min_value=0,
+                    max_value=100,
+                ),
+                "Years Experience": st.column_config.NumberColumn(
+                    "Years Experience",
+                    help="Total years of professional experience",
+                    format="%.1f years",
+                ),
+                "CGPA (4.0 Scale)": st.column_config.NumberColumn(
+                    "CGPA (4.0 Scale)",
+                    help="Candidate's CGPA normalized to a 4.0 scale",
+                    format="%.2f",
+                    min_value=0.0,
+                    max_value=4.0
+                ),
+                "Semantic Similarity": st.column_config.NumberColumn(
+                    "Semantic Similarity",
+                    help="Conceptual similarity between JD and Resume (higher is better)",
+                    format="%.2f",
+                    min_value=0,
+                    max_value=1
+                ),
+                "AI Suggestion": st.column_config.Column(
+                    "AI Suggestion",
+                    help="AI's concise overall assessment and recommendation"
+                ),
+                "Matched Keywords": st.column_config.Column(
+                    "Matched Keywords",
+                    help="Keywords found in both JD and Resume"
+                ),
+                "Missing Skills": st.column_config.Column(
+                    "Missing Skills",
+                    help="Key skills from JD not found in Resume"
+                ),
+                "JD Used": st.column_config.Column(
+                    "JD Used",
+                    help="Job Description used for this screening"
+                ),
+                "Date Screened": st.column_config.DateColumn(
+                    "Date Screened",
+                    help="Date when the resume was screened",
+                    format="YYYY-MM-DD"
+                ),
+                "Phone Number": st.column_config.Column(
+                    "Phone Number",
+                    help="Candidate's phone number extracted from resume"
+                ),
+                "Location": st.column_config.Column(
+                    "Location",
+                    help="Candidate's location extracted from resume"
+                ),
+                "Languages": st.column_config.Column(
+                    "Languages",
+                    help="Languages spoken by the candidate"
+                ),
+                "Education Details": st.column_config.Column(
+                    "Education Details",
+                    help="Structured education history (University, Degree, Major, Year)"
+                ),
+                "Work History": st.column_config.Column(
+                    "Work History",
+                    help="Structured work experience (Company, Title, Dates)"
+                ),
+                "Project Details": st.column_config.Column(
+                    "Project Details",
+                    help="Structured project experience (Title, Description, Technologies)"
+                )
+            }
         )
 
         @st.cache_data
