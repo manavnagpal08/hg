@@ -1537,6 +1537,7 @@ def resume_screener_page():
 
 
         # --- Overall Candidate Comparison Chart ---
+        st.markdown("---")
         st.markdown("## 📊 Candidate Score Comparison")
         st.caption("Visual overview of how each candidate ranks against the job requirements.")
         # Check for dark mode to adjust plot colors
@@ -1890,7 +1891,8 @@ def resume_screener_page():
                 
                 # Add action buttons as a string for display in the table
                 actions_html = ""
-                if row_dict['Certificate Rank'] != "Not Applicable": # Check only for Certificate Rank
+                # Only show buttons if Certificate Rank is not "Not Applicable"
+                if row_dict['Certificate Rank'] != "Not Applicable":
                     # Button to view certificate in a modal
                     actions_html += f"""
                     <button onclick="parent.postMessage({{type: 'streamlit:setSessionState', args: ['view_certificate_id', '{row_dict['Certificate ID']}']}}, '*')" 
@@ -1899,13 +1901,18 @@ def resume_screener_page():
                     </button>
                     """
                     # Button to download certificate (HTML)
+                    # Note: This downloads an HTML file. To get a true PDF, the user would need to open this HTML
+                    # in a browser and use the browser's print-to-PDF functionality.
                     download_link = f"data:text/html;charset=utf-8,{urllib.parse.quote(generate_certificate_html(row_dict))}"
                     actions_html += f"""
                     <a href="{download_link}" download="ScreenerPro_Certificate_{row_dict['Candidate Name'].replace(' ', '_')}.html"
                        style="background-color:#00b0a8;color:white;border:none;padding:5px 10px;text-align:center;text-decoration:none;display:inline-block;font-size:12px;margin:2px;cursor:pointer;border-radius:5px;">
-                        Download PDF
+                        Download Certificate (HTML)
                     </a>
                     """
+                else:
+                    # Display a message if certificate is not applicable
+                    actions_html = f"<span style='font-size:12px; color:#888;'>{row_dict['Certificate Rank']}</span>"
                 
                 row_dict['Actions'] = actions_html
                 display_rows.append(row_dict)
@@ -2038,28 +2045,33 @@ def resume_screener_page():
                         }
                         .certificate-content {
                             background: white;
-                            padding: 20px;
-                            border-radius: 10px;
-                            box-shadow: 0 0 20px rgba(0,0,0,0.5);
-                            max-width: 800px;
+                            padding: 40px; /* Increased padding */
+                            border-radius: 15px; /* More rounded corners */
+                            box-shadow: 0 10px 25px rgba(0,0,0,0.4); /* Stronger shadow */
+                            max-width: 850px; /* Slightly wider */
                             max-height: 90vh;
                             overflow-y: auto;
                             position: relative;
+                            border: 8px solid #00cec9; /* Prominent border */
                         }
                         .close-button {
                             position: absolute;
-                            top: 10px;
-                            right: 10px;
+                            top: 15px; /* Adjusted position */
+                            right: 15px; /* Adjusted position */
                             background: #f44336;
                             color: white;
                             border: none;
                             border-radius: 50%;
-                            width: 30px;
-                            height: 30px;
+                            width: 35px; /* Larger button */
+                            height: 35px;
                             cursor: pointer;
-                            font-size: 18px;
+                            font-size: 20px; /* Larger font */
                             line-height: 1;
                             text-align: center;
+                            display: flex; /* For centering the X */
+                            justify-content: center;
+                            align-items: center;
+                            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
                         }
                         </style>
                         """, unsafe_allow_html=True)
@@ -2090,16 +2102,13 @@ def resume_screener_page():
 def generate_certificate_html(candidate_data):
     """
     Generates the HTML content for a ScreenerPro Certification.
+    This function is self-contained and does not rely on external files for the certificate's structure or styling.
     """
     candidate_name = candidate_data.get('Candidate Name', 'Candidate Name')
     score = candidate_data.get('Score (%)', 0.0)
     certificate_rank = candidate_data.get('Certificate Rank', 'Not Applicable')
     date_screened = candidate_data.get('Date Screened', datetime.now().date()).strftime("%B %d, %Y")
     certificate_id = candidate_data.get('Certificate ID', 'N/A')
-    
-    # Define colors based on dark mode (assuming main.py's dark_mode state is accessible)
-    # For a self-contained HTML, we'll use a fixed light mode style for the certificate itself
-    # to ensure it prints well.
     
     html_content = f"""
     <!DOCTYPE html>
@@ -2112,7 +2121,7 @@ def generate_certificate_html(candidate_data):
         <style>
             body {{
                 font-family: 'Inter', sans-serif;
-                background-color: #f8f9fa;
+                background-color: #f8f9fa; /* Light background for print compatibility */
                 display: flex;
                 justify-content: center;
                 align-items: center;
@@ -2125,7 +2134,7 @@ def generate_certificate_html(candidate_data):
                 width: 100%;
                 max-width: 800px;
                 background: linear-gradient(145deg, #ffffff, #e6e6e6);
-                border: 10px solid #00cec9;
+                border: 10px solid #00cec9; /* Main border color */
                 border-radius: 20px;
                 box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
                 padding: 40px;
@@ -2133,13 +2142,21 @@ def generate_certificate_html(candidate_data):
                 position: relative;
                 overflow: hidden;
             }}
+            .logo-text {{
+                font-family: 'Playfair Display', serif; /* A more elegant font for the logo */
+                font-size: 2.8em; /* Larger logo text */
+                color: #00cec9;
+                font-weight: 700;
+                margin-bottom: 15px;
+                text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+            }}
             .certificate-header {{
                 font-family: 'Playfair Display', serif;
                 font-size: 2.5em;
-                color: #00cec9;
+                color: #34495e; /* Darker text for header */
                 margin-bottom: 20px;
                 font-weight: 700;
-                text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+                text-shadow: 1px 1px 2px rgba(0,0,0,0.05);
             }}
             .certificate-subheader {{
                 font-size: 1.2em;
@@ -2156,40 +2173,39 @@ def generate_certificate_html(candidate_data):
             }}
             .candidate-name {{
                 font-family: 'Playfair Display', serif;
-                font-size: 2.8em;
-                color: #34495e;
-                margin: 20px 0;
+                font-size: 3.2em; /* Even larger name */
+                color: #00cec9; /* Teal for the name */
+                margin: 25px 0;
                 font-weight: 700;
-                border-bottom: 2px dashed #ccc;
+                border-bottom: 3px dashed #b0e0e6; /* Lighter dashed line */
                 display: inline-block;
-                padding-bottom: 5px;
+                padding-bottom: 8px;
+                animation: pulse 1.5s infinite alternate; /* Subtle animation */
+            }}
+            @keyframes pulse {{
+                0% {{ transform: scale(1); }}
+                100% {{ transform: scale(1.02); }}
             }}
             .score-rank {{
-                font-size: 1.4em;
-                color: #00cec9;
-                font-weight: 600;
+                font-size: 1.6em; /* Larger score/rank */
+                color: #28a745; /* Green for success */
+                font-weight: 700;
                 margin-top: 20px;
+                padding: 5px 15px;
+                background-color: #e6ffe6; /* Light green background */
+                border-radius: 10px;
+                display: inline-block;
             }}
             .date-id {{
-                font-size: 0.9em;
+                font-size: 0.95em;
                 color: #777;
-                margin-top: 30px;
-            }}
-            .logo {{
-                width: 150px;
-                margin-bottom: 20px;
+                margin-top: 35px;
             }}
             .footer-text {{
-                font-size: 0.8em;
+                font-size: 0.85em;
                 color: #999;
                 margin-top: 40px;
             }}
-            .badge-icon {{
-                font-size: 3em; /* Larger icon */
-                margin-bottom: 15px;
-                color: #ffd700; /* Gold color for badge */
-            }}
-
             /* Print styles */
             @media print {{
                 body {{
@@ -2201,32 +2217,36 @@ def generate_certificate_html(candidate_data):
                     border: 5px solid #00cec9;
                     box-shadow: none;
                 }}
-                .certificate-header, .candidate-name, .score-rank {{
-                    color: #00cec9 !important;
+                .logo-text, .certificate-header, .candidate-name, .score-rank {{
+                    color: #00cec9 !important; /* Ensure colors are printed */
+                    text-shadow: none !important;
+                }}
+                .candidate-name {{
+                    animation: none !important; /* Disable animation for print */
                 }}
             }}
         </style>
     </head>
     <body>
         <div class="certificate-container">
-            <img src="https://placehold.co/150x50/00cec9/ffffff?text=ScreenerPro" alt="ScreenerPro Logo" class="logo">
-            <div class="certificate-header">ScreenerPro Certification of Excellence</div>
-            <div class="certificate-subheader">This is to certify that</div>
+            <div class="logo-text">ScreenerPro</div>
+            <div class="certificate-header">Certification of Excellence</div>
+            <div class="certificate-subheader">This is to proudly certify that</div>
             <div class="candidate-name">{candidate_name}</div>
             <div class="certificate-body">
-                <p>has been screened by ScreenerPro and achieved a ranking of</p>
+                <p>has successfully completed the comprehensive AI-powered screening process by ScreenerPro and achieved a distinguished ranking of</p>
                 <div class="score-rank">
                     {certificate_rank}
                 </div>
-                <p>with an impressive Screener Score of **{score:.1f}%**.</p>
-                <p>This recognition is awarded based on a comprehensive assessment of resume quality, skill relevance, and overall profile strength against industry benchmarks and specific job requirements.</p>
+                <p>demonstrating an outstanding Screener Score of **{score:.1f}%**.</p>
+                <p>This certification attests to their highly relevant skills, extensive experience, and strong alignment with the demanding requirements of modern professional roles. It signifies their readiness to excel in challenging environments and contribute significantly to organizational success.</p>
             </div>
             <div class="date-id">
-                Date: {date_screened}<br>
+                Awarded on: {date_screened}<br>
                 Certificate ID: {certificate_id}
             </div>
             <div class="footer-text">
-                Verified by ScreenerPro.
+                This certificate is digitally verified by ScreenerPro.
             </div>
         </div>
     </body>
