@@ -12,6 +12,7 @@ import plotly.express as px
 import statsmodels.api as sm
 import collections
 import requests # Added for REST API calls
+import uuid # Added for generating unique certificate IDs
 
 # --- Firebase REST Setup ---
 # IMPORTANT: Replace "YOUR_FIREBASE_WEB_API_KEY" with your actual Firebase Web API Key
@@ -361,6 +362,43 @@ def load_session_data_from_firestore_rest(username):
         st.error(f"🔥 An unexpected error occurred during REST load: {e}")
         log_activity_main(f"Unexpected REST load error for user '{username}': {e}")
         st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on unexpected error
+
+
+# --- Firebase Certificate Storage (REST API) ---
+def save_certificate_to_firestore_rest(certificate_data):
+    """
+    Saves certificate data to Firestore using the REST API.
+    This is for public certificates.
+    """
+    try:
+        certificate_id = certificate_data.get("certificate_id")
+        if not certificate_id:
+            certificate_id = str(uuid.uuid4()) # Generate if not provided
+            certificate_data["certificate_id"] = certificate_id
+
+        # Public data path: /artifacts/{appId}/public/data/certificates/{documentId}
+        doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/public/data/certificates/{certificate_id}"
+        url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
+
+        firestore_data = to_firestore_format(certificate_data)
+
+        res = requests.patch(url, json=firestore_data)
+        if res.status_code in [200, 201]:
+            st.success(f"Certificate data saved to Firestore for ID: {certificate_id}")
+            log_activity_main(f"Certificate '{certificate_id}' saved to Firestore via REST API.")
+            return certificate_id
+        else:
+            st.error(f"❌ Certificate save failed: {res.status_code}, {res.text}")
+            log_activity_main(f"Certificate save failed for '{certificate_id}': {res.status_code}, {res.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"🔥 Firebase connection error during certificate save: {e}")
+        log_activity_main(f"Firebase connection error during certificate save: {e}")
+        return None
+    except Exception as e:
+        st.error(f"🔥 An unexpected error occurred during certificate save: {e}")
+        log_activity_main(f"Unexpected certificate save error: {e}")
+        return None
 
 
 def login_section():
@@ -860,6 +898,12 @@ else:
             display_cols_for_table.append('Tag')
         if 'JD Used' in filtered_df.columns:
             display_cols_for_table.append('JD Used')
+        # Add Certificate related columns
+        if 'Certificate Rank' in filtered_df.columns:
+            display_cols_for_table.append('Certificate Rank')
+        if 'Certificate ID' in filtered_df.columns:
+            display_cols_for_table.append('Certificate ID')
+
 
         st.dataframe(
             filtered_df[display_cols_for_table].sort_values(by="Score (%)", ascending=False),
@@ -1393,15 +1437,71 @@ else:
         try:
             # Import the screener page function (assuming it's in a separate file)
             from screener import resume_screener_page
+            
+            # Call the imported function, passing the certificate saving function
+            # The resume_screener_page function will need to accept this as an argument
+            # or use st.session_state to access the save_certificate_to_firestore_rest function.
+            # For simplicity, let's assume it can access it via st.session_state or a global scope for now.
+            # If resume_screener_page is in a separate file, you might need to pass it explicitly:
+            # resume_screener_page(save_certificate_func=save_certificate_to_firestore_rest)
+            
+            # For now, assuming resume_screener_page will call save_certificate_to_firestore_rest directly
+            # or we'll add the certificate generation logic here after it returns results.
+            
             resume_screener_page() # Call the imported function
-            # The logging and pending approval logic here should ideally be handled within resume_screener_page itself
-            # after a successful screening operation. For now, keeping it here for demonstration.
+
+            # After screening is done and comprehensive_df is updated by resume_screener_page
             if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
                 # Log activity only if new data was added to comprehensive_df
                 current_df_len = len(st.session_state['comprehensive_df'])
                 if st.session_state.get('last_screen_log_count', 0) < current_df_len:
                     log_activity_main(f"Performed resume screening for {current_df_len} candidates.")
                     st.session_state.last_screen_log_count = current_df_len
+
+                # Iterate through the newly added candidates (or all if simpler)
+                # and check for certification eligibility
+                for result in st.session_state['comprehensive_df'].to_dict('records'):
+                    # Check if candidate qualifies for certification and hasn't been certified yet in this session
+                    # We need a way to track if a certificate has already been issued for this candidate
+                    # This is a simplified check; in a real app, you'd check Firestore for existing certificates
+                    if result.get('Score (%)', 0) >= 85 and \
+                       result.get('Certificate ID') is None: # Only generate if Certificate ID is not yet set
+                        
+                        # Prepare data for certificate
+                        certificate_data = {
+                            "name": result.get('Candidate Name', 'N/A'),
+                            "score": result.get('Score (%)', 0),
+                            "email": result.get('Email', 'N/A'),
+                            "date": datetime.now().strftime("%Y-%m-%d"),
+                            "rank": "Top 10% Performer", # Or dynamically determine based on score
+                        }
+                        
+                        # Save certificate to Firestore (via REST API)
+                        certificate_id = save_certificate_to_firestore_rest(certificate_data)
+
+                        if certificate_id:
+                            # Update the comprehensive_df with the certificate details
+                            # Find the row by file name or candidate name and update it
+                            # This part is tricky because we're iterating over a copy.
+                            # A better approach would be to have resume_screener_page return the updated DF.
+                            # For now, let's assume we can update the session state DF directly.
+                            
+                            # Find the index of the current candidate in the actual session_state['comprehensive_df']
+                            # This assumes 'File Name' is unique
+                            idx_to_update = st.session_state['comprehensive_df'][
+                                st.session_state['comprehensive_df']['File Name'] == result.get('File Name')
+                            ].index
+                            
+                            if not idx_to_update.empty:
+                                st.session_state['comprehensive_df'].loc[idx_to_update, 'Certificate ID'] = certificate_id
+                                st.session_state['comprehensive_df'].loc[idx_to_update, 'Certificate Rank'] = certificate_data['rank']
+                                st.session_state['comprehensive_df'].loc[idx_to_update, 'Verification URL'] = \
+                                    f"https://screenerpro.in/certificate/{certificate_id}" # IMPORTANT: Update this base URL
+                                
+                                st.toast(f"Candidate {result.get('Candidate Name', 'N/A')} certified!")
+                                log_activity_main(f"Candidate '{result.get('Candidate Name', 'N/A')}' certified with ID: {certificate_id}.")
+                                # No st.rerun() here to avoid infinite loops if this is called within a loop that updates state.
+                                # The main app rerun will happen after the screener page finishes.
 
                 # Example: Triggering a pending approval for a high-scoring candidate
                 for result in st.session_state['comprehensive_df'].to_dict('records'):
