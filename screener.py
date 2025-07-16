@@ -15,13 +15,7 @@ import nltk
 import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
-
-# --- OCR Specific Imports ---
-from PIL import Image
-import pytesseract
-import cv2
-from pdf2image import convert_from_bytes # For converting PDF to images
-import shutil # For finding tesseract executable
+import uuid # Added for generating unique IDs
 
 # Download NLTK stopwords data if not already downloaded
 try:
@@ -220,42 +214,6 @@ SKILL_CATEGORIES = {
 MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
 
 
-# --- OCR Helper Functions ---
-@st.cache_resource
-def get_tesseract_cmd():
-    """
-    Finds the tesseract executable in the system's PATH.
-    This is crucial for pytesseract to work, especially in deployment environments.
-    """
-    tesseract_path = shutil.which("tesseract")
-    if tesseract_path:
-        pytesseract.pytesseract.tesseract_cmd = tesseract_path
-        return tesseract_path
-    return None
-
-def preprocess_image_for_ocr(image):
-    """
-    Applies basic image preprocessing to improve OCR accuracy.
-    Converts to grayscale and applies adaptive thresholding.
-    """
-    # Convert PIL Image to OpenCV format (NumPy array)
-    img_cv = np.array(image)
-    img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
-
-    # Apply adaptive thresholding for better text extraction from varying backgrounds
-    # This is generally more robust than a simple binary threshold
-    img_processed = cv2.adaptiveThreshold(img_cv, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                          cv2.THRESH_BINARY, 11, 2)
-    
-    # Invert the colors if necessary (Tesseract often prefers black text on white background,
-    # but sometimes white text on black background from thresholding can work better)
-    # This line can be commented out or adjusted based on testing.
-    # img_processed = cv2.bitwise_not(img_processed) 
-
-    # Convert back to PIL Image
-    return Image.fromarray(img_processed)
-
-
 # --- Helpers ---
 def clean_text(text):
     """Cleans text by removing newlines, extra spaces, and non-ASCII characters."""
@@ -327,172 +285,58 @@ def extract_relevant_keywords(text, filter_set):
     return extracted_keywords, dict(categorized_keywords)
 
 
-def extract_text_from_file(uploaded_file):
-    """
-    Extracts text from an uploaded file, handling both PDF (text-based and image-based)
-    and common image formats (JPG, PNG).
-    """
-    file_type = uploaded_file.type
-    full_text = ""
-
-    if "pdf" in file_type:
-        try:
-            # Try pdfplumber first for text-based PDFs (faster and more accurate for native text)
-            with pdfplumber.open(uploaded_file) as pdf:
-                pdf_text = ''.join(page.extract_text() or '' for page in pdf.pages)
-            
-            # If pdfplumber extracts very little text, it might be an image-based PDF.
-            # A threshold of 50 characters is arbitrary; adjust as needed.
-            if len(pdf_text.strip()) < 50:
-                st.warning(f"Low text extracted from PDF {uploaded_file.name} using pdfplumber. Attempting OCR...")
-                # Fallback to OCR for image-based PDFs
-                images = convert_from_bytes(uploaded_file.read())
-                for img in images:
-                    processed_img = preprocess_image_for_ocr(img)
-                    full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
-            else:
-                full_text = pdf_text
-
-        except Exception as e:
-            st.error(f"Error processing PDF {uploaded_file.name} with pdfplumber/OCR: {e}. Trying OCR fallback directly.")
-            # If pdfplumber fails entirely, try OCR
-            try:
-                images = convert_from_bytes(uploaded_file.read())
-                for img in images:
-                    processed_img = preprocess_image_for_ocr(img)
-                    full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
-            except Exception as e_ocr:
-                return f"[ERROR] Failed to extract text from PDF via OCR: {str(e_ocr)}"
-
-    elif "image" in file_type: # Handles "image/jpeg", "image/png" etc.
-        try:
-            img = Image.open(uploaded_file).convert("RGB")
-            processed_img = preprocess_image_for_ocr(img)
-            full_text = pytesseract.image_to_string(processed_img, lang='eng')
-        except Exception as e:
-            return f"[ERROR] Failed to extract text from image: {str(e)}"
-    else:
-        return f"[ERROR] Unsupported file type: {file_type}. Please upload a PDF or an image (JPG, PNG)."
-
-    if not full_text.strip():
-        return "[ERROR] No readable text extracted from the file. It might be a very low-quality scan or an empty document."
-    
-    return full_text
-
+def extract_text_from_pdf(uploaded_file):
+    """Extracts text from an uploaded PDF file."""
+    try:
+        with pdfplumber.open(uploaded_file) as pdf:
+            return ''.join(page.extract_text() or '' for page in pdf.pages)
+    except Exception as e:
+        return f"[ERROR] {str(e)}"
 
 def extract_years_of_experience(text):
     """Extracts years of experience from a given text by parsing date ranges or keywords."""
     text = text.lower()
     total_months = 0
-    
-    # Regex for various date formats: Month YYYY - Month YYYY, Month YYYY - Present, YYYY - YYYY, YYYY - Present
-    date_patterns = [
-        # Month YYYY - Month YYYY or Present
+    job_date_ranges = re.findall(
         r'(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})\s*(?:to|–|-)\s*(present|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})',
-        # YYYY - YYYY or Present
-        r'(\b\d{4})\s*(?:to|–|-)\s*(present|\b\d{4})'
-    ]
+        text
+    )
 
-    for pattern in date_patterns:
-        job_date_ranges = re.findall(pattern, text)
-        for start_str, end_str in job_date_ranges:
-            start_date = None
-            end_date = None
-
-            # Try parsing start date
+    for start, end in job_date_ranges:
+        try:
+            start_date = datetime.strptime(start.strip(), '%b %Y')
+        except ValueError:
             try:
-                # Try full month name (e.g., January)
-                start_date = datetime.strptime(start_str.strip(), '%B %Y')
+                start_date = datetime.strptime(start.strip(), '%B %Y')
+            except ValueError:
+                continue
+
+        if end.strip() == 'present':
+            end_date = datetime.now()
+        else:
+            try:
+                end_date = datetime.strptime(end.strip(), '%b %Y')
             except ValueError:
                 try:
-                    # Try abbreviated month name (e.g., Jan)
-                    start_date = datetime.strptime(start_str.strip(), '%b %Y')
+                    end_date = datetime.strptime(end.strip(), '%B %Y')
                 except ValueError:
-                    try:
-                        # Try parsing as year only
-                        start_date = datetime(int(start_str.strip()), 1, 1)
-                    except ValueError:
-                        pass # Cannot parse, skip this date range
+                    continue
 
-            if start_date is None:
-                continue # Skip if start date cannot be parsed
+        delta_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
+        total_months += max(delta_months, 0)
 
-            # Try parsing end date
-            if end_str.strip() == 'present':
-                end_date = datetime.now()
-            else:
-                try:
-                    end_date = datetime.strptime(end_str.strip(), '%B %Y')
-                except ValueError:
-                    try:
-                        end_date = datetime.strptime(end_str.strip(), '%b %Y')
-                    except ValueError:
-                        try:
-                            # Try parsing as year only, assume end of year for simplicity
-                            end_date = datetime(int(end_str.strip()), 12, 31)
-                        except ValueError:
-                            pass # Cannot parse, skip this date range
-            
-            if end_date is None:
-                continue # Skip if end date cannot be parsed
-
-            delta_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
-            total_months += max(delta_months, 0)
-
-    if total_months > 0: # Only return calculated experience if dates were found
-        return round(total_months / 12, 1)
-    else: # Fallback to keyword-based search only if no date ranges yielded experience
+    if total_months == 0:
         match = re.search(r'(\d+(?:\.\d+)?)\s*(\+)?\s*(year|yrs|years)\b', text)
         if not match:
             match = re.search(r'experience[^\d]{0,10}(\d+(?:\.\d+)?)', text)
         if match:
             return float(match.group(1))
 
-    return 0.0 # Default to 0.0 if nothing found
+    return round(total_months / 12, 1)
 
 def extract_email(text):
-    """
-    Extracts an email address from the given text, with enhanced preprocessing
-    to handle common OCR errors.
-    """
-    text_processed = text.lower()
-
-    # Aggressive replacements for common OCR errors in email parts
-    text_processed = text_processed.replace(' ', '') # Remove all spaces
-    text_processed = text_processed.replace('dot', '.')
-    text_processed = text_processed.replace('(dot)', '.')
-    text_processed = text_processed.replace('[dot]', '.')
-    text_processed = text_processed.replace('-dot-', '.')
-    text_processed = text_processed.replace('_dot_', '.')
-    
-    text_processed = text_processed.replace('at', '@')
-    text_processed = text_processed.replace('(at)', '@')
-    text_processed = text_processed.replace('[at]', '@')
-    text_processed = text_processed.replace('-at-', '@')
-    text_processed = text_processed.replace('_at_', '@')
-
-    # Common character confusions by OCR
-    text_processed = text_processed.replace('1', 'l') # 'l' as '1'
-    text_processed = text_processed.replace('0', 'o') # 'o' as '0'
-    text_processed = text_processed.replace('s', '5') # 's' as '5'
-    text_processed = text_processed.replace('g', 'q') # 'q' as 'g' (less common but can happen)
-    text_processed = text_processed.replace('i', 'l') # 'l' as 'i' (for example, in 'mail')
-    text_processed = text_processed.replace('v', 'y') # 'y' as 'v' (less common)
-
-    # Specific domain corrections if they appear standalone or malformed
-    text_processed = re.sub(r'(\w+)@(\w+)\s*com\b', r'\1@\2.com', text_processed)
-    text_processed = re.sub(r'(\w+)@(\w+)\s*org\b', r'\1@\2.org', text_processed)
-    text_processed = re.sub(r'(\w+)@(\w+)\s*net\b', r'\1@\2.net', text_processed)
-    text_processed = re.sub(r'(\w+)@(\w+)\s*in\b', r'\1@\2.in', text_processed)
-    text_processed = re.sub(r'(\w+)@(\w+)\s*co\.in\b', r'\1@\2.co.in', text_processed)
-    text_processed = re.sub(r'(\w+)@(\w+)\s*co\.uk\b', r'\1@\2.co.uk', text_processed)
-
-    # Regex for email address. More specific to common email patterns.
-    # Allows for a wider range of characters in username and domain,
-    # and specifically looks for common TLDs.
-    email_regex = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|org|net|edu|gov|mil|in|co\.in|co\.uk|io|ai|dev|info|biz|me|us|ca|fr|de|jp|au|cn|ru|outlook)\b'
-    
-    match = re.search(email_regex, text_processed)
+    """Extracts an email address from the given text."""
+    match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text)
     return match.group(0) if match else None
 
 def extract_phone_number(text):
@@ -582,7 +426,7 @@ def extract_cgpa(text):
         if match[0] and match[0].strip(): # First pattern: (cgpa|gpa)\s*[:\s]*(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?
             raw_cgpa = float(match[0])
             scale = float(match[1]) if match[1] else None
-        elif match[2] and match[2].strip(): # Second pattern: (\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(?:cgpa|gpa)
+        elif match[2] and match[2].strip(): # Second pattern: (\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(cgpa|gpa)
             raw_cgpa = float(match[2])
             scale = float(match[3]) if match[3] else None
         else:
@@ -773,111 +617,76 @@ def extract_work_history(text):
 def extract_project_details(text):
     """
     Extracts project details (Title, Description, Technologies) from text.
-    This is a heuristic and may not capture all formats, especially with OCR.
+    This is a heuristic and may not capture all formats.
     Returns a list of dicts.
     """
+    project_section_matches = re.finditer(r'(?:projects|personal projects|key projects)\s*(\n|$)', text, re.IGNORECASE)
     project_details = []
     
-    # Define keywords that often precede or indicate a project section
-    project_section_keywords = r'(?:projects|personal projects|key projects|portfolio|selected projects|major projects|academic projects|relevant projects)'
-    
-    # Find the start of the project section
-    project_section_match = re.search(project_section_keywords + r'\s*(\n|$)', text, re.IGNORECASE)
-    
-    if not project_section_match:
-        project_text = text # Fallback to full text if no clear section header
-        start_index = 0
-    else:
-        start_index = project_section_match.end()
-        # Define potential end markers for the project section
-        sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
+    start_index = -1
+    for match in project_section_matches:
+        start_index = match.end()
+        break
+
+    if start_index != -1:
+        sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications']
         end_index = len(text)
         for section in sections:
             section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
             if section_match:
                 end_index = start_index + section_match.start()
                 break
+        
         project_text = text[start_index:end_index].strip()
-    
-    if not project_text:
-        return [] # No project text found
-
-    lines = [line.strip() for line in project_text.split('\n') if line.strip()]
-    
-    current_project = {"Project Title": None, "Description": [], "Technologies Used": set()}
-    
-    # Keywords that strongly suggest a project title or a new project entry
-    strong_project_indicators = [
-        "project", "developed", "implemented", "created", "designed", "built", "contributed to",
-        "achieved", "led", "managed", "research", "capstone", "thesis", "portfolio"
-    ]
-
-    for i, line in enumerate(lines):
-        line_lower = line.lower()
         
-        # Add a check for previous line not being a bullet point for better project title detection
-        prev_line_is_bullet = False
-        if i > 0:
-            prev_line = lines[i-1].strip()
-            if re.match(r'^[•*-]', prev_line):
-                prev_line_is_bullet = True
-
-        is_potential_title = (
-            (line and (line[0].isupper() or re.match(r'^\d', line))) and
-            len(line.split()) > 1 and
-            len(line.split()) < 15 and
-            not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line_lower) and
-            not re.match(r'^[•*-]\s*(?:achieved|contributed|implemented|developed|designed|built|managed|led)', line_lower) and
-            any(keyword in line_lower for keyword in strong_project_indicators) and
-            not prev_line_is_bullet # New condition: not preceded by a bullet point
-        )
+        # Split into individual projects, often marked by a title line or bullet point
+        # This regex tries to split by a line starting with a capital letter followed by words,
+        # often indicating a new project title.
+        project_blocks = re.split(r'\n(?=[A-Z][a-zA-Z\s,&\-]+\s*(?:\()?\d{4}(?:\))?)|\n(?=•\s*[A-Z][a-zA-Z\s,&\-]+)', project_text)
         
-        is_url = re.match(r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)', line_lower)
-
-        if is_potential_title or is_url:
-            # If we already have a project being built, save it before starting a new one
-            if current_project["Project Title"] is not None or current_project["Description"]:
-                if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
-                    # Extract technologies from the *full* collected description of the previous project
-                    full_description_for_skills = "\n".join(current_project["Description"])
-                    extracted_skills_for_project, _ = extract_relevant_keywords(full_description_for_skills, MASTER_SKILLS)
-                    current_project["Technologies Used"].update(extracted_skills_for_project) # Add to the set
-
-                    project_details.append({
-                        "Project Title": current_project["Project Title"],
-                        "Description": full_description_for_skills.strip(),
-                        "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
-                    })
-            # Start a new project
-            current_project = {"Project Title": line, "Description": [], "Technologies Used": set()}
-        else:
-            # Add line to current project's description
-            current_project["Description"].append(line)
+        for block in project_blocks:
+            block = block.strip()
+            if not block:
+                continue
             
-    # Add the last project if it exists
-    if current_project["Project Title"] is not None or current_project["Description"]:
-        if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
-            # Extract technologies from the *full* collected description of the last project
-            full_description_for_skills = "\n".join(current_project["Description"])
-            extracted_skills_for_project, _ = extract_relevant_keywords(full_description_for_skills, MASTER_SKILLS)
-            current_project["Technologies Used"].update(extracted_skills_for_project) # Add to the set
+            title = None
+            description = []
+            technologies = []
 
-            project_details.append({
-                "Project Title": current_project["Project Title"],
-                "Description": full_description_for_skills.strip(),
-                "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
-            })
-            
+            lines = block.split('\n')
+            if lines:
+                # First line is often the title
+                title_line = lines[0].strip()
+                if len(title_line.split()) <= 10 and re.match(r'^[A-Z]', title_line): # Heuristic for title line
+                    title = title_line
+                    description_lines = lines[1:]
+                else:
+                    description_lines = lines # If no clear title line, whole block is description
+                
+                # Extract technologies (simple approach: look for words in MASTER_SKILLS within the block)
+                block_lower = block.lower()
+                for skill in MASTER_SKILLS: # MASTER_SKILLS is now dynamically generated
+                    if re.search(r'\b' + re.escape(skill.lower()) + r'\b', block_lower):
+                        technologies.append(skill)
+                
+                # Remaining lines form the description
+                description = [line.strip() for line in description_lines if line.strip()]
+                
+            if title or description or technologies:
+                project_details.append({
+                    "Project Title": title,
+                    "Description": "\n".join(description),
+                    "Technologies Used": ", ".join(technologies)
+                })
     return project_details
-
 
 def extract_languages(text):
     """
     Extracts spoken languages from the resume text.
     Looks for a "Languages" section and lists known languages.
     """
-    languages_list = set() # Use a set to automatically handle duplicates
-    cleaned_full_text = clean_text(text)
+    languages_list = []
+    text_lower = text.lower()
 
     # Define a comprehensive list of languages (Indian and Foreign)
     all_languages = [
@@ -886,75 +695,38 @@ def extract_languages(text):
         "gujarati", "urdu", "kannada", "odia", "malayalam", "punjabi", "assamese", "kashmiri",
         "sindhi", "sanskrit", "dutch", "swedish", "norwegian", "danish", "finnish", "greek",
         "turkish", "hebrew", "thai", "vietnamese", "indonesian", "malay", "filipino", "swahili",
-        "farsi", "persian", "polish", "ukrainian", "romanian", "czech", "slovak", "hungarian",
-        "chinese", "vietnamese", "tagalog", "amharic", "somali", "nepali", "sinhala", "burmese",
-        "khmer", "lao", "pashto", "dari", "uzbek", "kazakh", "azerbaijani", "georgian", "armenian",
-        "albanian", "serbian", "croatian", "bosnian", "bulgarian", "macedonian", "slovenian",
-        "estonian", "latvian", "lithuanian", "icelandic", "irish", "welsh", "gaelic", "maltese",
-        "esperanto", "latin", "ancient greek", "modern greek", "yiddish", "romani", "catalan",
-        "galician", "basque", "breton", "cornish", "manx", "frisian", "luxembourgish", "sami",
-        "romansh", "sardinian", "corsican", "occitan", "provencal", "walloon", "flemish",
-        "afrikaans", "zulu", "xhosa", "sesotho", "setswana", "shona", "ndebele", "venda", "tsonga",
-        "swati", "kikuyu", "luganda", "kinyarwanda", "kirundi", "lingala", "kongo", "yoruba",
-        "igbo", "hausa", "fulani", "twi", "ewe", "ga", "dagbani", "gur", "mossi", "bambara",
-        "senufo", "wolof", "mandinka", "susu", "krio", "temne", "limba", "mende", "gola", "vai",
-        "kpele", "loma", "bandi", "kpelle", "kru", "bassa", "grebo", "krahn", "dan", "mano",
-        "guerze", "kono", "kisi", "gola", "de", "bassa", "kru", "grebo", "krahn", "dan", "mano",
-        "guerze", "kono", "kisi", "gola", "de",
-        # Added common abbreviations/alternative names
-        "de" # For German
+        "farsi", "persian", "polish", "ukrainian", "romanian", "czech", "slovak", "hungarian"
     ]
     
-    # Sort languages by length descending to match longer phrases first (e.g., "Ancient Greek" before "Greek")
-    sorted_all_languages = sorted(all_languages, key=len, reverse=True)
-
-    # Look for a "Languages" section header with more flexibility
-    # Added more variations and optional punctuation/spacing
-    languages_section_match = re.search(
-        r'\b(languages|language skills|linguistic abilities|proficiencies in languages|known languages)\s*[:\s]*(\n|$)',
-        cleaned_full_text, re.IGNORECASE
-    )
+    # Look for a "Languages" section header
+    languages_section_match = re.search(r'\b(languages|language skills|linguistic abilities)\b\s*(\n|$)', text_lower)
     
-    text_to_search_for_languages = cleaned_full_text # Default to full text
-
     if languages_section_match:
         start_index = languages_section_match.end()
         # Define potential end markers for the languages section
-        sections = ['education', 'experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications', 'interests', 'hobbies', 'achievements']
-        end_index = len(cleaned_full_text)
+        sections = ['education', 'experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
+        end_index = len(text_lower)
         for section in sections:
-            section_match = re.search(r'\b' + re.escape(section) + r'\b', cleaned_full_text[start_index:], re.IGNORECASE)
+            section_match = re.search(r'\b' + re.escape(section) + r'\b', text_lower[start_index:], re.IGNORECASE)
             if section_match:
                 end_index = start_index + section_match.start()
                 break
         
-        languages_text_segment = cleaned_full_text[start_index:end_index].strip()
+        languages_text = text_lower[start_index:end_index].strip()
         
         # Extract languages from the identified section
-        for lang in sorted_all_languages:
-            # Use a more flexible regex to capture language names, potentially with descriptors
-            # e.g., "English (Fluent)", "French - Native", "Spanish, Conversational", "German: Basic"
-            # The regex will look for the language name followed by optional characters/words
-            # up to a newline or another language.
-            pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
-            if re.search(pattern, languages_text_segment, re.IGNORECASE):
-                # Add the properly cased language name from the *original* all_languages list if it exists,
-                # otherwise add the matched abbreviation/alias.
-                if lang == "de":
-                    languages_list.add("German")
-                else:
-                    languages_list.add(lang.title()) # Add the properly cased language name
+        for lang in all_languages:
+            if re.search(r'\b' + re.escape(lang) + r'\b', languages_text):
+                languages_list.append(lang.title())
     else:
-        # Fallback: if no explicit section, try to find languages anywhere in the cleaned full text
-        for lang in sorted_all_languages:
-            pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
-            if re.search(pattern, cleaned_full_text, re.IGNORECASE):
-                if lang == "de":
-                    languages_list.add("German")
-                else:
-                    languages_list.add(lang.title())
+        # Fallback: if no explicit section, try to find languages anywhere in the text
+        # This is less precise but can catch languages mentioned in summary/profile
+        for lang in all_languages:
+            if re.search(r'\b' + re.escape(lang) + r'\b', text_lower):
+                if lang.title() not in languages_list: # Avoid duplicates if found in multiple places
+                    languages_list.append(lang.title())
 
-    return ", ".join(sorted(list(languages_list))) if languages_list else "Not Found"
+    return ", ".join(sorted(list(set(languages_list)))) if languages_list else "Not Found"
 
 
 def format_education_details(edu_list):
@@ -1145,7 +917,7 @@ def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_s
     # Tier 4: Limited Match
     else:
         overall_assessment_title = "Limited Match: Consider Only for Niche Needs or Pipeline Building"
-        assessment_parts.append(f"**{candidate_name}** shows a **limited match** with a score = {score:.2f}% and {years_exp:.1f} years of experience (semantic similarity: {semantic_similarity:.2f}). This profile indicates a significant deviation from the core requirements of the job description.")
+        assessment_parts.append(f"**{candidate_name}** shows a **limited match** with a score of {score:.2f}% and {years_exp:.1f} years of experience (semantic similarity: {semantic_similarity:.2f}). This profile indicates a significant deviation from the core requirements of the job description.")
         if cgpa is not None:
             assessment_parts.append(f"Their academic record (CGPA: {cgpa:.2f}) also indicates a potential mismatch.")
         assessment_parts.append(f"**Key Concerns:** A low overlap in essential skills and potentially insufficient experience for the role's demands. Many key skills appear to be missing: *{missing_skills_str if missing_skills_str else 'No specific missing skills listed, but overall low match'}*. While some transferable skills may exist, a substantial investment in training or a re-evaluation of role fit would likely be required for this candidate to succeed.")
@@ -1294,15 +1066,8 @@ The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
 # --- Function to encapsulate the Resume Screener logic ---
-def resume_screener_page():
+def resume_screener_page(FIREBASE_WEB_API_KEY, FIREBASE_PROJECT_ID, FIRESTORE_BASE_URL, CERTIFICATE_BASE_URL, CERTIFICATION_THRESHOLD, save_certificate_to_firestore_rest):
     st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
-
-    # --- Initial Tesseract Check ---
-    tesseract_cmd_path = get_tesseract_cmd()
-    if not tesseract_cmd_path:
-        st.error("Tesseract OCR engine not found. Please ensure it's installed and in your system's PATH.")
-        st.info("On Streamlit Community Cloud, ensure you have a `packages.txt` file in your repository's root with `tesseract-ocr` and `tesseract-ocr-eng` listed.")
-        st.stop() # Stop the app if Tesseract is not found
 
     # --- Job Description and Controls Section ---
     st.markdown("## ⚙️ Define Job Requirements & Screening Criteria")
@@ -1321,11 +1086,10 @@ def resume_screener_page():
         # Determine the JD name to be stored in results
         jd_name_for_results = ""
         if jd_option == "Upload my own":
-            # --- MODIFIED: Allow PDF and TXT for JD upload ---
-            jd_file = st.file_uploader("Upload Job Description (TXT, PDF)", type=["txt", "pdf"], help="Upload a .txt or .pdf file containing the job description.")
+            jd_file = st.file_uploader("Upload Job Description (TXT)", type="txt", help="Upload a .txt file containing the job description.")
             if jd_file:
-                jd_text = extract_text_from_file(jd_file) # Use the robust text extraction
-                jd_name_for_results = jd_file.name.replace('.pdf', '').replace('.txt', '')
+                jd_text = jd_file.read().decode("utf-8")
+                jd_name_for_results = jd_file.name.replace(".txt", "")
             else:
                 jd_name_for_results = "Uploaded JD (No file selected)"
         else:
@@ -1378,8 +1142,7 @@ def resume_screener_page():
             help="Select skills that are very important, but not as critical as high priority ones."
         )
 
-    # --- Updated File Uploader to accept PDF and Images ---
-    resume_files = st.file_uploader("📄 **Upload Resumes (PDF, JPG, PNG)**", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, help="Upload one or more PDF or image resumes for screening.")
+    resume_files = st.file_uploader("📄 **Upload Resumes (PDF)**", type="pdf", accept_multiple_files=True, help="Upload one or more PDF resumes for screening.")
 
     # Initialize or update the comprehensive_df in session state
     if 'comprehensive_df' not in st.session_state:
@@ -1419,7 +1182,7 @@ def resume_screener_page():
             status_text.text(f"Processing {file.name} ({i+1}/{len(resume_files)})...")
             progress_bar.progress((i + 1) / len(resume_files))
 
-            text = extract_text_from_file(file) # Use the updated function
+            text = extract_text_from_pdf(file)
             if text.startswith("[ERROR]"):
                 st.error(f"Failed to process {file.name}: {text.replace('[ERROR] ', '')}")
                 continue
@@ -1443,7 +1206,7 @@ def resume_screener_page():
             work_history_formatted = format_work_history(work_history_raw)
             project_details_formatted = format_project_details(project_details_raw)
 
-            candidate_name = extract_name(text) or file.name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title()
+            candidate_name = extract_name(text) or file.name.replace('.pdf', '').replace('_', ' ').title()
             cgpa = extract_cgpa(text)
 
             # Calculate Matched Keywords and Missing Skills using the new function
@@ -1451,7 +1214,6 @@ def resume_screener_page():
             jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, all_master_skills)
 
             matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
-            # Corrected: Missing skills are JD skills NOT in resume skills
             missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
 
             score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills)
@@ -1479,6 +1241,27 @@ def resume_screener_page():
                 max_exp_cutoff=max_experience
             )
 
+            # --- Certification Logic ---
+            certificate_id = None
+            certificate_url = None
+            has_certificate = False
+            if score >= CERTIFICATION_THRESHOLD:
+                has_certificate = True
+                certificate_id = str(uuid.uuid4().hex) # Generate a unique ID for the certificate
+                certificate_url = f"{CERTIFICATE_BASE_URL}?id={certificate_id}"
+
+                # Prepare data for Firestore
+                certificate_data = {
+                    "certificate_id": certificate_id,
+                    "name": candidate_name,
+                    "score": score,
+                    "date": datetime.now().strftime("%B %d, %Y"), # Format date for display on certificate
+                    "rank": "Top Performer" if score >= 90 else "Certified", # Simple ranking logic
+                    "email": email or "N/A",
+                    "jd_used": jd_name_for_results
+                }
+                save_certificate_to_firestore_rest(certificate_data) # Save to Firestore
+
             results.append({
                 "File Name": file.name,
                 "Candidate Name": candidate_name,
@@ -1501,7 +1284,10 @@ def resume_screener_page():
                 "Semantic Similarity": semantic_similarity,
                 "Resume Raw Text": text,
                 "JD Used": jd_name_for_results,
-                "Date Screened": datetime.now().date() # Add Date Screened here
+                "Date Screened": datetime.now().date(), # Add Date Screened here
+                "Certificate ID": certificate_id, # Add certificate ID
+                "Certificate URL": certificate_url, # Add certificate URL
+                "Has Certificate": has_certificate # Flag for badge display
             })
             
         progress_bar.empty()
@@ -1517,6 +1303,12 @@ def resume_screener_page():
             "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 and row['Years Experience'] <= max_experience and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 2.5) else (
             "⚠️ Needs Review" if row['Score (%)'] >= 40 else 
             "❌ Limited Match"))), axis=1)
+
+        # Add the "🏅" badge to Candidate Name for certified candidates
+        st.session_state['comprehensive_df']['Candidate Name'] = st.session_state['comprehensive_df'].apply(
+            lambda row: f"🏅 {row['Candidate Name']}" if row['Has Certificate'] else row['Candidate Name'],
+            axis=1
+        )
 
         # Save results to CSV for analytics.py to use
         st.session_state['comprehensive_df'].to_csv("results.csv", index=False)
@@ -1766,12 +1558,12 @@ def resume_screener_page():
             )
         with filter_col_lang:
             # Extract all unique languages from the 'Languages' column across all candidates
-            all_languages_from_df = sorted(list(set(
+            all_languages = sorted(list(set(
                 lang.strip() for langs_str in st.session_state['comprehensive_df']['Languages'] if langs_str != "Not Found" for lang in langs_str.split(',')
             )))
             selected_languages = st.multiselect(
                 "**Languages:**",
-                options=all_languages_from_df,
+                options=all_languages,
                 help="Filter by languages spoken by the candidate."
             )
 
@@ -1828,7 +1620,7 @@ def resume_screener_page():
 
         # Define columns to display in the comprehensive table
         comprehensive_cols = [
-            'Candidate Name',
+            'Candidate Name', # This will now include the badge
             'Score (%)',
             'Years Experience',
             'CGPA (4.0 Scale)',
@@ -1845,7 +1637,8 @@ def resume_screener_page():
             'Matched Keywords',
             'Missing Skills',
             'JD Used',
-            'Date Screened' # Added Date Screened to the comprehensive table
+            'Date Screened', # Added Date Screened to the comprehensive table
+            'Certificate URL' # Added Certificate URL to the comprehensive table
         ]
         
         # Ensure all columns exist before trying to display them
@@ -1856,6 +1649,11 @@ def resume_screener_page():
             use_container_width=True,
             hide_index=True,
             column_config={
+                "Certificate URL": st.column_config.LinkColumn(
+                    "Certificate Link",
+                    help="Click to view and download the official Screener Pro Certification.",
+                    display_text="View Certificate" # Text to display for the link
+                ),
                 "Score (%)": st.column_config.ProgressColumn(
                     "Score (%)",
                     help="Matching score against job requirements",
