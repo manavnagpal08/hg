@@ -16,6 +16,13 @@ import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
 
+# --- OCR Specific Imports ---
+from PIL import Image
+import pytesseract
+import cv2
+from pdf2image import convert_from_bytes # For converting PDF to images
+import shutil # For finding tesseract executable
+
 # Download NLTK stopwords data if not already downloaded
 try:
     nltk.data.find('corpora/stopwords')
@@ -173,44 +180,44 @@ CUSTOM_STOP_WORDS = set([
 ])
 STOP_WORDS = NLTK_STOP_WORDS.union(CUSTOM_STOP_WORDS)
 
-# --- Skill Categories (for categorization and weighting) ---
-SKILL_CATEGORIES = {
-    "Programming Languages": ["Python", "Java", "JavaScript", "C++", "C#", "Go", "Ruby", "PHP", "Swift", "Kotlin", "TypeScript", "R", "Bash Scripting", "Shell Scripting"],
-    "Web Technologies": ["HTML5", "CSS3", "React", "Angular", "Vue.js", "Node.js", "Django", "Flask", "Spring Boot", "Express.js", "WebSockets"],
-    "Databases": ["SQL", "NoSQL", "PostgreSQL", "MySQL", "MongoDB", "Cassandra", "Elasticsearch", "Neo4j", "Redis", "BigQuery", "Snowflake", "Redshift", "Aurora", "DynamoDB", "DocumentDB", "CosmosDB"],
-    "Cloud Platforms": ["AWS", "Azure", "Google Cloud Platform", "GCP", "Serverless", "AWS Lambda", "Azure Functions", "Google Cloud Functions"],
-    "DevOps & MLOps": ["Git", "GitHub", "GitLab", "Bitbucket", "CI/CD", "Docker", "Kubernetes", "Terraform", "Ansible", "Jenkins", "CircleCI", "GitHub Actions", "Azure DevOps", "MLOps"],
-    "Data Science & ML": ["Machine Learning", "Deep Learning", "Natural Language Processing", "Computer Vision", "Reinforcement Learning", "Scikit-learn", "TensorFlow", "PyTorch", "Keras", "XGBoost", "LightGBM", "Data Cleaning", "Feature Engineering",
-    "Model Evaluation", "Statistical Modeling", "Time Series Analysis", "Predictive Modeling", "Clustering",
-    "Classification", "Regression", "Neural Networks", "Convolutional Networks", "Recurrent Networks",
-    "Transformers", "LLMs", "Prompt Engineering", "Generative AI", "MLOps", "Data Munging", "A/B Testing",
-    "Experiment Design", "Hypothesis Testing", "Bayesian Statistics", "Causal Inference", "Graph Neural Networks"],
-    "Data Analytics & BI": ["Data Cleaning", "Feature Engineering", "Model Evaluation", "Statistical Analysis", "Time Series Analysis", "Data Munging", "A/B Testing", "Experiment Design", "Hypothesis Testing", "Bayesian Statistics", "Causal Inference", "Excel (Advanced)", "Tableau", "Power BI", "Looker", "Qlik Sense", "Google Data Studio", "Dax", "M Query", "ETL", "ELT", "Data Warehousing", "Data Lake", "Data Modeling", "Business Intelligence", "Data Visualization", "Dashboarding", "Report Generation", "Google Analytics"],
-    "Soft Skills": ["Stakeholder Management", "Risk Management", "Change Management", "Communication Skills", "Public Speaking", "Presentation Skills", "Cross-functional Collaboration",
-    "Problem Solving", "Critical Thinking", "Analytical Skills", "Adaptability", "Time Management",
-    "Organizational Skills", "Attention to Detail", "Leadership", "Mentorship", "Team Leadership",
-    "Decision Making", "Negotiation", "Client Management", "Stakeholder Communication", "Active Listening",
-    "Creativity", "Innovation", "Research", "Data Analysis", "Report Writing", "Documentation"],
-    "Project Management": ["Agile Methodologies", "Scrum", "Kanban", "Jira", "Trello", "Product Lifecycle", "Sprint Planning", "Project Charter", "Gantt Charts", "MVP", "Backlog Grooming",
-    "Program Management", "Portfolio Management", "PMP", "CSM"],
-    "Security": ["Cybersecurity", "Information Security", "Risk Assessment", "Compliance", "GDPR", "HIPAA", "ISO 27001", "Penetration Testing", "Vulnerability Management", "Incident Response", "Security Audits", "Forensics", "Threat Intelligence", "SIEM", "Firewall Management", "Endpoint Security", "IAM", "Cryptography", "Network Security", "Application Security", "Cloud Security"],
-    "Other Tools & Frameworks": ["Jira", "Confluence", "Swagger", "OpenAPI", "Zendesk", "ServiceNow", "Intercom", "Live Chat", "Ticketing Systems", "HubSpot", "Salesforce Marketing Cloud",
-    "QuickBooks", "SAP FICO", "Oracle Financials", "Workday", "Microsoft Dynamics", "NetSuite", "Adobe Creative Suite", "Canva", "Mailchimp", "Hootsuite", "Buffer", "SEMrush", "Ahrefs", "Moz", "Screaming Frog",
-    "JMeter", "Postman", "SoapUI", "SVN", "Perforce", "Asana", "Monday.com", "Miro", "Lucidchart", "Visio", "MS Project", "Primavera", "AutoCAD", "SolidWorks", "MATLAB", "LabVIEW", "Simulink", "ANSYS",
-    "CATIA", "NX", "Revit", "ArcGIS", "QGIS", "OpenCV", "NLTK", "SpaCy", "Gensim", "Hugging Face Transformers",
-    "Docker Compose", "Helm", "Ansible Tower", "SaltStack", "Chef InSpec", "Terraform Cloud", "Vault",
-    "Consul", "Nomad", "Prometheus", "Grafana", "Alertmanager", "Loki", "Tempo", "Jaeger", "Zipkin",
-    "Fluentd", "Logstash", "Kibana", "Grafana Loki", "Datadog", "New Relic", "AppDynamics", "Dynatrace",
-    "Nagios", "Zabbix", "Icinga", "PRTG", "SolarWinds", "Wireshark", "Nmap", "Metasploit", "Burp Suite",
-    "OWASP ZAP", "Nessus", "Qualys", "Rapid7", "Tenable", "CrowdStrike", "SentinelOne", "Palo Alto Networks",
-    "Fortinet", "Cisco Umbrella", "Okta", "Auth0", "Keycloak", "Ping Identity", "Active Directory",
-    "LDAP", "OAuth", "JWT", "OpenID Connect", "SAML", "MFA", "SSO", "PKI", "TLS/SSL", "VPN", "IDS/IPS",
-    "DLP", "CASB", "SOAR", "XDR", "EDR", "MDR", "GRC", "ITIL", "Lean Six Sigma", "CFA", "CPA", "SHRM-CP",
-    "PHR", "CEH", "OSCP", "CCNA", "CISSP", "CISM", "CompTIA Security+"]
-}
-
 # Dynamically generate MASTER_SKILLS from SKILL_CATEGORIES
 MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
+
+
+# --- OCR Helper Functions ---
+@st.cache_resource
+def get_tesseract_cmd():
+    """
+    Finds the tesseract executable in the system's PATH.
+    This is crucial for pytesseract to work, especially in deployment environments.
+    """
+    tesseract_path = shutil.which("tesseract")
+    if tesseract_path:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+        return tesseract_path
+    return None
+
+def preprocess_image_for_ocr(image):
+    """
+    Applies basic image preprocessing to improve OCR accuracy.
+    Converts to grayscale and applies adaptive thresholding.
+    """
+    # Convert PIL Image to OpenCV format (NumPy array)
+    img_cv = np.array(image)
+    img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
+
+    # Apply adaptive thresholding for better text extraction from varying backgrounds
+    # This is generally more robust than a simple binary threshold
+    img_processed = cv2.adaptiveThreshold(img_cv, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                          cv2.THRESH_BINARY, 11, 2)
+    
+    # Invert the colors if necessary (Tesseract often prefers black text on white background,
+    # but sometimes white text on black background from thresholding can work better)
+    # This line can be commented out or adjusted based on testing.
+    # img_processed = cv2.bitwise_not(img_processed) 
+
+    # Convert back to PIL Image
+    return Image.fromarray(img_processed)
 
 
 # --- Helpers ---
@@ -284,13 +291,58 @@ def extract_relevant_keywords(text, filter_set):
     return extracted_keywords, dict(categorized_keywords)
 
 
-def extract_text_from_pdf(uploaded_file):
-    """Extracts text from an uploaded PDF file."""
-    try:
-        with pdfplumber.open(uploaded_file) as pdf:
-            return ''.join(page.extract_text() or '' for page in pdf.pages)
-    except Exception as e:
-        return f"[ERROR] {str(e)}"
+def extract_text_from_file(uploaded_file):
+    """
+    Extracts text from an uploaded file, handling both PDF (text-based and image-based)
+    and common image formats (JPG, PNG).
+    """
+    file_type = uploaded_file.type
+    full_text = ""
+
+    if "pdf" in file_type:
+        try:
+            # Try pdfplumber first for text-based PDFs (faster and more accurate for native text)
+            with pdfplumber.open(uploaded_file) as pdf:
+                pdf_text = ''.join(page.extract_text() or '' for page in pdf.pages)
+            
+            # If pdfplumber extracts very little text, it might be an image-based PDF.
+            # A threshold of 50 characters is arbitrary; adjust as needed.
+            if len(pdf_text.strip()) < 50:
+                st.warning(f"Low text extracted from PDF {uploaded_file.name} using pdfplumber. Attempting OCR...")
+                # Fallback to OCR for image-based PDFs
+                images = convert_from_bytes(uploaded_file.read())
+                for img in images:
+                    processed_img = preprocess_image_for_ocr(img)
+                    full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
+            else:
+                full_text = pdf_text
+
+        except Exception as e:
+            st.error(f"Error processing PDF {uploaded_file.name} with pdfplumber/OCR: {e}. Trying OCR fallback directly.")
+            # If pdfplumber fails entirely, try OCR
+            try:
+                images = convert_from_bytes(uploaded_file.read())
+                for img in images:
+                    processed_img = preprocess_image_for_ocr(img)
+                    full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
+            except Exception as e_ocr:
+                return f"[ERROR] Failed to extract text from PDF via OCR: {str(e_ocr)}"
+
+    elif "image" in file_type: # Handles "image/jpeg", "image/png" etc.
+        try:
+            img = Image.open(uploaded_file).convert("RGB")
+            processed_img = preprocess_image_for_ocr(img)
+            full_text = pytesseract.image_to_string(processed_img, lang='eng')
+        except Exception as e:
+            return f"[ERROR] Failed to extract text from image: {str(e)}"
+    else:
+        return f"[ERROR] Unsupported file type: {file_type}. Please upload a PDF or an image (JPG, PNG)."
+
+    if not full_text.strip():
+        return "[ERROR] No readable text extracted from the file. It might be a very low-quality scan or an empty document."
+    
+    return full_text
+
 
 def extract_years_of_experience(text):
     """Extracts years of experience from a given text by parsing date ranges or keywords."""
@@ -1068,6 +1120,13 @@ The {sender_name}""")
 def resume_screener_page():
     st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
 
+    # --- Initial Tesseract Check ---
+    tesseract_cmd_path = get_tesseract_cmd()
+    if not tesseract_cmd_path:
+        st.error("Tesseract OCR engine not found. Please ensure it's installed and in your system's PATH.")
+        st.info("On Streamlit Community Cloud, ensure you have a `packages.txt` file in your repository's root with `tesseract-ocr` and `tesseract-ocr-eng` listed.")
+        st.stop() # Stop the app if Tesseract is not found
+
     # --- Job Description and Controls Section ---
     st.markdown("## ⚙️ Define Job Requirements & Screening Criteria")
     col1, col2 = st.columns([2, 1])
@@ -1141,7 +1200,8 @@ def resume_screener_page():
             help="Select skills that are very important, but not as critical as high priority ones."
         )
 
-    resume_files = st.file_uploader("📄 **Upload Resumes (PDF)**", type="pdf", accept_multiple_files=True, help="Upload one or more PDF resumes for screening.")
+    # --- Updated File Uploader to accept PDF and Images ---
+    resume_files = st.file_uploader("📄 **Upload Resumes (PDF, JPG, PNG)**", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, help="Upload one or more PDF or image resumes for screening.")
 
     # Initialize or update the comprehensive_df in session state
     if 'comprehensive_df' not in st.session_state:
@@ -1181,7 +1241,7 @@ def resume_screener_page():
             status_text.text(f"Processing {file.name} ({i+1}/{len(resume_files)})...")
             progress_bar.progress((i + 1) / len(resume_files))
 
-            text = extract_text_from_pdf(file)
+            text = extract_text_from_file(file) # Use the updated function
             if text.startswith("[ERROR]"):
                 st.error(f"Failed to process {file.name}: {text.replace('[ERROR] ', '')}")
                 continue
@@ -1205,7 +1265,7 @@ def resume_screener_page():
             work_history_formatted = format_work_history(work_history_raw)
             project_details_formatted = format_project_details(project_details_raw)
 
-            candidate_name = extract_name(text) or file.name.replace('.pdf', '').replace('_', ' ').title()
+            candidate_name = extract_name(text) or file.name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title()
             cgpa = extract_cgpa(text)
 
             # Calculate Matched Keywords and Missing Skills using the new function
