@@ -773,18 +773,27 @@ def extract_work_history(text):
 def extract_project_details(text):
     """
     Extracts project details (Title, Description, Technologies) from text.
-    This is a heuristic and may not capture all formats.
+    This is a heuristic and may not capture all formats, especially with OCR.
     Returns a list of dicts.
     """
-    project_section_matches = re.finditer(r'(?:projects|personal projects|key projects|portfolio)\s*(\n|$)', text, re.IGNORECASE)
     project_details = []
     
-    start_index = -1
-    for match in project_section_matches:
-        start_index = match.end()
-        break
-
-    if start_index != -1:
+    # Define keywords that often precede or indicate a project section
+    project_section_keywords = r'(?:projects|personal projects|key projects|portfolio|selected projects|major projects|academic projects|relevant projects)'
+    
+    # Find the start of the project section
+    project_section_match = re.search(project_section_keywords + r'\s*(\n|$)', text, re.IGNORECASE)
+    
+    if not project_section_match:
+        # Fallback: if no clear section header, assume projects might be anywhere,
+        # but this is less reliable. For now, we'll try to find project-like blocks globally.
+        # This part will be less precise, but better than nothing.
+        project_text = text
+        start_index = 0
+    else:
+        start_index = project_section_match.end()
+        # Define potential end markers for the project section
+        # Look for the start of other major resume sections
         sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
         end_index = len(text)
         for section in sections:
@@ -792,74 +801,76 @@ def extract_project_details(text):
             if section_match:
                 end_index = start_index + section_match.start()
                 break
-        
         project_text = text[start_index:end_index].strip()
-        
-        lines = [line.strip() for line in project_text.split('\n') if line.strip()]
-        
-        current_project = {"Project Title": None, "Description": [], "Technologies Used": set()} # Use set for technologies to avoid duplicates
-        
-        # Keywords that often indicate a new project entry or a project title
-        project_title_keywords = [
-            "project", "case study", "portfolio", "developed", "implemented", "created", "designed",
-            "built", "contributed to", "achieved", "led", "managed", "research project", "final year project"
-        ]
+    
+    if not project_text:
+        return [] # No project text found
 
-        for i, line in enumerate(lines):
-            line_lower = line.lower()
+    lines = [line.strip() for line in project_text.split('\n') if line.strip()]
+    
+    current_project = {"Project Title": None, "Description": [], "Technologies Used": set()}
+    
+    # Keywords that strongly suggest a project title or a new project entry
+    strong_project_indicators = [
+        "project", "developed", "implemented", "created", "designed", "built", "contributed to",
+        "achieved", "led", "managed", "research", "capstone", "thesis", "portfolio"
+    ]
+
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
+        
+        # Heuristic for a new project title:
+        # 1. Starts with a capital letter or number
+        # 2. Contains at least two words (to filter single words)
+        # 3. Not excessively long (e.g., less than 15 words, likely a title not a paragraph)
+        # 4. Does not contain common date ranges (to avoid work history entries)
+        # 5. Is not a typical bullet point description start (e.g., "• Achieved...")
+        # 6. Contains a strong project indicator keyword
+        # 7. Also consider if the line is a URL (often found with project links)
+        
+        is_potential_title = (
+            (line and (line[0].isupper() or re.match(r'^\d', line))) and
+            len(line.split()) > 1 and
+            len(line.split()) < 15 and
+            not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line_lower) and
+            not re.match(r'^[•*-]\s*(?:achieved|contributed|implemented|developed|designed|built|managed|led)', line_lower) and
+            any(keyword in line_lower for keyword in strong_project_indicators)
+        )
+        
+        is_url = re.match(r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)', line_lower)
+
+        if is_potential_title or is_url:
+            # If we already have a project being built, save it before starting a new one
+            if current_project["Project Title"] is not None or current_project["Description"]:
+                if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
+                    project_details.append({
+                        "Project Title": current_project["Project Title"],
+                        "Description": "\n".join(current_project["Description"]).strip(),
+                        "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
+                    })
+            # Start a new project
+            current_project = {"Project Title": line, "Description": [], "Technologies Used": set()}
+        else:
+            # Add line to current project's description
+            current_project["Description"].append(line)
             
-            # Heuristic for a new project title:
-            # 1. Starts with a capital letter or number (more relaxed check)
-            # 2. Contains at least two words
-            # 3. Not excessively long (e.g., less than 15 words)
-            # 4. Does not contain common date patterns (e.g., "Jan 2020 - Dec 2022")
-            # 5. Not a bullet point if it's clearly a description point (e.g., "• Developed...")
-            # 6. Contains a project-related keyword (optional, but can help)
+        # Extract technologies from the current line (cleaned for better matching)
+        cleaned_line_for_skill = clean_text(line)
+        for skill in MASTER_SKILLS:
+            if re.search(r'\b' + re.escape(skill.lower()) + r'\b', cleaned_line_for_skill):
+                current_project["Technologies Used"].add(skill)
+
+    # Add the last project if it exists
+    if current_project["Project Title"] is not None or current_project["Description"]:
+        if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
+            project_details.append({
+                "Project Title": current_project["Project Title"],
+                "Description": "\n".join(current_project["Description"]).strip(),
+                "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
+            })
             
-            is_potential_title = (
-                (line and (line[0].isupper() or re.match(r'^\d', line))) and # Starts with capital or number
-                len(line.split()) > 1 and \
-                len(line.split()) < 15 and \
-                not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line) and \
-                not re.match(r'^[•*-]\s*(?:developed|implemented|created|designed|built|contributed|achieved|led|managed)', line_lower) and \
-                any(keyword in line_lower for keyword in project_title_keywords) # Check for project-related keywords
-            )
-
-            # Also consider if the line is a URL, as project titles sometimes include links
-            is_url = re.match(r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)', line_lower)
-
-            if is_potential_title or is_url:
-                if current_project["Project Title"] is not None or current_project["Description"]: # If we have a previous project, save it
-                    if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
-                        project_details.append({
-                            "Project Title": current_project["Project Title"],
-                            "Description": "\n".join(current_project["Description"]).strip(),
-                            "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"]))) # Convert set to list for joining
-                        })
-                # Start a new project
-                current_project = {"Project Title": line, "Description": [], "Technologies Used": set()}
-            else:
-                # Add line to current project's description
-                current_project["Description"].append(line)
-                
-            # Extract technologies from the current line, regardless if it's a title or description
-            line_lower = line.lower()
-            for skill in MASTER_SKILLS:
-                # Re-clean the individual line for skill extraction to be sure.
-                cleaned_line_for_skill = clean_text(line)
-                
-                if re.search(r'\b' + re.escape(skill.lower()) + r'\b', cleaned_line_for_skill):
-                    current_project["Technologies Used"].add(skill) # Add to set
-
-        # Add the last project if it exists
-        if current_project["Project Title"] is not None or current_project["Description"]:
-            if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
-                project_details.append({
-                    "Project Title": current_project["Project Title"],
-                    "Description": "\n".join(current_project["Description"]).strip(),
-                    "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
-                })
     return project_details
+
 
 def extract_languages(text):
     """
@@ -867,7 +878,8 @@ def extract_languages(text):
     Looks for a "Languages" section and lists known languages.
     """
     languages_list = []
-    text_lower = text.lower()
+    # Clean the entire text once for consistent processing
+    cleaned_full_text = clean_text(text)
 
     # Define a comprehensive list of languages (Indian and Foreign)
     all_languages = [
@@ -876,36 +888,49 @@ def extract_languages(text):
         "gujarati", "urdu", "kannada", "odia", "malayalam", "punjabi", "assamese", "kashmiri",
         "sindhi", "sanskrit", "dutch", "swedish", "norwegian", "danish", "finnish", "greek",
         "turkish", "hebrew", "thai", "vietnamese", "indonesian", "malay", "filipino", "swahili",
-        "farsi", "persian", "polish", "ukrainian", "romanian", "czech", "slovak", "hungarian"
+        "farsi", "persian", "polish", "ukrainian", "romanian", "czech", "slovak", "hungarian",
+        "chinese", "vietnamese", "tagalog", "amharic", "somali", "nepali", "sinhala", "burmese",
+        "khmer", "lao", "pashto", "dari", "uzbek", "kazakh", "azerbaijani", "georgian", "armenian",
+        "albanian", "serbian", "croatian", "bosnian", "bulgarian", "macedonian", "slovenian",
+        "estonian", "latvian", "lithuanian", "icelandic", "irish", "welsh", "gaelic", "maltese",
+        "esperanto", "latin", "ancient greek", "modern greek", "yiddish", "romani", "catalan",
+        "galician", "basque", "breton", "cornish", "manx", "frisian", "luxembourgish", "sami",
+        "romansh", "sardinian", "corsican", "occitan", "provencal", "walloon", "flemish",
+        "afrikaans", "zulu", "xhosa", "sesotho", "setswana", "shona", "ndebele", "venda", "tsonga",
+        "swati", "kikuyu", "luganda", "kinyarwanda", "kirundi", "lingala", "kongo", "yoruba",
+        "igbo", "hausa", "fulani", "twi", "ewe", "ga", "dagbani", "gur", "mossi", "bambara",
+        "senufo", "wolof", "mandinka", "susu", "krio", "temne", "limba", "mende", "gola", "vai",
+        "kpele", "loma", "bandi", "kpelle", "kru", "bassa", "grebo", "krahn", "dan", "mano",
+        "guerze", "kono", "kisi", "gola", "de", "bassa", "kru", "grebo", "krahn", "dan", "mano",
+        "guerze", "kono", "kisi", "gola", "de"
     ]
     
     # Look for a "Languages" section header
-    languages_section_match = re.search(r'\b(languages|language skills|linguistic abilities)\b\s*(\n|$)', text_lower)
+    # Making the regex more flexible for common variations of "languages" section
+    languages_section_match = re.search(r'\b(languages|language skills|linguistic abilities|proficiencies in languages)\b\s*(\n|$)', cleaned_full_text)
     
     if languages_section_match:
         start_index = languages_section_match.end()
         # Define potential end markers for the languages section
-        sections = ['education', 'experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
-        end_index = len(text_lower)
+        # Look for the start of other major resume sections to define the boundary
+        sections = ['education', 'experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications', 'interests', 'hobbies', 'achievements']
+        end_index = len(cleaned_full_text)
         for section in sections:
-            section_match = re.search(r'\b' + re.escape(section) + r'\b', text_lower[start_index:], re.IGNORECASE)
+            section_match = re.search(r'\b' + re.escape(section) + r'\b', cleaned_full_text[start_index:], re.IGNORECASE)
             if section_match:
                 end_index = start_index + section_match.start()
                 break
         
-        languages_text = text_lower[start_index:end_index].strip()
-        
-        # Apply clean_text to the extracted languages section
-        cleaned_languages_text = clean_text(languages_text)
+        languages_text_segment = cleaned_full_text[start_index:end_index].strip()
         
         # Extract languages from the identified section
         for lang in all_languages:
-            if re.search(r'\b' + re.escape(lang) + r'\b', cleaned_languages_text):
+            # Use word boundary to ensure whole word match
+            if re.search(r'\b' + re.escape(lang) + r'\b', languages_text_segment):
                 languages_list.append(lang.title())
     else:
-        # Fallback: if no explicit section, try to find languages anywhere in the text
-        # Clean the entire text for fallback language extraction
-        cleaned_full_text = clean_text(text)
+        # Fallback: if no explicit section, try to find languages anywhere in the cleaned full text
+        # This is less precise but can catch languages mentioned in summary/profile
         for lang in all_languages:
             if re.search(r'\b' + re.escape(lang) + r'\b', cleaned_full_text):
                 if lang.title() not in languages_list: # Avoid duplicates if found in multiple places
@@ -1102,7 +1127,7 @@ def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_s
     # Tier 4: Limited Match
     else:
         overall_assessment_title = "Limited Match: Consider Only for Niche Needs or Pipeline Building"
-        assessment_parts.append(f"**{candidate_name}** shows a **limited match** with a score of {score:.2f}% and {years_exp:.1f} years of experience (semantic similarity: {semantic_similarity:.2f}). This profile indicates a significant deviation from the core requirements of the job description.")
+        assessment_parts.append(f"**{candidate_name}** shows a **limited match** with a score = {score:.2f}% and {years_exp:.1f} years of experience (semantic similarity: {semantic_similarity:.2f}). This profile indicates a significant deviation from the core requirements of the job description.")
         if cgpa is not None:
             assessment_parts.append(f"Their academic record (CGPA: {cgpa:.2f}) also indicates a potential mismatch.")
         assessment_parts.append(f"**Key Concerns:** A low overlap in essential skills and potentially insufficient experience for the role's demands. Many key skills appear to be missing: *{missing_skills_str if missing_skills_str else 'No specific missing skills listed, but overall low match'}*. While some transferable skills may exist, a substantial investment in training or a re-evaluation of role fit would likely be required for this candidate to succeed.")
@@ -1408,7 +1433,8 @@ def resume_screener_page():
             jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, all_master_skills)
 
             matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
-            missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) # Corrected: Should be jd_raw_skills_set.difference(resume_raw_skills_set)
+            # Corrected: Missing skills are JD skills NOT in resume skills
+            missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
 
             score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills)
             
