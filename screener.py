@@ -216,6 +216,7 @@ SKILL_CATEGORIES = {
     "DLP", "CASB", "SOAR", "XDR", "EDR", "MDR", "GRC", "ITIL", "Lean Six Sigma", "CFA", "CPA", "SHRM-CP",
     "PHR", "CEH", "OSCP", "CCNA", "CISSP", "CISM", "CompTIA Security+"]
 }
+STOP_WORDS = NLTK_STOP_WORDS.union(CUSTOM_STOP_WORDS)
 
 # Dynamically generate MASTER_SKILLS from SKILL_CATEGORIES
 MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
@@ -2014,7 +2015,9 @@ def resume_screener_page():
                     "Actions": st.column_config.Column( # Actions column for buttons
                         "Actions",
                         help="View or Download Certificate",
-                        width="medium"
+                        width="medium",
+                        # IMPORTANT: This line is added to allow HTML rendering
+                        unsafe_allow_html=True 
                     )
                 }
             )
