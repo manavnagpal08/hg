@@ -1,12 +1,11 @@
-/* Hide GitHub fork button, Streamlit menu and footer */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;} /* Optional: hides the top bar */
+/* General Body and HTML/CSS Element Styling */
 html, body, [class*="css"] {
     font-family: 'Inter', sans-serif;
     /* Background and color will be set dynamically by Streamlit based on dark_mode toggle */
     transition: background-color 0.3s ease, color 0.3s ease; /* Smooth transition for dark/light mode */
 }
+
+/* Main Content Block Container */
 .main .block-container {
     padding: 2.5rem; /* Slightly more padding */
     border-radius: 20px;
@@ -15,15 +14,21 @@ html, body, [class*="css"] {
     animation: fadeIn 0.8s ease-in-out;
     transition: background 0.3s ease, box-shadow 0.3s ease; /* Smooth transition */
 }
+
+/* Fade-in animation for main content */
 @keyframes fadeIn {
     0% { opacity: 0; transform: translateY(20px); }
     100% { opacity: 1; transform: translateY(0); }
 }
+
+/* Header (h1-h6) Styling */
 h1, h2, h3, h4, h5, h6 {
     color: #00cec9; /* Consistent teal for headers */
     font-weight: 700;
     letter-spacing: -0.02em; /* Slightly tighter letter spacing for headers */
 }
+
+/* Dashboard Header Specific Styling */
 .dashboard-header {
     font-size: 2.5rem; /* Larger header */
     font-weight: 800; /* Bolder header */
@@ -34,10 +39,14 @@ h1, h2, h3, h4, h5, h6 {
     margin-bottom: 2.5rem; /* More margin */
     animation: slideInLeft 0.8s ease-out;
 }
+
+/* Slide-in animation for dashboard header */
 @keyframes slideInLeft {
     0% { transform: translateX(-40px); opacity: 0; }
     100% { transform: translateX(0); opacity: 1; }
 }
+
+/* Streamlit Metric (st.metric) Styling */
 .stMetric {
     /* Background, shadow, and color will be set dynamically by Streamlit based on dark_mode toggle */
     border-radius: 12px; /* More rounded corners */
@@ -46,19 +55,27 @@ h1, h2, h3, h4, h5, h6 {
     box-shadow: 0 6px 18px rgba(0,0,0,0.08); /* Softer initial shadow */
     transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease; /* Added transition for background */
 }
+
+/* Metric hover effect */
 .stMetric:hover {
     transform: translateY(-7px); /* More pronounced lift */
     box-shadow: 0 12px 28px rgba(0,0,0,0.25); /* Stronger, softer shadow on hover */
 }
+
+/* Metric value styling */
 .stMetric > div[data-testid="stMetricValue"] {
     font-size: 2.8rem; /* Larger metric value */
     font-weight: 800; /* Bolder metric value */
     color: #00cec9;
 }
+
+/* Metric label styling */
 .stMetric > div[data-testid="stMetricLabel"] {
     font-size: 1.1rem; /* Slightly larger label */
     /* Color will be set dynamically by Streamlit based on dark_mode toggle */
 }
+
+/* Streamlit Button (st.button) Styling */
 .stButton>button {
     background-color: #00cec9;
     color: white;
@@ -71,11 +88,15 @@ h1, h2, h3, h4, h5, h6 {
     cursor: pointer; /* Indicate clickable */
     letter-spacing: 0.02em; /* Slightly spaced letters */
 }
+
+/* Button hover effect */
 .stButton>button:hover {
     background-color: #00b0a8;
     transform: translateY(-4px); /* More pronounced lift */
     box-shadow: 0 8px 20px rgba(0,0,0,0.3); /* Stronger, softer shadow on hover */
 }
+
+/* Streamlit Expander (st.expander) Styling */
 .stExpander {
     /* Background, shadow, and color will be set dynamically by Streamlit based on dark_mode toggle */
     border-radius: 12px; /* More rounded */
@@ -84,33 +105,49 @@ h1, h2, h3, h4, h5, h6 {
     box-shadow: 0 5px 15px rgba(0,0,0,0.08); /* Softer initial shadow */
     transition: all 0.3s ease; /* Smooth transition for expander */
 }
+
+/* Expander hover effect */
 .stExpander:hover {
     box-shadow: 0 8px 20px rgba(0,0,0,0.15); /* Stronger, softer shadow on hover */
 }
+
+/* Expander content paragraph styling */
 .stExpander > div > div > div > p {
     /* Color will be set dynamically by Streamlit based on dark_mode toggle */
 }
+
+/* Expander toggle (title) styling */
 .stExpander > div[data-testid="stExpanderToggle"] {
     color: #00cec9;
     font-weight: 700; /* Bolder expander title */
     font-size: 1.1rem; /* Slightly larger expander title */
 }
+
+/* Expander toggle icon styling */
 .stExpander > div[data-testid="stExpanderToggle"] svg {
     fill: #00cec9;
 }
+
+/* Streamlit Selectbox (st.selectbox) Styling */
 .stSelectbox > div > div {
     /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
     border-radius: 10px; /* More rounded */
     border: 1px solid rgba(0,0,0,0.1); /* Subtle border */
     transition: all 0.2s ease;
 }
+
+/* Selectbox hover effect */
 .stSelectbox > div > div:hover {
     border-color: #00cec9; /* Highlight on hover */
 }
+
+/* Selectbox label styling */
 .stSelectbox > label {
     /* Color will be set dynamically by Streamlit based on dark_mode toggle */
     font-weight: 600;
 }
+
+/* Streamlit Text Input (st.text_input) and Text Area (st.text_area) Styling */
 .stTextInput > div > div > input, .stTextArea > div > div {
     /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
     border-radius: 10px; /* More rounded */
@@ -118,14 +155,20 @@ h1, h2, h3, h4, h5, h6 {
     padding: 0.85rem 1.1rem; /* More padding */
     transition: all 0.2s ease;
 }
+
+/* Text input/area focus effect */
 .stTextInput > div > div > input:focus, .stTextArea > div > div:focus-within {
     border-color: #00cec9; /* Highlight on focus */
     box-shadow: 0 0 0 2px rgba(0,206,201,0.3); /* Soft focus ring */
 }
+
+/* Text input/area label styling */
 .stTextInput > label, .stTextArea > label {
     /* Color will be set dynamically by Streamlit based on dark_mode toggle */
     font-weight: 600;
 }
+
+/* Streamlit Radio (st.radio) Label Styling */
 .stRadio > label {
     /* Color will be set dynamically by Streamlit based on dark_mode toggle */
 }
@@ -136,6 +179,7 @@ h1, h2, h3, h4, h5, h6 {
     flex-direction: column;
     gap: 0.6rem; /* Slightly more space between buttons */
 }
+
 .stSidebar .stRadio div[role="radiogroup"] label {
     /* Background, color, shadow will be set dynamically by Streamlit based on dark_mode toggle */
     border-radius: 14px; /* Even more rounded */
@@ -150,14 +194,19 @@ h1, h2, h3, h4, h5, h6 {
     display: flex; /* Use flex to align content and hide default radio */
     align-items: center;
 }
+
+/* Hide the default radio circle */
 .stSidebar .stRadio div[role="radiogroup"] label span:first-child {
-    display: none; /* Hide the default radio circle */
+    display: none;
 }
+
+/* Sidebar radio button hover effect */
 .stSidebar .stRadio div[role="radiogroup"] label:hover {
     background-color: rgba(0,206,201,0.1); /* Subtle teal hover */
     transform: translateX(6px); /* More pronounced slide */
     box-shadow: 0 5px 15px rgba(0,0,0,0.15); /* Stronger shadow on hover */
 }
+
 /* Style for the selected radio button (using input:checked + div) */
 .stSidebar .stRadio div[role="radiogroup"] input:checked + div {
     background-color: #00cec9;
@@ -166,27 +215,31 @@ h1, h2, h3, h4, h5, h6 {
     transform: translateX(0);
     border: 1px solid #00a09a; /* Subtle border for selected */
 }
+
 /* Ensure the text inside the radio button is styled correctly */
 .stSidebar .stRadio div[role="radiogroup"] label p {
     font-weight: 600; /* Make sidebar navigation labels bolder */
     /* Color will be set dynamically by Streamlit based on dark_mode toggle */
 }
+
+/* Text color for selected sidebar button */
 .stSidebar .stRadio div[role="radiogroup"] input:checked + div p {
-    color: white; /* Text color for selected button */
+    color: white;
 }
 
-
-/* Custom styling for the dataframes */
+/* Custom styling for Streamlit DataFrames */
 .stDataFrame {
     border-radius: 12px; /* More rounded */
     overflow: hidden; /* Ensures rounded corners apply to content */
     box-shadow: 0 6px 20px rgba(0,0,0,0.1); /* Softer, larger shadow */
 }
+
 .stDataFrame table {
     /* Background and color will be set dynamically by Streamlit based on dark_mode toggle */
     border-collapse: separate; /* Allows border-radius on cells */
     border-spacing: 0;
 }
+
 .stDataFrame th {
     /* Background and color will be set dynamically by Streamlit based on dark_mode toggle */
     font-weight: 700;
@@ -194,16 +247,20 @@ h1, h2, h3, h4, h5, h6 {
     text-align: left;
     border-bottom: 2px solid #00cec9; /* Teal border for headers */
 }
+
 .stDataFrame tbody tr:nth-child(odd) {
     /* Background will be set dynamically by Streamlit based on dark_mode toggle */
 }
+
 .stDataFrame tbody tr:nth-child(even) {
     /* Background will be set dynamically by Streamlit based on dark_mode toggle */
 }
+
 .stDataFrame td {
     padding: 0.8rem 1rem;
     border-bottom: 1px solid rgba(0,0,0,0.05); /* Subtle row divider */
 }
+
 /* Dark mode specific table styling */
 html[data-theme="dark"] .stDataFrame table {
     background-color: #3A3A3A;
@@ -224,7 +281,6 @@ html[data-theme="dark"] .stDataFrame td {
     border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 
-
 /* Info/Warning/Error/Success boxes */
 .stAlert {
     border-radius: 10px;
@@ -233,8 +289,9 @@ html[data-theme="dark"] .stDataFrame td {
     box-shadow: 0 5px 15px rgba(0,0,0,0.1);
     animation: fadeIn 0.5s ease-out;
 }
-.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn0 { /* Target info boxes specifically */
-    /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
+
+/* Target info boxes specifically */
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn0 {
     background-color: #E0F7FA; /* Light blue */
     color: #006064; /* Darker blue text */
     border-left: 5px solid #00BCD4; /* Cyan border */
@@ -251,8 +308,8 @@ html[data-theme="dark"] .stAlert.st-emotion-cache-1f0o48a.e1f1d6gn0 svg {
     fill: #00B8D4;
 }
 
-.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn1 { /* Target success boxes */
-    /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
+/* Target success boxes */
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn1 {
     background-color: #E8F5E9; /* Light green */
     color: #2E7D32; /* Darker green text */
     border-left: 5px solid #4CAF50; /* Green border */
@@ -269,8 +326,8 @@ html[data-theme="dark"] .stAlert.st-emotion-cache-1f0o48a.e1f1d6gn1 svg {
     fill: #4CAF50;
 }
 
-.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn2 { /* Target warning boxes */
-    /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
+/* Target warning boxes */
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn2 {
     background-color: #FFFDE7; /* Light yellow */
     color: #FF8F00; /* Darker yellow text */
     border-left: 5px solid #FFC107; /* Orange border */
@@ -287,8 +344,8 @@ html[data-theme="dark"] .stAlert.st-emotion-cache-1f0o48a.e1f1d6gn2 svg {
     fill: #FFC107;
 }
 
-.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn3 { /* Target error boxes */
-    /* Background, color, and border will be set dynamically by Streamlit based on dark_mode toggle */
+/* Target error boxes */
+.stAlert.st-emotion-cache-1f0o48a.e1f1d6gn3 {
     background-color: #FFEBEE; /* Light red */
     color: #D32F2F; /* Darker red text */
     border-left: 5px solid #F44336; /* Red border */
@@ -353,4 +410,219 @@ html[data-theme="dark"] .top-header .profile a {
 }
 .top-header .profile a:hover {
     color: #00b0a8; /* Darker teal on hover */
+}
+
+/* Hide GitHub fork button, Streamlit menu and footer */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;} /* Optional: hides the top bar */
+
+/* New animation for greeting */
+@keyframes slideInDownFadeIn {
+    0% { opacity: 0; transform: translateY(-20px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+.greeting-message {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #00cec9; /* Consistent teal */
+    margin-bottom: 1.5rem;
+    animation: slideInDownFadeIn 0.7s ease-out;
+}
+
+/* Streamlit Checkbox styling */
+.stCheckbox span {
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stCheckbox div[data-testid="stCheckbox"] svg {
+    fill: #00cec9; /* Teal checkmark */
+}
+
+/* Streamlit Toggle styling */
+.stToggle > label > div[data-testid="stMarkdownContainer"] p {
+    font-weight: 600; /* Bolder toggle label */
+}
+.stToggle > label > div[data-testid="stMarkdownContainer"] p {
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+}
+.stToggle > label > div[data-testid="stToggleSwitch"] {
+    background-color: #ccc; /* Default grey for off state */
+    transition: background-color 0.3s ease;
+}
+.stToggle > label > div[data-testid="stToggleSwitch"][aria-checked="true"] {
+    background-color: #00cec9; /* Teal for on state */
+}
+
+/* Streamlit Slider styling */
+.stSlider > label {
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+    font-weight: 600;
+}
+.stSlider .st-emotion-cache-1f0o48a { /* Target the slider track */
+    background-color: #e0e0e0; /* Light grey track */
+}
+.stSlider .st-emotion-cache-1f0o48a > div > div { /* Target the filled part of the track */
+    background-color: #00cec9; /* Teal filled track */
+}
+.stSlider .st-emotion-cache-1f0o48a > div > div > div { /* Target the thumb */
+    background-color: #00cec9; /* Teal thumb */
+    border: 2px solid #00b0a8;
+}
+
+/* Streamlit File Uploader styling */
+.stFileUploader > label {
+    /* Color will be set dynamically by Streamlit based on dark_mode toggle */
+    font-weight: 600;
+}
+.stFileUploader button {
+    background-color: #00cec9;
+    color: white;
+    border-radius: 8px;
+    padding: 0.6rem 1.2rem;
+    font-weight: 600;
+    border: none;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.stFileUploader button:hover {
+    background-color: #00b0a8;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+}
+
+/* Streamlit Progress Bar styling */
+.stProgress .st-emotion-cache-1f0o48a { /* Target the progress bar container */
+    background-color: #e0e0e0; /* Light grey background */
+    border-radius: 5px;
+    height: 10px;
+}
+.stProgress .st-emotion-cache-1f0o48a > div { /* Target the filled part of the progress bar */
+    background-color: #00cec9; /* Teal fill */
+    border-radius: 5px;
+    transition: width 0.5s ease-in-out;
+}
+
+/* Specific styles for the certificate modal overlay */
+.certificate-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+.certificate-content {
+    background: white;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    max-width: 800px;
+    max-height: 90vh;
+    overflow-y: auto;
+    position: relative;
+}
+.close-button {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: #f44336;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    text-align: center;
+}
+
+/* Styles for the certificate HTML itself (within the modal/download) */
+.certificate-container {
+    width: 100%;
+    max-width: 800px;
+    background: linear-gradient(145deg, #ffffff, #e6e6e6);
+    border: 10px solid #00cec9;
+    border-radius: 20px;
+    box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
+    padding: 40px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+.certificate-header {
+    font-family: 'Playfair Display', serif;
+    font-size: 2.5em;
+    color: #00cec9;
+    margin-bottom: 20px;
+    font-weight: 700;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+}
+.certificate-subheader {
+    font-size: 1.2em;
+    color: #555;
+    margin-bottom: 30px;
+}
+.certificate-body {
+    margin-bottom: 40px;
+}
+.certificate-body p {
+    font-size: 1.1em;
+    line-height: 1.6;
+    color: #333;
+}
+.candidate-name {
+    font-family: 'Playfair Display', serif;
+    font-size: 2.8em;
+    color: #34495e;
+    margin: 20px 0;
+    font-weight: 700;
+    border-bottom: 2px dashed #ccc;
+    display: inline-block;
+    padding-bottom: 5px;
+}
+.score-rank {
+    font-size: 1.4em;
+    color: #00cec9;
+    font-weight: 600;
+    margin-top: 20px;
+}
+.date-id {
+    font-size: 0.9em;
+    color: #777;
+    margin-top: 30px;
+}
+.logo {
+    width: 150px;
+    margin-bottom: 20px;
+}
+.footer-text {
+    font-size: 0.8em;
+    color: #999;
+    margin-top: 40px;
+}
+.badge-icon {
+    font-size: 3em; /* Larger icon */
+    margin-bottom: 15px;
+    color: #ffd700; /* Gold color for badge */
+}
+
+/* Print styles for certificates */
+@media print {
+    body {
+        background-color: #fff;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    .certificate-container {
+        border: 5px solid #00cec9;
+        box-shadow: none;
+    }
+    .certificate-header, .candidate-name, .score-rank {
+        color: #00cec9 !important;
+    }
 }
