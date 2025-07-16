@@ -27,7 +27,7 @@ FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PR
 CERTIFICATE_BASE_URL = "https://manavnagpal08.github.io/certification/certificate.html" # REMEMBER TO UPDATE THIS!
 
 # Certification Threshold
-CERTIFICATION_THRESHOLD = 85 # Score needed to qualify for a certificate
+CERTIFICATION_THRESHOLD = 80 # Score needed to qualify for a certificate
 
 
 # File to store user credentials
@@ -1514,7 +1514,15 @@ else:
         try:
             # Import the screener page function (assuming it's in a separate file)
             from screener import resume_screener_page
-            resume_screener_page() # Call the imported function
+            # Pass necessary Firebase/certification variables to the screener page
+            resume_screener_page(
+                FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+                FIREBASE_PROJECT_ID=FIREBASE_PROJECT_ID,
+                FIRESTORE_BASE_URL=FIRESTORE_BASE_URL,
+                CERTIFICATE_BASE_URL=CERTIFICATE_BASE_URL,
+                CERTIFICATION_THRESHOLD=CERTIFICATION_THRESHOLD,
+                save_certificate_to_firestore_rest=save_certificate_to_firestore_rest # Pass the function itself
+            )
             # The logging and pending approval logic here should ideally be handled within resume_screener_page itself
             # after a successful screening operation. For now, keeping it here for demonstration.
             if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
