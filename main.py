@@ -903,6 +903,8 @@ else:
             display_cols_for_table.append('Certificate Rank')
         if 'Certificate ID' in filtered_df.columns:
             display_cols_for_table.append('Certificate ID')
+        if 'Verification URL' in filtered_df.columns: # NEW: Added Verification URL
+            display_cols_for_table.append('Verification URL')
 
 
         st.dataframe(
