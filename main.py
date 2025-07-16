@@ -25,7 +25,7 @@ FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PR
 # Base URL for the public certificate page (update this if you host it elsewhere)
 # For local testing, you might use a placeholder like "http://localhost:8000/certificate.html"
 # In a real deployment, this would be your actual domain.
-CERTIFICATE_BASE_URL = "https://screenerpro.in/certificate"
+CERTIFICATE_BASE_URL = "https://manavnagpal08.github.io/certification/"
 
 
 # File to store user credentials
