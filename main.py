@@ -12,7 +12,6 @@ import plotly.express as px
 import statsmodels.api as sm
 import collections
 import requests # Added for REST API calls
-import uuid # Added for generating unique IDs
 
 # --- Firebase REST Setup ---
 # IMPORTANT: Replace "YOUR_FIREBASE_WEB_API_KEY" with your actual Firebase Web API Key
@@ -21,15 +20,6 @@ FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'AIzaSyDjC7tdmpEkp
 # Use __app_id from the Canvas environment for the project ID if available, otherwise use a default
 FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
 FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
-
-# Base URL for the public certificate page (update this if you host it elsewhere)
-# For Streamlit multi-page app, the base URL points to the Streamlit page itself.
-# The URL will automatically include the default port (e.g., 8501)
-# IMPORTANT: This should match the path to your certificate_page.py in the 'pages' folder.
-CERTIFICATE_BASE_URL = "http://localhost:8501/Certificate_Page" # Corrected URL for Streamlit page
-
-# Certification Threshold (used in screener.py, but good to have here for context)
-CERTIFICATION_THRESHOLD = 80 # Score needed to qualify for a certificate
 
 
 # File to store user credentials
@@ -371,37 +361,6 @@ def load_session_data_from_firestore_rest(username):
         st.error(f"🔥 An unexpected error occurred during REST load: {e}")
         log_activity_main(f"Unexpected REST load error for user '{username}': {e}")
         st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on unexpected error
-
-def save_certificate_to_firestore_rest(certificate_data: dict):
-    """
-    Saves certificate data to a public Firestore collection using the REST API.
-    Collection path: /artifacts/{appId}/public/certificates/{certificateId}
-    """
-    try:
-        certificate_id = certificate_data.get("certificate_id")
-        if not certificate_id:
-            st.error("Cannot save certificate: missing certificate_id.")
-            return
-
-        # Correct document path for public certificates
-        doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/public/certificates/{certificate_id}"
-        url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
-
-        # Convert Python dictionary to Firestore's REST API format (Fields object)
-        firestore_data = to_firestore_format(certificate_data)
-
-        res = requests.patch(url, json=firestore_data)
-        if res.status_code in [200, 201]:
-            log_activity_main(f"Certificate '{certificate_id}' saved to Cloud (REST API).")
-        else:
-            st.error(f"❌ Certificate save failed: {res.status_code}, {res.text}")
-            log_activity_main(f"Certificate save failed for '{certificate_id}': {res.status_code}, {res.text}")
-    except requests.exceptions.RequestException as e:
-        st.error(f"🔥 REST Firebase connection error during certificate save: {e}")
-        log_activity_main(f"REST Firebase connection error during certificate save: {e}")
-    except Exception as e:
-        st.error(f"🔥 An unexpected error occurred during certificate save: {e}")
-        log_activity_main(f"Unexpected REST certificate save error: {e}")
 
 
 def login_section():
@@ -1431,19 +1390,10 @@ else:
     # Page Routing via function calls (remaining pages)
     # ======================
     elif tab == "🧠 Resume Screener":
-        # Pass the CERTIFICATE_BASE_URL to screener.py via session state
-        st.session_state['CERTIFICATE_BASE_URL'] = CERTIFICATE_BASE_URL
         try:
             # Import the screener page function (assuming it's in a separate file)
-            from screener import main as resume_screener_page_main # Import main function from screener.py
-            resume_screener_page_main() # Call the imported function
-
-            # --- Check for certificate data to save after screener runs ---
-            if 'certificate_data_to_save' in st.session_state and st.session_state['certificate_data_to_save']:
-                certificate_data = st.session_state['certificate_data_to_save']
-                save_certificate_to_firestore_rest(certificate_data)
-                del st.session_state['certificate_data_to_save'] # Clear after saving to prevent re-saving
-
+            from screener import resume_screener_page
+            resume_screener_page() # Call the imported function
             # The logging and pending approval logic here should ideally be handled within resume_screener_page itself
             # after a successful screening operation. For now, keeping it here for demonstration.
             if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
@@ -1455,9 +1405,7 @@ else:
 
                 # Example: Triggering a pending approval for a high-scoring candidate
                 for result in st.session_state['comprehensive_df'].to_dict('records'):
-                    # Ensure candidate is not already in pending approvals
-                    if result.get('Score (%)', 0) >= 90 and \
-                       result['Candidate Name'] not in [app['candidate_name'] for app in st.session_state.get('pending_approvals', []) if app['status'] == 'pending']:
+                    if result.get('Score (%)', 0) >= 90 and result['Candidate Name'] not in [app['candidate_name'] for app in st.session_state.get('pending_approvals', []) if app['status'] == 'pending']:
                         if 'pending_approvals' not in st.session_state:
                             st.session_state.pending_approvals = []
                         st.session_state.pending_approvals.append({
@@ -1472,7 +1420,7 @@ else:
                         st.toast(f"Candidate {result['Candidate Name']} sent for approval!")
 
         except ImportError:
-            st.error("`screener.py` not found or `main` function not defined within it. Please ensure 'screener.py' exists and contains the 'main' function.")
+            st.error("`screener.py` not found or `resume_screener_page` function not defined. Please ensure 'screener.py' exists and contains the 'resume_screener_page' function.")
         except Exception as e:
             st.error(f"Error loading Resume Screener: {e}")
 
@@ -1548,4 +1496,3 @@ else:
         st.session_state.pop('username', None)
         st.success("✅ Logged out.")
         st.rerun()
-
