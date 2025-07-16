@@ -15,6 +15,11 @@ import nltk
 import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
+import uuid # For generating unique certificate IDs
+
+# --- Firebase Imports ---
+import firebase_admin
+from firebase_admin import credentials, firestore, auth
 
 # --- OCR Specific Imports ---
 from PIL import Image
@@ -28,6 +33,54 @@ try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
     nltk.download('stopwords')
+
+# --- Firebase Initialization (Global) ---
+# Initialize Firebase only once
+if not firebase_admin._apps:
+    try:
+        # Check if running in a Canvas environment with predefined global variables
+        if '__firebase_config' in st.session_state and '__app_id' in st.session_state:
+            # Parse the Firebase config from the global variable
+            firebase_config = st.session_state['__firebase_config']
+            app_id = st.session_state['__app_id']
+            
+            # Firebase Admin SDK needs service account credentials.
+            # In a Streamlit environment, especially on Streamlit Cloud,
+            # it's common to load this from st.secrets.
+            # For Canvas, if __firebase_config is a dict, it might contain the service account info.
+            # Assuming __firebase_config is a JSON string of the service account.
+            
+            # For Firebase Admin SDK, we need a dictionary for credentials.
+            # If __firebase_config is already a dict, use it directly.
+            # If it's a string, try to parse it as JSON.
+            if isinstance(firebase_config, str):
+                import json
+                cred_dict = json.loads(firebase_config)
+            else:
+                cred_dict = firebase_config # Assume it's already a dict
+
+            # Ensure the cred_dict has the necessary keys for service account
+            if all(k in cred_dict for k in ["type", "project_id", "private_key_id", "private_key", "client_email", "client_id", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "client_x509_cert_url"]):
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred, name=app_id)
+                st.session_state['db'] = firestore.client()
+                st.session_state['auth'] = auth
+                st.success("✅ Firebase Admin SDK initialized successfully!")
+            else:
+                st.warning("Firebase Admin SDK credentials incomplete. Firestore operations might fail.")
+                st.session_state['db'] = None
+                st.session_state['auth'] = None
+        else:
+            st.warning("Firebase config not found in session state. Firebase Admin SDK not initialized.")
+            st.session_state['db'] = None
+            st.session_state['auth'] = None
+    except Exception as e:
+        st.error(f"❌ Error initializing Firebase Admin SDK: {e}")
+        st.session_state['db'] = None
+        st.session_state['auth'] = None
+
+db = st.session_state.get('db')
+firebase_auth = st.session_state.get('auth')
 
 # --- Load Embedding + ML Model ---
 @st.cache_resource
@@ -905,7 +958,7 @@ def extract_languages(text):
         "de" # For German
     ]
     
-    # Sort languages by length descending to prioritize longer phrases first (e.g., "Ancient Greek" before "Greek")
+    # Sort languages by length descending to match longer phrases first (e.g., "Ancient Greek" before "Greek")
     sorted_all_languages = sorted(all_languages, key=len, reverse=True)
 
     # Look for a "Languages" section header with more flexibility
@@ -956,79 +1009,6 @@ def extract_languages(text):
 
     return ", ".join(sorted(list(languages_list))) if languages_list else "Not Found"
 
-def extract_certifications(text):
-    """
-    Extracts certification details (Name, URL) from text.
-    Looks for a "Certifications" section and tries to find names and URLs.
-    Returns a list of dicts.
-    """
-    cert_details = []
-    
-    # Define keywords that often precede or indicate a certifications section
-    cert_section_keywords = r'(?:certifications|licenses|credentials|awards|certificates)'
-    
-    # Find the start of the certifications section
-    cert_section_match = re.search(cert_section_keywords + r'\s*(\n|$)', text, re.IGNORECASE)
-    
-    if not cert_section_match:
-        cert_text = text # Fallback to full text if no clear section header
-        start_index = 0
-    else:
-        start_index = cert_section_match.end()
-        # Define potential end markers for the certifications section
-        sections = ['education', 'experience', 'work history', 'skills', 'projects', 'awards', 'publications', 'interests', 'hobbies']
-        end_index = len(text)
-        for section in sections:
-            section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
-            if section_match:
-                end_index = start_index + section_match.start()
-                break
-        cert_text = text[start_index:end_index].strip()
-    
-    if not cert_text:
-        return [] # No certification text found
-
-    lines = [line.strip() for line in cert_text.split('\n') if line.strip()]
-    
-    # Regex for a URL
-    url_regex = r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)'
-    
-    current_cert_name = None
-    current_cert_url = None
-
-    for line in lines:
-        line_lower = line.lower()
-        
-        # Check for URL first
-        url_match = re.search(url_regex, line)
-        if url_match:
-            current_cert_url = url_match.group(0)
-            # If a name was already captured, associate this URL with it
-            if current_cert_name:
-                cert_details.append({"Name": current_cert_name, "URL": current_cert_url})
-                current_cert_name = None # Reset for next cert
-                current_cert_url = None
-            continue # Move to next line after finding URL
-
-        # Look for potential certification names (capitalized words, not too long, not a date)
-        # Avoid lines that are clearly just bullet points or short descriptions
-        if line and (line[0].isupper() or re.match(r'^\d', line)) and \
-           len(line.split()) < 10 and \
-           not re.search(r'\d{4}', line) and \
-           not re.match(r'^[•*-]', line):
-            
-            # If we have a previous name but no URL, and this line looks like a new cert, save the old one
-            if current_cert_name and not current_cert_url:
-                cert_details.append({"Name": current_cert_name, "URL": "Not Found"})
-            
-            current_cert_name = line.strip()
-            current_cert_url = None # Reset URL for new cert
-
-    # Add the last certification if it was being processed
-    if current_cert_name:
-        cert_details.append({"Name": current_cert_name, "URL": current_cert_url or "Not Found"})
-            
-    return cert_details
 
 def format_education_details(edu_list):
     """Formats a list of education dictionaries into a readable string."""
@@ -1082,20 +1062,6 @@ def format_project_details(proj_list):
             desc_snippet = entry["Description"].split('\n')[0][:50] + "..." if len(entry["Description"]) > 50 else entry["Description"]
             parts.append(f'"{desc_snippet}"')
         formatted_entries.append(" ".join(parts).strip())
-    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
-
-def format_certification_details(cert_list):
-    """Formats a list of certification dictionaries into a readable string with clickable links."""
-    if not cert_list:
-        return "Not Found"
-    formatted_entries = []
-    for entry in cert_list:
-        name = entry.get("Name", "Unnamed Certification")
-        url = entry.get("URL")
-        if url and url != "Not Found":
-            formatted_entries.append(f"[{name}]({url})")
-        else:
-            formatted_entries.append(name)
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
 
 
@@ -1380,6 +1346,43 @@ Best regards,
 The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
+# --- Firebase Certificate Functions ---
+def save_certificate_to_firestore(certificate_data):
+    """Saves certificate data to Firestore."""
+    if db is None:
+        st.error("Firestore client is not initialized. Cannot save certificate.")
+        return False
+    try:
+        # Use the app_id from session state for collection path
+        app_id = st.session_state.get('__app_id', 'default-app-id')
+        
+        # Use a public path for certificates as they are meant to be shareable
+        # Ensure the security rules allow public read access to this path
+        doc_ref = db.collection(f"artifacts/{app_id}/public/data/certificates").document(certificate_data['certificate_id'])
+        doc_ref.set(certificate_data)
+        st.success(f"Certificate for {certificate_data['candidate_name']} saved successfully!")
+        return True
+    except Exception as e:
+        st.error(f"Error saving certificate to Firestore: {e}")
+        return False
+
+def get_certificate_from_firestore(certificate_id):
+    """Retrieves certificate data from Firestore."""
+    if db is None:
+        st.error("Firestore client is not initialized. Cannot retrieve certificate.")
+        return None
+    try:
+        app_id = st.session_state.get('__app_id', 'default-app-id')
+        doc_ref = db.collection(f"artifacts/{app_id}/public/data/certificates").document(certificate_id)
+        doc = doc_ref.get()
+        if doc.exists:
+            return doc.to_dict()
+        else:
+            return None
+    except Exception as e:
+        st.error(f"Error retrieving certificate from Firestore: {e}")
+        return None
+
 # --- Function to encapsulate the Resume Screener logic ---
 def resume_screener_page():
     st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
@@ -1524,13 +1527,11 @@ def resume_screener_page():
             education_details_raw = extract_education_details(text)
             work_history_raw = extract_work_history(text)
             project_details_raw = extract_project_details(text)
-            certifications_raw = extract_certifications(text) # New: Extract certifications
 
             # Format structured details for display in the DataFrame
             education_details_formatted = format_education_details(education_details_raw)
             work_history_formatted = format_work_history(work_history_raw)
             project_details_formatted = format_project_details(project_details_raw)
-            certifications_formatted = format_certification_details(certifications_raw) # New: Format certifications
 
             candidate_name = extract_name(text) or file.name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title()
             cgpa = extract_cgpa(text)
@@ -1581,7 +1582,6 @@ def resume_screener_page():
                 "Education Details": education_details_formatted,
                 "Work History": work_history_formatted,
                 "Project Details": project_details_formatted,
-                "Certifications": certifications_formatted, # New: Add certifications
                 "AI Suggestion": concise_ai_suggestion,
                 "Detailed HR Assessment": detailed_hr_assessment,
                 "Matched Keywords": ", ".join(matched_keywords),
@@ -1591,7 +1591,9 @@ def resume_screener_page():
                 "Semantic Similarity": semantic_similarity,
                 "Resume Raw Text": text,
                 "JD Used": jd_name_for_results,
-                "Date Screened": datetime.now().date() # Add Date Screened here
+                "Date Screened": datetime.now().date(), # Add Date Screened here
+                "Certificate ID": None, # Placeholder for certification
+                "Certificate URL": None # Placeholder for certification URL
             })
             
         progress_bar.empty()
@@ -1608,6 +1610,44 @@ def resume_screener_page():
             "⚠️ Needs Review" if row['Score (%)'] >= 40 else 
             "❌ Limited Match"))), axis=1)
 
+        # --- Certification Logic ---
+        # Determine the top 10% score threshold among processed candidates
+        if not st.session_state['comprehensive_df'].empty:
+            sorted_scores = st.session_state['comprehensive_df']['Score (%)'].sort_values(ascending=False)
+            top_10_percent_index = max(0, int(len(sorted_scores) * 0.10) - 1) # Get index for top 10% cutoff
+            
+            # Ensure top_10_percent_score is at least 85% for certification, as per user's request for "Top 10% Performer"
+            # If fewer than 10 candidates, consider top candidate if score >= 85
+            if len(sorted_scores) > 0:
+                top_10_percent_score_threshold = sorted_scores.iloc[top_10_percent_index]
+                certification_score_threshold = max(85.0, top_10_percent_score_threshold)
+            else:
+                certification_score_threshold = 85.0 # Default if no candidates
+
+            st.session_state['comprehensive_df']['Is Certified'] = False
+            for idx, row in st.session_state['comprehensive_df'].iterrows():
+                if row['Score (%)'] >= certification_score_threshold:
+                    certificate_id = str(uuid.uuid4())
+                    certificate_url = f"https://screenerpro.in/certificate/{certificate_id}" # Placeholder URL
+                    
+                    certificate_data = {
+                        "certificate_id": certificate_id,
+                        "candidate_name": row['Candidate Name'],
+                        "score": row['Score (%)'],
+                        "email": row['Email'],
+                        "date_screened": row['Date Screened'].isoformat(), # Convert date to ISO format string
+                        "rank_achieved": "Top 10% Performer", # As per user request
+                        "share_link": certificate_url,
+                        "jd_used": row['JD Used'],
+                        "years_experience": row['Years Experience'],
+                        "cgpa": row['CGPA (4.0 Scale)']
+                    }
+                    
+                    if save_certificate_to_firestore(certificate_data):
+                        st.session_state['comprehensive_df'].loc[idx, 'Certificate ID'] = certificate_id
+                        st.session_state['comprehensive_df'].loc[idx, 'Certificate URL'] = certificate_url
+                        st.session_state['comprehensive_df'].loc[idx, 'Is Certified'] = True
+                
         # Save results to CSV for analytics.py to use
         st.session_state['comprehensive_df'].to_csv("results.csv", index=False)
 
@@ -1665,6 +1705,18 @@ def resume_screener_page():
 
             st.markdown(f"### **{top_candidate['Candidate Name']}**")
             st.markdown(f"**Score:** {top_candidate['Score (%)']:.2f}% | **Experience:** {top_candidate['Years Experience']:.1f} years | **CGPA:** {cgpa_display} (4.0 Scale) | **Semantic Similarity:** {semantic_sim_display}")
+            
+            # Display certification badge for the top candidate if certified
+            if top_candidate['Is Certified']:
+                st.markdown(f"### 🏅 **Screened by Screener Pro – {top_candidate['Certificate Data']['rank_achieved']}**")
+                if top_candidate['Certificate URL']:
+                    st.markdown(f"**[View Certificate Online]({top_candidate['Certificate URL']})**")
+                    # LinkedIn Share Button
+                    linkedin_share_url = f"https://www.linkedin.com/shareArticle?mini=true&url={urllib.parse.quote(top_candidate['Certificate URL'])}&title={urllib.parse.quote(f'Screener Pro Certification for {top_candidate['Candidate Name']}')}&summary={urllib.parse.quote(f'I am proud to announce that {top_candidate['Candidate Name']} has been certified by Screener Pro as a {top_candidate['Certificate Data']['rank_achieved']} with a score of {top_candidate['Score (%)']:.2f}%!')}"
+                    st.markdown(f'<a href="{linkedin_share_url}" target="_blank"><button style="background-color:#0077B5;color:white;border:none;padding:8px 16px;text-align:center;text-decoration:none;display:inline-block;font-size:14px;margin:4px 2px;cursor:pointer;border-radius:5px;">Share on LinkedIn</button></a>', unsafe_allow_html=True)
+                    # Download Certificate Button (will link to the same viewer page, which then offers PDF download)
+                    st.markdown(f'<a href="{top_candidate['Certificate URL']}" target="_blank"><button style="background-color:#4CAF50;color:white;border:none;padding:8px 16px;text-align:center;text-decoration:none;display:inline-block;font-size:14px;margin:4px 2px;cursor:pointer;border-radius:5px;">Download Certificate (PDF)</button></a>', unsafe_allow_html=True)
+            
             st.markdown(f"**AI Assessment:**")
             st.markdown(top_candidate['Detailed HR Assessment']) # Display the detailed HR assessment here
             
@@ -1752,7 +1804,9 @@ def resume_screener_page():
                 'CGPA (4.0 Scale)',
                 'Semantic Similarity',
                 'Email',
-                'AI Suggestion'
+                'AI Suggestion',
+                'Is Certified', # Show certification status
+                'Certificate URL' # Show certificate URL if available
             ]
             
             st.dataframe(
@@ -1789,6 +1843,16 @@ def resume_screener_page():
                     "AI Suggestion": st.column_config.Column(
                         "AI Suggestion",
                         help="AI's concise overall assessment and recommendation"
+                    ),
+                    "Is Certified": st.column_config.CheckboxColumn(
+                        "Certified 🏅",
+                        help="Indicates if the candidate received a Screener Pro Certification",
+                        default=False,
+                    ),
+                    "Certificate URL": st.column_config.LinkColumn(
+                        "Certificate Link",
+                        help="Link to the public verification page for the certificate",
+                        display_text="View 🔗"
                     )
                 }
             )
@@ -1806,6 +1870,7 @@ def resume_screener_page():
         st.markdown("### 🔍 Filter Candidates")
         filter_col1, filter_col2, filter_col3 = st.columns(3)
         filter_col4, filter_col5, filter_col6 = st.columns(3)
+        filter_col7 = st.columns(1)[0] # For Is Certified filter
 
         with filter_col1:
             # Populate multiselect with skills from the JD's word cloud set
@@ -1845,8 +1910,11 @@ def resume_screener_page():
                 0.0, 4.0, (0.0, 4.0), 0.1, help="Filter candidates by their CGPA range (normalized to 4.0)."
             )
         
+        with filter_col7:
+            filter_certified = st.checkbox("Show only Certified Candidates 🏅", value=False)
+
         # Additional filters
-        filter_col_loc, filter_col_lang, filter_col_cert = st.columns(3)
+        filter_col_loc, filter_col_lang = st.columns(2)
         with filter_col_loc:
             all_locations = sorted(st.session_state['comprehensive_df']['Location'].unique())
             selected_locations = st.multiselect(
@@ -1863,18 +1931,6 @@ def resume_screener_page():
                 "**Languages:**",
                 options=all_languages_from_df,
                 help="Filter by languages spoken by the candidate."
-            )
-        with filter_col_cert: # New filter for Certifications
-            # Extract all unique certification names from the 'Certifications' column
-            all_certs_from_df = sorted(list(set(
-                re.sub(r'\[(.*?)\]\(.*?\)', r'\1', cert_str).strip() # Extract name from markdown link
-                for certs_entry in st.session_state['comprehensive_df']['Certifications'] if certs_entry != "Not Found"
-                for cert_str in certs_entry.split(';')
-            )))
-            selected_certifications = st.multiselect(
-                "**Certifications:**",
-                options=all_certs_from_df,
-                help="Filter by certifications held by the candidate."
             )
 
 
@@ -1927,16 +1983,9 @@ def resume_screener_page():
             filtered_display_df = filtered_display_df[
                 filtered_display_df['Languages'].str.contains(language_pattern, case=False, na=False)
             ]
-        
-        if selected_certifications: # Apply certifications filter
-            # For each selected certification, check if it's present in the 'Certifications' string
-            for cert in selected_certifications:
-                # Use regex to match the certification name, accounting for potential markdown link format
-                cert_pattern = r'(?:\[)?' + re.escape(cert) + r'(?:\]\(.*?\))?'
-                filtered_display_df = filtered_display_df[
-                    filtered_display_df['Certifications'].str.contains(cert_pattern, case=False, na=False)
-                ]
 
+        if filter_certified:
+            filtered_display_df = filtered_display_df[filtered_display_df['Is Certified'] == True]
 
         # Define columns to display in the comprehensive table
         comprehensive_cols = [
@@ -1951,9 +2000,10 @@ def resume_screener_page():
             'Education Details',
             'Work History',
             'Project Details',
-            'Certifications', # New: Add certifications to display
             'Semantic Similarity',
             'Tag',
+            'Is Certified', # New column
+            'Certificate URL', # New column
             'AI Suggestion',
             'Matched Keywords',
             'Missing Skills',
@@ -2040,9 +2090,15 @@ def resume_screener_page():
                     "Project Details",
                     help="Structured project experience (Title, Description, Technologies)"
                 ),
-                "Certifications": st.column_config.Column( # New: Column config for Certifications
-                    "Certifications",
-                    help="Certifications obtained by the candidate, with links if available"
+                "Is Certified": st.column_config.CheckboxColumn(
+                    "Certified 🏅",
+                    help="Indicates if the candidate received a Screener Pro Certification",
+                    default=False,
+                ),
+                "Certificate URL": st.column_config.LinkColumn(
+                    "Certificate Link",
+                    help="Link to the public verification page for the certificate",
+                    display_text="View 🔗"
                 )
             }
         )
