@@ -14,3 +14,7 @@ simplejson
 plotly
 statsmodels
 bcrypt
+pytesseract
+Pillow
+numpy
+opencv-python-headless # Optional, but highly recommended for image preprocessing
