@@ -787,7 +787,6 @@ def extract_project_details(text):
     if not project_section_match:
         # Fallback: if no clear section header, assume projects might be anywhere,
         # but this is less reliable. For now, we'll try to find project-like blocks globally.
-        # This part will be less precise, but better than nothing.
         project_text = text
         start_index = 0
     else:
@@ -828,13 +827,21 @@ def extract_project_details(text):
         # 6. Contains a strong project indicator keyword
         # 7. Also consider if the line is a URL (often found with project links)
         
+        # Add a check for previous line not being a bullet point for better project title detection
+        prev_line_is_bullet = False
+        if i > 0:
+            prev_line = lines[i-1].strip()
+            if re.match(r'^[•*-]', prev_line):
+                prev_line_is_bullet = True
+
         is_potential_title = (
             (line and (line[0].isupper() or re.match(r'^\d', line))) and
             len(line.split()) > 1 and
             len(line.split()) < 15 and
             not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line_lower) and
             not re.match(r'^[•*-]\s*(?:achieved|contributed|implemented|developed|designed|built|managed|led)', line_lower) and
-            any(keyword in line_lower for keyword in strong_project_indicators)
+            any(keyword in line_lower for keyword in strong_project_indicators) and
+            not prev_line_is_bullet # New condition: not preceded by a bullet point
         )
         
         is_url = re.match(r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)', line_lower)
