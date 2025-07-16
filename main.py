@@ -379,20 +379,11 @@ def login_section():
             st.session_state.active_login_tab_selection = "Login"
 
 
-    if st.session_state.authenticated:
-        return True
+    tabs = st.tabs(["Login", "Register"]) # Use st.tabs for a cleaner UI
 
-    # Use st.radio to simulate tabs if st.tabs() default_index is not supported
-    tab_selection = st.radio(
-        "Select an option:",
-        ("Login", "Register"),
-        key="login_register_radio",
-        index=0 if st.session_state.active_login_tab_selection == "Login" else 1
-    )
-
-    if tab_selection == "Login":
+    with tabs[0]: # Login tab
         st.subheader("🔐 HR Login")
-        st.info("If you don't have an account, please go to the 'Register' option first.") # Added instructional message
+        st.info("If you don't have an account, please go to the 'Register' option first.")
         with st.form("login_form", clear_on_submit=False):
             username = st.text_input("Username", key="username_login")
             password = st.text_input("Password", type="password", key="password_login")
@@ -418,7 +409,7 @@ def login_section():
                     else:
                         st.error("❌ Invalid username or password.")
 
-    elif tab_selection == "Register": # This will be the initially selected option for new users
+    with tabs[1]: # Register tab
         register_section()
 
     return st.session_state.authenticated
@@ -729,10 +720,26 @@ def analytics_dashboard_page():
                  " Please ensure your screening process generates at least these required data fields.")
         st.stop()
 
-    st.markdown("### 🔍 Filter Results")
-    filter_cols = st.columns(3)
+    # --- Data Cleaning and Preparation for Analytics ---
+    # Ensure CGPA is numeric, coercing errors to NaN, then explicitly cast to float
+    df['CGPA (4.0 Scale)'] = pd.to_numeric(df['CGPA (4.0 Scale)'], errors='coerce')
+    df['CGPA (4.0 Scale)'] = df['CGPA (4.0 Scale)'].astype(float) # Explicitly cast to float
 
-    with filter_cols[0]:
+    # Convert 'Years Experience' to numeric, coercing errors
+    df['Years Experience'] = pd.to_numeric(df['Years Experience'], errors='coerce')
+    
+    # Convert 'Score (%)' to numeric
+    df['Score (%)'] = pd.to_numeric(df['Score (%)'], errors='coerce')
+    
+    # Fill 'Not Found' or empty strings with NaN for easier filtering/plotting
+    df.replace('Not Found', pd.NA, inplace=True)
+    df.replace('', pd.NA, inplace=True)
+
+    # --- Filters for Analytics Dashboard ---
+    st.markdown("### 🔍 Filter Analytics Data")
+    col_filter1, col_filter2 = st.columns(2)
+
+    with col_filter1:
         min_score, max_score = float(df['Score (%)'].min()), float(df['Score (%)'].max())
         score_range = st.slider(
             "Filter by Score (%)",
@@ -740,10 +747,10 @@ def analytics_dashboard_page():
             max_value=max_score,
             value=(min_score, max_score),
             step=1.0,
-            key="score_filter"
+            key="ana_score_filter"
         )
 
-    with filter_cols[1]:
+    with col_filter2:
         min_exp, max_exp = float(df['Years Experience'].min()), float(df['Years Experience'].max())
         exp_range = st.slider(
             "Filter by Years Experience",
@@ -751,27 +758,53 @@ def analytics_dashboard_page():
             max_value=max_exp,
             value=(min_exp, max_exp),
             step=0.5,
-            key="exp_filter"
+            key="ana_exp_filter"
+        )
+    
+    col_filter3, col_filter4 = st.columns(2)
+    with col_filter3:
+        # Get unique locations from the dataframe, handle potential list/string formats
+        all_locations = sorted(list(df['Location'].dropna().unique()))
+        selected_locations_ana = st.multiselect(
+            "Filter by Location:",
+            options=all_locations,
+            key="ana_location_filter"
+        )
+    with col_filter4:
+        # Get unique languages from the dataframe, handle potential list/string formats
+        all_languages_from_df = sorted(list(set(
+            lang.strip() for langs_str in df['Languages'].dropna() if langs_str != "Not Found" for lang in langs_str.split(',')
+        )))
+        selected_languages_ana = st.multiselect(
+            "Filter by Language:",
+            options=all_languages_from_df,
+            key="ana_language_filter"
         )
 
-    with filter_cols[2]:
-        shortlist_threshold = st.slider(
-            "Set Shortlisting Cutoff Score (%)",
-            min_value=0,
-            max_value=100,
-            value=80,
-            step=1,
-            key="shortlist_filter"
-        )
-
+    # Apply filters
     filtered_df = df[
         (df['Score (%)'] >= score_range[0]) & (df['Score (%)'] <= score_range[1]) &
         (df['Years Experience'] >= exp_range[0]) & (df['Years Experience'] <= exp_range[1])
-    ].copy()
+    ].copy() # Use .copy() to avoid SettingWithCopyWarning
+
+    if selected_locations_ana:
+        location_pattern = '|'.join([re.escape(loc) for loc in selected_locations_ana])
+        filtered_df = filtered_df[
+            filtered_df['Location'].fillna('').str.contains(location_pattern, case=False, na=False)
+        ]
+    
+    if selected_languages_ana:
+        language_pattern = '|'.join([re.escape(lang) for lang in selected_languages_ana])
+        filtered_df = filtered_df[
+            filtered_df['Languages'].fillna('').str.contains(language_pattern, case=False, na=False)
+        ]
 
     if filtered_df.empty:
-        st.warning("No data matches the selected filters. Please adjust your criteria.")
+        st.warning("No data matches the current filter criteria. Adjust filters or upload more resumes.")
         st.stop()
+
+    # Get the latest shortlist_threshold from the slider
+    shortlist_threshold = st.session_state.get("shortlist_filter", 80) # Default to 80 if not set
 
     filtered_df['Shortlisted'] = filtered_df['Score (%)'].apply(lambda x: f"Yes (Score >= {shortlist_threshold}%)" if x >= shortlist_threshold else "No")
 
@@ -936,24 +969,29 @@ def analytics_dashboard_page():
 
     with tab6:
         st.markdown("#### 🎓 CGPA Distribution")
-        if 'CGPA (4.0 Scale)' in filtered_df.columns and not filtered_df['CGPA (4.0 Scale)'].isnull().all():
+        # Ensure CGPA column is numeric and drop NaNs before plotting
+        cgpa_df = filtered_df.dropna(subset=['CGPA (4.0 Scale)'])
+        if not cgpa_df.empty:
             fig_cgpa_hist = px.histogram(
-                filtered_df.dropna(subset=['CGPA (4.0 Scale)']),
+                cgpa_df,
                 x='CGPA (4.0 Scale)',
                 nbins=10,
                 title='Distribution of CGPA (Normalized to 4.0 Scale)',
                 labels={'CGPA (4.0 Scale)': 'CGPA'},
-                color_discrete_sequence=px.colors.qualitative.Plotly[0] if not dark_mode else px.colors.qualitative.Dark2[0]
+                color_discrete_sequence=px.colors.qualitative.Plotly if not dark_mode else px.colors.qualitative.Dark2
             )
             st.plotly_chart(fig_cgpa_hist, use_container_width=True)
         else:
-            st.info("No CGPA data available for this visualization.")
+            st.info("No CGPA data available for this visualization after filtering.")
+
 
     with tab7:
         st.markdown("#### 📈 Score vs. CGPA")
-        if 'CGPA (4.0 Scale)' in filtered_df.columns and not filtered_df['CGPA (4.0 Scale)'].isnull().all():
+        # Ensure CGPA column is numeric and drop NaNs before plotting
+        cgpa_df_scatter = filtered_df.dropna(subset=['CGPA (4.0 Scale)'])
+        if not cgpa_df_scatter.empty:
             fig_score_cgpa = px.scatter(
-                filtered_df.dropna(subset=['CGPA (4.0 Scale)']),
+                cgpa_df_scatter,
                 x='CGPA (4.0 Scale)',
                 y='Score (%)',
                 hover_name='Candidate Name',
@@ -965,13 +1003,15 @@ def analytics_dashboard_page():
             )
             st.plotly_chart(fig_score_cgpa, use_container_width=True)
         else:
-            st.info("No CGPA data available for this visualization.")
+            st.info("No CGPA data available for this visualization after filtering.")
 
     with tab8:
         st.markdown("#### 📊 Experience vs. CGPA")
-        if 'CGPA (4.0 Scale)' in filtered_df.columns and not filtered_df['CGPA (4.0 Scale)'].isnull().all():
+        # Ensure CGPA column is numeric and drop NaNs before plotting
+        cgpa_df_exp_scatter = filtered_df.dropna(subset=['CGPA (4.0 Scale)'])
+        if not cgpa_df_exp_scatter.empty:
             fig_exp_cgpa = px.scatter(
-                filtered_df.dropna(subset=['CGPA (4.0 Scale)']),
+                cgpa_df_exp_scatter,
                 x='Years Experience',
                 y='CGPA (4.0 Scale)',
                 hover_name='Candidate Name',
@@ -983,7 +1023,7 @@ def analytics_dashboard_page():
             )
             st.plotly_chart(fig_exp_cgpa, use_container_width=True)
         else:
-            st.info("No CGPA data available for this visualization.")
+            st.info("No CGPA data available for this visualization after filtering.")
 
     with tab9:
         st.markdown("#### 🧠 Skills by Category")
@@ -1066,6 +1106,11 @@ if tab == "🏠 Dashboard":
         try:
             df_results = st.session_state['comprehensive_df'].copy()
             resume_count = df_results["File Name"].nunique()
+
+            # Ensure CGPA is numeric before filtering
+            df_results['CGPA (4.0 Scale)'] = pd.to_numeric(df_results['CGPA (4.0 Scale)'], errors='coerce')
+            df_results['CGPA (4.0 Scale)'] = df_results['CGPA (4.0 Scale)'].astype(float)
+
 
             shortlisted_df = df_results[
                 (df_results["Score (%)"] >= cutoff_score) &
@@ -1253,6 +1298,10 @@ if tab == "🏠 Dashboard":
             # --- END FIX ---
 
             if 'JD Used' in df_all_results.columns: # Re-check after potential mock addition
+                # Ensure CGPA is numeric before filtering
+                df_all_results['CGPA (4.0 Scale)'] = pd.to_numeric(df_all_results['CGPA (4.0 Scale)'], errors='coerce')
+                df_all_results['CGPA (4.0 Scale)'] = df_all_results['CGPA (4.0 Scale)'].astype(float)
+
                 # Filter for shortlisted candidates based on session state criteria
                 shortlisted_per_jd = df_all_results[
                     (df_all_results["Score (%)"] >= cutoff_score) &
