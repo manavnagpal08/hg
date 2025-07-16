@@ -12,6 +12,7 @@ import plotly.express as px
 import statsmodels.api as sm
 import collections
 import requests # Added for REST API calls
+import uuid # Added for generating unique IDs
 
 # --- Firebase REST Setup ---
 # IMPORTANT: Replace "YOUR_FIREBASE_WEB_API_KEY" with your actual Firebase Web API Key
@@ -20,6 +21,11 @@ FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'AIzaSyDjC7tdmpEkp
 # Use __app_id from the Canvas environment for the project ID if available, otherwise use a default
 FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
 FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
+
+# Base URL for the public certificate page (update this if you host it elsewhere)
+# For local testing, you might use a placeholder like "http://localhost:8000/certificate.html"
+# In a real deployment, this would be your actual domain.
+CERTIFICATE_BASE_URL = "https://screenerpro.in/certificate"
 
 
 # File to store user credentials
@@ -361,6 +367,36 @@ def load_session_data_from_firestore_rest(username):
         st.error(f"🔥 An unexpected error occurred during REST load: {e}")
         log_activity_main(f"Unexpected REST load error for user '{username}': {e}")
         st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on unexpected error
+
+def save_certificate_to_firestore_rest(certificate_data: dict):
+    """
+    Saves certificate data to a public Firestore collection using the REST API.
+    Collection path: /artifacts/{appId}/public/certificates/{certificateId}
+    """
+    try:
+        certificate_id = certificate_data.get("certificate_id")
+        if not certificate_id:
+            st.error("Cannot save certificate: missing certificate_id.")
+            return
+
+        doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/public/certificates/{certificate_id}"
+        url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
+
+        # Convert Python dictionary to Firestore's REST API format (Fields object)
+        firestore_data = to_firestore_format(certificate_data)
+
+        res = requests.patch(url, json=firestore_data)
+        if res.status_code in [200, 201]:
+            log_activity_main(f"Certificate '{certificate_id}' saved to Cloud (REST API).")
+        else:
+            st.error(f"❌ Certificate save failed: {res.status_code}, {res.text}")
+            log_activity_main(f"Certificate save failed for '{certificate_id}': {res.status_code}, {res.text}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"🔥 REST Firebase connection error during certificate save: {e}")
+        log_activity_main(f"REST Firebase connection error during certificate save: {e}")
+    except Exception as e:
+        st.error(f"🔥 An unexpected error occurred during certificate save: {e}")
+        log_activity_main(f"Unexpected REST certificate save error: {e}")
 
 
 def login_section():
@@ -860,6 +896,11 @@ else:
             display_cols_for_table.append('Tag')
         if 'JD Used' in filtered_df.columns:
             display_cols_for_table.append('JD Used')
+        if 'Certificate ID' in filtered_df.columns: # Added for certificate
+            display_cols_for_table.append('Certificate ID')
+        if 'Certificate URL' in filtered_df.columns: # Added for certificate
+            display_cols_for_table.append('Certificate URL')
+
 
         st.dataframe(
             filtered_df[display_cols_for_table].sort_values(by="Score (%)", ascending=False),
