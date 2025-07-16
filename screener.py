@@ -179,6 +179,8 @@ CUSTOM_STOP_WORDS = set([
     "fcsp", "fcc", "fcnsp", "fct", "fcp", "fcs", "fce", "fcn", "fcnp", "fcnse"
 ])
 STOP_WORDS = NLTK_STOP_WORDS.union(CUSTOM_STOP_WORDS)
+
+# --- Skill Categories (for categorization and weighting) ---
 SKILL_CATEGORIES = {
     "Programming Languages": ["Python", "Java", "JavaScript", "C++", "C#", "Go", "Ruby", "PHP", "Swift", "Kotlin", "TypeScript", "R", "Bash Scripting", "Shell Scripting"],
     "Web Technologies": ["HTML5", "CSS3", "React", "Angular", "Vue.js", "Node.js", "Django", "Flask", "Spring Boot", "Express.js", "WebSockets"],
@@ -420,7 +422,12 @@ def extract_years_of_experience(text):
     return round(total_months / 12, 1)
 
 def extract_email(text):
-    """Extracts an email address from the given text."""
+    """
+    Extracts an email address from the given text.
+    Note: Effectiveness is highly dependent on the quality of OCR output.
+    Misinterpretation of characters (e.g., 'l' as '1', 'o' as '0') by OCR
+    can prevent successful extraction.
+    """
     match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text)
     return match.group(0) if match else None
 
@@ -705,7 +712,7 @@ def extract_project_details(text):
     This is a heuristic and may not capture all formats.
     Returns a list of dicts.
     """
-    project_section_matches = re.finditer(r'(?:projects|personal projects|key projects)\s*(\n|$)', text, re.IGNORECASE)
+    project_section_matches = re.finditer(r'(?:projects|personal projects|key projects|portfolio)\s*(\n|$)', text, re.IGNORECASE) # Added 'portfolio'
     project_details = []
     
     start_index = -1
@@ -714,7 +721,7 @@ def extract_project_details(text):
         break
 
     if start_index != -1:
-        sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications']
+        sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies'] # Added common section end markers
         end_index = len(text)
         for section in sections:
             section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
@@ -724,44 +731,50 @@ def extract_project_details(text):
         
         project_text = text[start_index:end_index].strip()
         
-        # Split into individual projects, often marked by a title line or bullet point
-        # This regex tries to split by a line starting with a capital letter followed by words,
-        # often indicating a new project title.
-        project_blocks = re.split(r'\n(?=[A-Z][a-zA-Z\s,&\-]+\s*(?:\()?\d{4}(?:\))?)|\n(?=•\s*[A-Z][a-zA-Z\s,&\-]+)', project_text)
+        # New approach for splitting project blocks:
+        # Look for lines that seem like titles (start with capital, contains at least two words, not too long, not just numbers/dates)
+        lines = project_text.split('\n')
+        current_project = {"Project Title": None, "Description": [], "Technologies Used": []}
         
-        for block in project_blocks:
-            block = block.strip()
-            if not block:
+        for line in lines:
+            line = line.strip()
+            if not line:
                 continue
-            
-            title = None
-            description = []
-            technologies = []
 
-            lines = block.split('\n')
-            if lines:
-                # First line is often the title
-                title_line = lines[0].strip()
-                if len(title_line.split()) <= 10 and re.match(r'^[A-Z]', title_line): # Heuristic for title line
-                    title = title_line
-                    description_lines = lines[1:]
-                else:
-                    description_lines = lines # If no clear title line, whole block is description
+            # Heuristic for a new project title:
+            # Starts with a capital letter, contains at least two words, and doesn't look like a simple bullet point or date
+            is_potential_title = bool(re.match(r'^[A-Z][a-zA-Z\s,\-&.]+\s+[A-Za-z]', line)) and \
+                                 len(line.split()) > 1 and \
+                                 len(line.split()) < 15 and \
+                                 not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line) # Exclude date ranges as titles
+
+            if is_potential_title:
+                if current_project["Project Title"] is not None or current_project["Description"]: # If we already have a project, save it
+                    if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
+                        project_details.append({
+                            "Project Title": current_project["Project Title"],
+                            "Description": "\n".join(current_project["Description"]),
+                            "Technologies Used": ", ".join(sorted(list(set(current_project["Technologies Used"]))))
+                        })
+                # Start a new project
+                current_project = {"Project Title": line, "Description": [], "Technologies Used": []}
+            else:
+                # Add line to current project's description
+                current_project["Description"].append(line)
                 
-                # Extract technologies (simple approach: look for words in MASTER_SKILLS within the block)
-                block_lower = block.lower()
-                for skill in MASTER_SKILLS: # MASTER_SKILLS is now dynamically generated
-                    if re.search(r'\b' + re.escape(skill.lower()) + r'\b', block_lower):
-                        technologies.append(skill)
-                
-                # Remaining lines form the description
-                description = [line.strip() for line in description_lines if line.strip()]
-                
-            if title or description or technologies:
+                # Extract technologies from the current line
+                line_lower = line.lower()
+                for skill in MASTER_SKILLS:
+                    if re.search(r'\b' + re.escape(skill.lower()) + r'\b', line_lower):
+                        current_project["Technologies Used"].append(skill)
+        
+        # Add the last project if it exists
+        if current_project["Project Title"] is not None or current_project["Description"]:
+            if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
                 project_details.append({
-                    "Project Title": title,
-                    "Description": "\n".join(description),
-                    "Technologies Used": ", ".join(technologies)
+                    "Project Title": current_project["Project Title"],
+                    "Description": "\n".join(current_project["Description"]),
+                    "Technologies Used": ", ".join(sorted(list(set(current_project["Technologies Used"]))))
                 })
     return project_details
 
