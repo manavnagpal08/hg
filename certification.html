@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScreenerPro Certification - {{CANDIDATE_NAME}}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8f9fa; /* Light background for print compatibility */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .certificate-container {
+            width: 100%;
+            max-width: 800px;
+            background: linear-gradient(145deg, #ffffff, #e6e6e6);
+            border: 10px solid #00cec9; /* Main border color */
+            border-radius: 20px;
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
+            padding: 40px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .logo-text {
+            font-family: 'Playfair Display', serif; /* A more elegant font for the logo */
+            font-size: 2.8em; /* Larger logo text */
+            color: #00cec9;
+            font-weight: 700;
+            margin-bottom: 15px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+        .certificate-header {
+            font-family: 'Playfair Display', serif;
+            font-size: 2.5em;
+            color: #34495e; /* Darker text for header */
+            margin-bottom: 20px;
+            font-weight: 700;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.05);
+        }
+        .certificate-subheader {
+            font-size: 1.2em;
+            color: #555;
+            margin-bottom: 30px;
+        }
+        .certificate-body {
+            margin-bottom: 40px;
+        }
+        .certificate-body p {
+            font-size: 1.1em;
+            line-height: 1.6;
+            color: #333;
+        }
+        .candidate-name {
+            font-family: 'Playfair Display', serif;
+            font-size: 3.2em; /* Even larger name */
+            color: #00cec9; /* Teal for the name */
+            margin: 25px 0;
+            font-weight: 700;
+            border-bottom: 3px dashed #b0e0e6; /* Lighter dashed line */
+            display: inline-block;
+            padding-bottom: 8px;
+            animation: pulse 1.5s infinite alternate; /* Subtle animation */
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            100% { transform: scale(1.02); }
+        }
+        .score-rank {
+            font-size: 1.6em; /* Larger score/rank */
+            color: #28a745; /* Green for success */
+            font-weight: 700;
+            margin-top: 20px;
+            padding: 5px 15px;
+            background-color: #e6ffe6; /* Light green background */
+            border-radius: 10px;
+            display: inline-block;
+        }
+        .date-id {
+            font-size: 0.95em;
+            color: #777;
+            margin-top: 35px;
+        }
+        .footer-text {
+            font-size: 0.85em;
+            color: #999;
+            margin-top: 40px;
+        }
+        /* Print styles */
+        @media print {
+            body {
+                background-color: #fff;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .certificate-container {
+                border: 5px solid #00cec9;
+                box-shadow: none;
+            }
+            .logo-text, .certificate-header, .candidate-name, .score-rank {
+                color: #00cec9 !important; /* Ensure colors are printed */
+                text-shadow: none !important;
+            }
+            .candidate-name {
+                animation: none !important; /* Disable animation for print */
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="certificate-container">
+        <div class="logo-text">ScreenerPro</div>
+        <div class="certificate-header">Certification of Excellence</div>
+        <div class="certificate-subheader">This is to proudly certify that</div>
+        <div class="candidate-name">{{CANDIDATE_NAME}}</div>
+        <div class="certificate-body">
+            <p>has successfully completed the comprehensive AI-powered screening process by ScreenerPro and achieved a distinguished ranking of</p>
+            <div class="score-rank">
+                {{CERTIFICATE_RANK}}
+            </div>
+            <p>demonstrating an outstanding Screener Score of **{{SCORE}}%**.</p>
+            <p>This certification attests to their highly relevant skills, extensive experience, and strong alignment with the demanding requirements of modern professional roles. It signifies their readiness to excel in challenging environments and contribute significantly to organizational success.</p>
+        </div>
+        <div class="date-id">
+            Awarded on: {{DATE_SCREENED}}<br>
+            Certificate ID: {{CERTIFICATE_ID}}
+        </div>
+        <div class="footer-text">
+            This certificate is digitally verified by ScreenerPro.
+        </div>
+    </div>
+</body>
+</html>
