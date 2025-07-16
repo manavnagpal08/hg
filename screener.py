@@ -15,28 +15,13 @@ import nltk
 import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
-import uuid # Added for generating unique IDs
-import json # For handling JSON data for Firestore
 
 # --- OCR Specific Imports ---
 from PIL import Image
 import pytesseract
-import io
-
-# --- Tesseract OCR Path Configuration ---
-# IMPORTANT: You MUST change this path to your Tesseract executable.
-# For Windows, it might look like: r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-# For macOS/Linux, it's often in your PATH, so you might not need this line
-# or it could be '/usr/local/bin/tesseract'
-# If Tesseract is not installed or path is incorrect, OCR will fail.
-try:
-    # Attempt to set the Tesseract command path. This might not be necessary on all OS.
-    # If you get a TesseractNotFoundError, uncomment the line below and set the correct path.
-    # pytesseract.pytesseract.tesseract_cmd = r'/usr/local/bin/tesseract' # Example for macOS/Linux
-    pass
-except Exception as e:
-    st.warning(f"⚠️ Could not set Tesseract command path automatically: {e}. Please ensure Tesseract is installed and its path is correctly configured in screener.py if you encounter OCR issues.")
-
+import cv2
+from pdf2image import convert_from_bytes # For converting PDF to images
+import shutil # For finding tesseract executable
 
 # Download NLTK stopwords data if not already downloaded
 try:
@@ -47,29 +32,18 @@ except LookupError:
 # --- Load Embedding + ML Model ---
 @st.cache_resource
 def load_ml_model():
-    """
-    Loads the SentenceTransformer model for embeddings and the pre-trained ML screening model.
-    Uses st.cache_resource to cache the models for efficient reuse.
-    """
     try:
-        # Load the SentenceTransformer model for generating embeddings
-        # This model converts text into numerical vectors that capture semantic meaning.
+        # Ensure the model path is correct, assuming it's in the same directory
         model = SentenceTransformer("all-MiniLM-L6-v2")
-        
-        # Load the pre-trained machine learning model (e.g., a classifier)
-        # This model is used for the actual resume screening/prediction.
         ml_model = joblib.load("ml_screening_model.pkl")
         return model, ml_model
     except Exception as e:
-        # Display an error message if models fail to load, guiding the user to check files.
-        st.error(f"❌ Error loading ML models: {e}. Please ensure 'ml_screening_model.pkl' is in the same directory and SentenceTransformer can download its components.")
+        st.error(f"❌ Error loading ML models: {e}. Please ensure 'ml_screening_model.pkl' is in the same directory.")
         return None, None
 
-# Load models at the start of the script
 model, ml_model = load_ml_model()
 
 # --- Predefined List of Cities for Location Extraction ---
-# This list helps in accurately identifying locations mentioned in resumes.
 MASTER_CITIES = set([
     # Indian Cities
     "Bengaluru", "Mumbai", "Delhi", "Chennai", "Hyderabad", "Kolkata", "Pune", "Ahmedabad", "Jaipur", "Lucknow",
@@ -119,9 +93,7 @@ MASTER_CITIES = set([
 ])
 
 
-# --- Stop Words List (Using NLTK and Custom Additions) ---
-# Stop words are common words (e.g., "the", "is") that are usually removed
-# before processing text to focus on more meaningful terms.
+# --- Stop Words List (Using NLTK) ---
 NLTK_STOP_WORDS = set(nltk.corpus.stopwords.words('english'))
 CUSTOM_STOP_WORDS = set([
     "work", "experience", "years", "year", "months", "month", "day", "days", "project", "projects",
@@ -206,11 +178,9 @@ CUSTOM_STOP_WORDS = set([
     "cc-e", "cc-m", "cc-s", "cc-x", "palo", "alto", "pcnsa", "pcnse", "fortinet", "fcsa",
     "fcsp", "fcc", "fcnsp", "fct", "fcp", "fcs", "fce", "fcn", "fcnp", "fcnse"
 ])
-# Combine NLTK and custom stop words for a comprehensive list
 STOP_WORDS = NLTK_STOP_WORDS.union(CUSTOM_STOP_WORDS)
 
 # --- Skill Categories (for categorization and weighting) ---
-# This dictionary helps in organizing and identifying skills based on their domain.
 SKILL_CATEGORIES = {
     "Programming Languages": ["Python", "Java", "JavaScript", "C++", "C#", "Go", "Ruby", "PHP", "Swift", "Kotlin", "TypeScript", "R", "Bash Scripting", "Shell Scripting"],
     "Web Technologies": ["HTML5", "CSS3", "React", "Angular", "Vue.js", "Node.js", "Django", "Flask", "Spring Boot", "Express.js", "WebSockets"],
@@ -247,15 +217,48 @@ SKILL_CATEGORIES = {
 }
 
 # Dynamically generate MASTER_SKILLS from SKILL_CATEGORIES
-MASTER_SKILLS = set([skill.lower() for category_list in SKILL_CATEGORIES.values() for skill in category_list])
+MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
+
+
+# --- OCR Helper Functions ---
+@st.cache_resource
+def get_tesseract_cmd():
+    """
+    Finds the tesseract executable in the system's PATH.
+    This is crucial for pytesseract to work, especially in deployment environments.
+    """
+    tesseract_path = shutil.which("tesseract")
+    if tesseract_path:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+        return tesseract_path
+    return None
+
+def preprocess_image_for_ocr(image):
+    """
+    Applies basic image preprocessing to improve OCR accuracy.
+    Converts to grayscale and applies adaptive thresholding.
+    """
+    # Convert PIL Image to OpenCV format (NumPy array)
+    img_cv = np.array(image)
+    img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
+
+    # Apply adaptive thresholding for better text extraction from varying backgrounds
+    # This is generally more robust than a simple binary threshold
+    img_processed = cv2.adaptiveThreshold(img_cv, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                          cv2.THRESH_BINARY, 11, 2)
+    
+    # Invert the colors if necessary (Tesseract often prefers black text on white background,
+    # but sometimes white text on black background from thresholding can work better)
+    # This line can be commented out or adjusted based on testing.
+    # img_processed = cv2.bitwise_not(img_processed) 
+
+    # Convert back to PIL Image
+    return Image.fromarray(img_processed)
 
 
 # --- Helpers ---
 def clean_text(text):
-    """
-    Cleans text by removing newlines, extra spaces, and non-ASCII characters.
-    Converts text to lowercase for consistent processing.
-    """
+    """Cleans text by removing newlines, extra spaces, and non-ASCII characters."""
     text = re.sub(r'\n', ' ', text)
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'[^\x00-\x7F]+', ' ', text)
@@ -285,17 +288,16 @@ def extract_relevant_keywords(text, filter_set):
             # Find all occurrences of the skill phrase
             matches = re.findall(pattern, temp_text)
             if matches:
-                # Add the original skill (title-cased for better display)
-                extracted_keywords.add(skill_phrase.title()) 
+                extracted_keywords.add(skill_phrase.lower()) # Add the original skill (lowercase)
                 # Categorize the skill
                 found_category = False
                 for category, skills_in_category in SKILL_CATEGORIES.items():
                     if skill_phrase.lower() in [s.lower() for s in skills_in_category]:
-                        categorized_keywords[category].append(skill_phrase.title())
+                        categorized_keywords[category].append(skill_phrase)
                         found_category = True
                         break
                 if not found_category:
-                    categorized_keywords["Uncategorized"].append(skill_phrase.title()) # Add to uncategorized if no match
+                    categorized_keywords["Uncategorized"].append(skill_phrase) # Add to uncategorized if no match
 
                 # Replace the found skill with placeholders to avoid re-matching parts of it
                 temp_text = re.sub(pattern, " ", temp_text)
@@ -305,146 +307,198 @@ def extract_relevant_keywords(text, filter_set):
         # This ensures single-word skills from MASTER_SKILLS are also captured.
         individual_words_remaining = set(re.findall(r'\b\w+\b', temp_text))
         for word in individual_words_remaining:
-            if word in filter_set: # Check if the single word is in the master skills
-                extracted_keywords.add(word.title()) # Add the original word (title-cased)
+            if word in filter_set:
+                extracted_keywords.add(word)
                 found_category = False
                 for category, skills_in_category in SKILL_CATEGORIES.items():
                     if word.lower() in [s.lower() for s in skills_in_category]:
-                        categorized_keywords[category].append(word.title())
+                        categorized_keywords[category].append(word)
                         found_category = True
                         break
                 if not found_category:
-                    categorized_keywords["Uncategorized"].append(word.title())
+                    categorized_keywords["Uncategorized"].append(word)
 
     else: # Fallback: if no specific filter_set (MASTER_SKILLS is empty), use the default STOP_WORDS logic
         all_words = set(re.findall(r'\b\w+\b', cleaned_text))
         extracted_keywords = {word for word in all_words if word not in STOP_WORDS}
         for word in extracted_keywords:
-            categorized_keywords["General Keywords"].append(word.title()) # Default category for fallback
+            categorized_keywords["General Keywords"].append(word) # Default category for fallback
 
     return extracted_keywords, dict(categorized_keywords)
 
-def extract_text_from_image_pdf(uploaded_file):
+
+def extract_text_from_file(uploaded_file):
     """
-    Extracts text from a PDF file by performing OCR on each page.
-    This is used as a fallback if pdfplumber fails to extract sufficient text,
-    indicating a scanned (image-based) PDF.
+    Extracts text from an uploaded file, handling both PDF (text-based and image-based)
+    and common image formats (JPG, PNG).
     """
+    file_type = uploaded_file.type
     full_text = ""
-    try:
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page_num, page in enumerate(pdf.pages):
-                # Render the page as an image
-                page_image = page.to_image()
-                
-                # Convert PIL Image to bytes for Tesseract
-                img_byte_arr = io.BytesIO()
-                page_image.original.save(img_byte_arr, format='PNG')
-                img_byte_arr = img_byte_arr.getvalue()
 
-                # Perform OCR using pytesseract
-                text_from_page = pytesseract.image_to_string(Image.open(io.BytesIO(img_byte_arr)))
-                full_text += text_from_page + "\n" # Add newline between pages
-        return full_text
-    except pytesseract.TesseractNotFoundError:
-        st.error("Tesseract OCR is not installed or not found in your PATH. Please install it to enable OCR for scanned PDFs.")
-        return "[ERROR] Tesseract not found."
-    except Exception as e:
-        st.error(f"Error during OCR extraction: {e}")
-        return f"[ERROR] {str(e)}"
+    if "pdf" in file_type:
+        try:
+            # Try pdfplumber first for text-based PDFs (faster and more accurate for native text)
+            with pdfplumber.open(uploaded_file) as pdf:
+                pdf_text = ''.join(page.extract_text() or '' for page in pdf.pages)
+            
+            # If pdfplumber extracts very little text, it might be an image-based PDF.
+            # A threshold of 50 characters is arbitrary; adjust as needed.
+            if len(pdf_text.strip()) < 50:
+                st.warning(f"Low text extracted from PDF {uploaded_file.name} using pdfplumber. Attempting OCR...")
+                # Fallback to OCR for image-based PDFs
+                images = convert_from_bytes(uploaded_file.read())
+                for img in images:
+                    processed_img = preprocess_image_for_ocr(img)
+                    full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
+            else:
+                full_text = pdf_text
 
-def extract_text_from_pdf(uploaded_file):
-    """
-    Extracts text from an uploaded PDF file.
-    First tries pdfplumber for text-based PDFs.
-    If little text is extracted, falls back to OCR for scanned PDFs.
-    """
-    # Try pdfplumber first (faster for text-based PDFs)
-    text_from_pdfplumber = ""
-    try:
-        with pdfplumber.open(uploaded_file) as pdf:
-            text_from_pdfplumber = ''.join(page.extract_text() or '' for page in pdf.pages)
-    except Exception as e:
-        st.warning(f"PDFPlumber failed (might be scanned PDF): {e}. Attempting OCR...")
-        text_from_pdfplumber = "" # Clear in case of partial failure
+        except Exception as e:
+            st.error(f"Error processing PDF {uploaded_file.name} with pdfplumber/OCR: {e}. Trying OCR fallback directly.")
+            # If pdfplumber fails entirely, try OCR
+            try:
+                images = convert_from_bytes(uploaded_file.read())
+                for img in images:
+                    processed_img = preprocess_image_for_ocr(img)
+                    full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
+            except Exception as e_ocr:
+                return f"[ERROR] Failed to extract text from PDF via OCR: {str(e_ocr)}"
 
-    # If pdfplumber extracted very little text, try OCR
-    # Threshold can be adjusted based on typical resume length
-    if len(text_from_pdfplumber.strip()) < 100: # Heuristic: if less than 100 characters, try OCR
-        st.info("Falling back to OCR for text extraction (this may take longer)...")
-        # Reset file pointer for the second read
-        uploaded_file.seek(0) 
-        text_from_ocr = extract_text_from_image_pdf(uploaded_file)
-        if "[ERROR]" in text_from_ocr:
-            return text_from_ocr # Return OCR error if any
-        elif len(text_from_ocr.strip()) > len(text_from_pdfplumber.strip()):
-            return text_from_ocr # Use OCR text if it's more substantial
-        else:
-            return text_from_pdfplumber # Fallback to original if OCR is worse or same
+    elif "image" in file_type: # Handles "image/jpeg", "image/png" etc.
+        try:
+            img = Image.open(uploaded_file).convert("RGB")
+            processed_img = preprocess_image_for_ocr(img)
+            full_text = pytesseract.image_to_string(processed_img, lang='eng')
+        except Exception as e:
+            return f"[ERROR] Failed to extract text from image: {str(e)}"
+    else:
+        return f"[ERROR] Unsupported file type: {file_type}. Please upload a PDF or an image (JPG, PNG)."
+
+    if not full_text.strip():
+        return "[ERROR] No readable text extracted from the file. It might be a very low-quality scan or an empty document."
     
-    return text_from_pdfplumber
+    return full_text
 
 
 def extract_years_of_experience(text):
-    """
-    Extracts years of experience from a given text by parsing date ranges or keywords.
-    It looks for 'start_date to end_date' patterns or direct mentions of 'X years experience'.
-    """
+    """Extracts years of experience from a given text by parsing date ranges or keywords."""
     text = text.lower()
     total_months = 0
     
-    # Pattern to find date ranges like "Jan 2020 - Dec 2022" or "January 2020 to Present"
-    job_date_ranges = re.findall(
+    # Regex for various date formats: Month YYYY - Month YYYY, Month YYYY - Present, YYYY - YYYY, YYYY - Present
+    date_patterns = [
+        # Month YYYY - Month YYYY or Present
         r'(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})\s*(?:to|–|-)\s*(present|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})',
-        text
-    )
+        # YYYY - YYYY or Present
+        r'(\b\d{4})\s*(?:to|–|-)\s*(present|\b\d{4})'
+    ]
 
-    for start, end in job_date_ranges:
-        try:
-            # Attempt to parse start date
-            start_date = datetime.strptime(start.strip(), '%b %Y')
-        except ValueError:
-            try:
-                start_date = datetime.strptime(start.strip(), '%B %Y')
-            except ValueError:
-                continue # Skip if date format is not recognized
+    for pattern in date_patterns:
+        job_date_ranges = re.findall(pattern, text)
+        for start_str, end_str in job_date_ranges:
+            start_date = None
+            end_date = None
 
-        if end.strip() == 'present':
-            end_date = datetime.now() # Use current date for 'present'
-        else:
+            # Try parsing start date
             try:
-                end_date = datetime.strptime(end.strip(), '%b %Y')
+                # Try full month name (e.g., January)
+                start_date = datetime.strptime(start_str.strip(), '%B %Y')
             except ValueError:
                 try:
-                    end_date = datetime.strptime(end.strip(), '%B %Y')
+                    # Try abbreviated month name (e.g., Jan)
+                    start_date = datetime.strptime(start_str.strip(), '%b %Y')
                 except ValueError:
-                    continue # Skip if date format is not recognized
+                    try:
+                        # Try parsing as year only
+                        start_date = datetime(int(start_str.strip()), 1, 1)
+                    except ValueError:
+                        pass # Cannot parse, skip this date range
 
-        # Calculate difference in months
-        delta_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
-        total_months += max(delta_months, 0) # Ensure months are not negative
+            if start_date is None:
+                continue # Skip if start date cannot be parsed
 
-    if total_months == 0:
-        # Fallback: if no date ranges found, look for direct mentions of "X years experience"
+            # Try parsing end date
+            if end_str.strip() == 'present':
+                end_date = datetime.now()
+            else:
+                try:
+                    end_date = datetime.strptime(end_str.strip(), '%B %Y')
+                except ValueError:
+                    try:
+                        end_date = datetime.strptime(end_str.strip(), '%b %Y')
+                    except ValueError:
+                        try:
+                            # Try parsing as year only, assume end of year for simplicity
+                            end_date = datetime(int(end_str.strip()), 12, 31)
+                        except ValueError:
+                            pass # Cannot parse, skip this date range
+            
+            if end_date is None:
+                continue # Skip if end date cannot be parsed
+
+            delta_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
+            total_months += max(delta_months, 0)
+
+    if total_months > 0: # Only return calculated experience if dates were found
+        return round(total_months / 12, 1)
+    else: # Fallback to keyword-based search only if no date ranges yielded experience
         match = re.search(r'(\d+(?:\.\d+)?)\s*(\+)?\s*(year|yrs|years)\b', text)
         if not match:
             match = re.search(r'experience[^\d]{0,10}(\d+(?:\.\d+)?)', text)
         if match:
-            return float(match.group(1)) # Return the directly found years
+            return float(match.group(1))
 
-    return round(total_months / 12, 1) # Convert total months to years
+    return 0.0 # Default to 0.0 if nothing found
 
 def extract_email(text):
-    """Extracts an email address from the given text using a regular expression."""
-    match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text)
+    """
+    Extracts an email address from the given text, with enhanced preprocessing
+    to handle common OCR errors.
+    """
+    text_processed = text.lower()
+
+    # Aggressive replacements for common OCR errors in email parts
+    text_processed = text_processed.replace(' ', '') # Remove all spaces
+    text_processed = text_processed.replace('dot', '.')
+    text_processed = text_processed.replace('(dot)', '.')
+    text_processed = text_processed.replace('[dot]', '.')
+    text_processed = text_processed.replace('-dot-', '.')
+    text_processed = text_processed.replace('_dot_', '.')
+    
+    text_processed = text_processed.replace('at', '@')
+    text_processed = text_processed.replace('(at)', '@')
+    text_processed = text_processed.replace('[at]', '@')
+    text_processed = text_processed.replace('-at-', '@')
+    text_processed = text_processed.replace('_at_', '@')
+
+    # Common character confusions by OCR
+    text_processed = text_processed.replace('1', 'l') # 'l' as '1'
+    text_processed = text_processed.replace('0', 'o') # 'o' as '0'
+    text_processed = text_processed.replace('s', '5') # 's' as '5'
+    text_processed = text_processed.replace('g', 'q') # 'q' as 'g' (less common but can happen)
+    text_processed = text_processed.replace('i', 'l') # 'l' as 'i' (for example, in 'mail')
+    text_processed = text_processed.replace('v', 'y') # 'y' as 'v' (less common)
+
+    # Specific domain corrections if they appear standalone or malformed
+    text_processed = re.sub(r'(\w+)@(\w+)\s*com\b', r'\1@\2.com', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*org\b', r'\1@\2.org', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*net\b', r'\1@\2.net', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*in\b', r'\1@\2.in', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*co\.in\b', r'\1@\2.co.in', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*co\.uk\b', r'\1@\2.co.uk', text_processed)
+
+    # Regex for email address. More specific to common email patterns.
+    # Allows for a wider range of characters in username and domain,
+    # and specifically looks for common TLDs.
+    email_regex = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|org|net|edu|gov|mil|in|co\.in|co\.uk|io|ai|dev|info|biz|me|us|ca|fr|de|jp|au|cn|ru|outlook)\b'
+    
+    match = re.search(email_regex, text_processed)
     return match.group(0) if match else None
 
 def extract_phone_number(text):
-    """
-    Extracts a phone number from the given text.
-    Uses a robust regex to match various phone number formats.
-    """
-    # Common patterns: (XXX) XXX-XXXX, XXX-XXX-XXXX, XXXXXXXXXX, XXX.XXX.XXXX, +XX XXX XXXXXXXX
+    """Extracts a phone number from the given text."""
+    # Common patterns: (XXX) XXX-XXXX, XXX-XXX-XXXX, XXXXXXXXXX, XXX.XXX.XXXX
+    # This regex is more robust for various formats
     match = re.search(r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', text)
     return match.group(0) if match else None
 
@@ -484,11 +538,11 @@ def extract_name(text):
         return None
 
     # Define terms to explicitly exclude from being identified as a name
-    EXCLUDE_NAME_TERMS = {"linkedin", "github", "portfolio", "resume", "cv", "profile", "contact", "email", "phone", "education", "experience", "skills", "projects", "certifications"}
+    EXCLUDE_NAME_TERMS = {"linkedin", "github", "portfolio", "resume", "cv", "profile", "contact", "email", "phone"}
 
     potential_name_lines = []
-    # Consider the first 5-10 lines for name extraction as names are usually at the top
-    for line in lines[:10]:
+    # Consider the first 5 lines for name extraction
+    for line in lines[:5]:
         line = line.strip()
         line_lower = line.lower()
 
@@ -498,28 +552,17 @@ def extract_name(text):
            len(line.split()) <= 4 and \
            not any(term in line_lower for term in EXCLUDE_NAME_TERMS):
             # Heuristic: Check if the line is mostly capitalized words (like a name)
-            # or if it's a mix of capitalized words which is common for names.
-            if line.isupper() or (line and line[0].isupper() and all(word[0].isupper() or not word.isalpha() for word in line.split() if word.isalpha())):
+            if line.isupper() or (line and line[0].isupper() and all(word[0].isupper() or not word.isalpha() for word in line.split())):
                 potential_name_lines.append(line)
 
     if potential_name_lines:
         # Prioritize longer potential names, then filter out common resume section headers
-        # Use a more robust way to select the name, preferring lines with multiple capitalized words
-        best_name = ""
-        max_capitalized_words = 0
-        for name_candidate in potential_name_lines:
-            capitalized_words_count = sum(1 for word in name_candidate.split() if word and word[0].isupper())
-            if capitalized_words_count > max_capitalized_words:
-                best_name = name_candidate
-                max_capitalized_words = capitalized_words_count
-            elif capitalized_words_count == max_capitalized_words and len(name_candidate) > len(best_name):
-                best_name = name_candidate
-        
-        name = re.sub(r'summary|education|experience|skills|projects|certifications|profile|contact', '', best_name, flags=re.IGNORECASE).strip()
+        name = max(potential_name_lines, key=len)
+        name = re.sub(r'summary|education|experience|skills|projects|certifications|profile|contact', '', name, flags=re.IGNORECASE).strip()
         # Further clean up any leading/trailing non-alphabetic characters if they remain
         name = re.sub(r'^[^\w\s]+|[^\w\s]+$', '', name).strip()
         if name:
-            return name.title() # Return name in Title Case
+            return name.title()
     return None
 
 def extract_cgpa(text):
@@ -539,7 +582,7 @@ def extract_cgpa(text):
         if match[0] and match[0].strip(): # First pattern: (cgpa|gpa)\s*[:\s]*(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?
             raw_cgpa = float(match[0])
             scale = float(match[1]) if match[1] else None
-        elif match[2] and match[2].strip(): # Second pattern: (\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(cgpa|gpa)
+        elif match[2] and match[2].strip(): # Second pattern: (\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(?:cgpa|gpa)
             raw_cgpa = float(match[2])
             scale = float(match[3]) if match[3] else None
         else:
@@ -730,478 +773,1280 @@ def extract_work_history(text):
 def extract_project_details(text):
     """
     Extracts project details (Title, Description, Technologies) from text.
-    This is a heuristic and may not capture all formats.
+    This is a heuristic and may not capture all formats, especially with OCR.
     Returns a list of dicts.
     """
-    project_section_matches = re.finditer(r'(?:projects|personal projects|key projects)\s*(\n|$)', text, re.IGNORECASE)
     project_details = []
     
-    start_index = -1
-    for match in project_section_matches:
-        start_index = match.end()
-        break
-
-    if start_index != -1:
-        sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications']
+    # Define keywords that often precede or indicate a project section
+    project_section_keywords = r'(?:projects|personal projects|key projects|portfolio|selected projects|major projects|academic projects|relevant projects)'
+    
+    # Find the start of the project section
+    project_section_match = re.search(project_section_keywords + r'\s*(\n|$)', text, re.IGNORECASE)
+    
+    if not project_section_match:
+        project_text = text # Fallback to full text if no clear section header
+        start_index = 0
+    else:
+        start_index = project_section_match.end()
+        # Define potential end markers for the project section
+        sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
         end_index = len(text)
         for section in sections:
             section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
             if section_match:
                 end_index = start_index + section_match.start()
                 break
-        
         project_text = text[start_index:end_index].strip()
-        
-        # Split into individual projects, often marked by a title line or bullet point
-        # This regex tries to split by a line starting with a capital letter followed by words,
-        # often indicating a new project title.
-        project_blocks = re.split(r'\n(?=[A-Z][a-zA-Z\s,&\-]+\s*(?:\()?\d{4}(?:\))?)|\n(?=•\s*[A-Z][a-zA-Z\s,&\-]+)', project_text)
-        
-        for block in project_blocks:
-            block = block.strip()
-            if not block:
-                continue
-            
-            title = None
-            description = []
-            technologies = []
+    
+    if not project_text:
+        return [] # No project text found
 
-            lines = block.split('\n')
-            if lines:
-                # First line is often the title
-                title_line = lines[0].strip()
-                if len(title_line.split()) <= 10 and re.match(r'^[A-Z]', title_line): # Heuristic for title line
-                    title = title_line
-                    description_lines = lines[1:]
-                else:
-                    description_lines = lines # If no clear title line, whole block is description
-                
-                # Extract technologies (simple approach: look for words in MASTER_SKILLS within the block)
-                block_lower = block.lower()
-                for skill in MASTER_SKILLS: # MASTER_SKILLS is now dynamically generated
-                    if re.search(r'\b' + re.escape(skill.lower()) + r'\b', block_lower):
-                        technologies.append(skill.title()) # Add title-cased skill
-                
-                # Remaining lines form the description
-                description = [line.strip() for line in description_lines if line.strip()]
-                
-            if title or description or technologies:
-                project_details.append({
-                    "Project Title": title,
-                    "Description": "\n".join(description),
-                    "Technologies Used": ", ".join(technologies)
-                })
+    lines = [line.strip() for line in project_text.split('\n') if line.strip()]
+    
+    current_project = {"Project Title": None, "Description": [], "Technologies Used": set()}
+    
+    # Keywords that strongly suggest a project title or a new project entry
+    strong_project_indicators = [
+        "project", "developed", "implemented", "created", "designed", "built", "contributed to",
+        "achieved", "led", "managed", "research", "capstone", "thesis", "portfolio"
+    ]
+
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
+        
+        # Add a check for previous line not being a bullet point for better project title detection
+        prev_line_is_bullet = False
+        if i > 0:
+            prev_line = lines[i-1].strip()
+            if re.match(r'^[•*-]', prev_line):
+                prev_line_is_bullet = True
+
+        is_potential_title = (
+            (line and (line[0].isupper() or re.match(r'^\d', line))) and
+            len(line.split()) > 1 and
+            len(line.split()) < 15 and
+            not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line_lower) and
+            not re.match(r'^[•*-]\s*(?:achieved|contributed|implemented|developed|designed|built|managed|led)', line_lower) and
+            any(keyword in line_lower for keyword in strong_project_indicators) and
+            not prev_line_is_bullet # New condition: not preceded by a bullet point
+        )
+        
+        is_url = re.match(r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)', line_lower)
+
+        if is_potential_title or is_url:
+            # If we already have a project being built, save it before starting a new one
+            if current_project["Project Title"] is not None or current_project["Description"]:
+                if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
+                    # Extract technologies from the *full* collected description of the previous project
+                    full_description_for_skills = "\n".join(current_project["Description"])
+                    extracted_skills_for_project, _ = extract_relevant_keywords(full_description_for_skills, MASTER_SKILLS)
+                    current_project["Technologies Used"].update(extracted_skills_for_project) # Add to the set
+
+                    project_details.append({
+                        "Project Title": current_project["Project Title"],
+                        "Description": full_description_for_skills.strip(),
+                        "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
+                    })
+            # Start a new project
+            current_project = {"Project Title": line, "Description": [], "Technologies Used": set()}
+        else:
+            # Add line to current project's description
+            current_project["Description"].append(line)
+            
+    # Add the last project if it exists
+    if current_project["Project Title"] is not None or current_project["Description"]:
+        if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
+            # Extract technologies from the *full* collected description of the last project
+            full_description_for_skills = "\n".join(current_project["Description"])
+            extracted_skills_for_project, _ = extract_relevant_keywords(full_description_for_skills, MASTER_SKILLS)
+            current_project["Technologies Used"].update(extracted_skills_for_project) # Add to the set
+
+            project_details.append({
+                "Project Title": current_project["Project Title"],
+                "Description": full_description_for_skills.strip(),
+                "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
+            })
+            
     return project_details
+
 
 def extract_languages(text):
     """
     Extracts spoken languages from the resume text.
-    It primarily looks for a dedicated "Languages" or "Linguistic Abilities" section.
-    If such a section is found, it extracts capitalized words from that section,
-    filtering out common non-language terms. If no such section is found,
-    it returns "Not Found".
+    Looks for a "Languages" section and lists known languages.
     """
-    languages_list = []
-    text_lower = text.lower()
+    languages_list = set() # Use a set to automatically handle duplicates
+    cleaned_full_text = clean_text(text)
 
-    # Define common section headers for languages
-    language_section_headers = [
-        r'\b(?:languages|linguistic abilities|language skills|proficiencies in languages)\b'
+    # Define a comprehensive list of languages (Indian and Foreign)
+    all_languages = [
+        "english", "hindi", "spanish", "french", "german", "mandarin", "japanese", "arabic",
+        "russian", "portuguese", "italian", "korean", "bengali", "marathi", "telugu", "tamil",
+        "gujarati", "urdu", "kannada", "odia", "malayalam", "punjabi", "assamese", "kashmiri",
+        "sindhi", "sanskrit", "dutch", "swedish", "norwegian", "danish", "finnish", "greek",
+        "turkish", "hebrew", "thai", "vietnamese", "indonesian", "malay", "filipino", "swahili",
+        "farsi", "persian", "polish", "ukrainian", "romanian", "czech", "slovak", "hungarian",
+        "chinese", "vietnamese", "tagalog", "amharic", "somali", "nepali", "sinhala", "burmese",
+        "khmer", "lao", "pashto", "dari", "uzbek", "kazakh", "azerbaijani", "georgian", "armenian",
+        "albanian", "serbian", "croatian", "bosnian", "bulgarian", "macedonian", "slovenian",
+        "estonian", "latvian", "lithuanian", "icelandic", "irish", "welsh", "gaelic", "maltese",
+        "esperanto", "latin", "ancient greek", "modern greek", "yiddish", "romani", "catalan",
+        "galician", "basque", "breton", "cornish", "manx", "frisian", "luxembourgish", "sami",
+        "romansh", "sardinian", "corsican", "occitan", "provencal", "walloon", "flemish",
+        "afrikaans", "zulu", "xhosa", "sesotho", "setswana", "shona", "ndebele", "venda", "tsonga",
+        "swati", "kikuyu", "luganda", "kinyarwanda", "kirundi", "lingala", "kongo", "yoruba",
+        "igbo", "hausa", "fulani", "twi", "ewe", "ga", "dagbani", "gur", "mossi", "bambara",
+        "senufo", "wolof", "mandinka", "susu", "krio", "temne", "limba", "mende", "gola", "vai",
+        "kpele", "loma", "bandi", "kpelle", "kru", "bassa", "grebo", "krahn", "dan", "mano",
+        "guerze", "kono", "kisi", "gola", "de", "bassa", "kru", "grebo", "krahn", "dan", "mano",
+        "guerze", "kono", "kisi", "gola", "de",
+        # Added common abbreviations/alternative names
+        "de" # For German
     ]
-
-    # Define terms to exclude from being identified as languages if found in a general context
-    # These are typically not languages themselves but might appear near language names.
-    EXCLUDE_LANGUAGE_TERMS = {
-        "fluent", "native", "proficient", "intermediate", "beginner", "basic",
-        "speaking", "reading", "writing", "listening", "level", "levels", "skills",
-        "ability", "abilities", "knowledge", "expertise"
-    }
-
-    language_section_text = None
-
-    # Search for a dedicated language section
-    for header_pattern in language_section_headers:
-        match = re.search(header_pattern, text_lower)
-        if match:
-            start_index = match.end()
-            # Try to find the end of the language section (e.g., start of next major section)
-            sections_after_languages = ['education', 'experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
-            end_index = len(text)
-            for section in sections_after_languages:
-                section_match = re.search(r'\b' + re.escape(section) + r'\b', text_lower[start_index:], re.IGNORECASE)
-                if section_match:
-                    end_index = start_index + section_match.start()
-                    break
-            language_section_text = text[start_index:end_index].strip()
-            break # Found a language section, stop searching for headers
-
-    if language_section_text:
-        # If a language section is found, extract capitalized words (potential language names)
-        # from within that section and filter out common non-language terms.
-        words_in_section = re.findall(r'\b[A-Z][a-zA-Z]+\b', language_section_text)
-        for word in words_in_section:
-            word_lower = word.lower()
-            if word_lower not in EXCLUDE_LANGUAGE_TERMS:
-                languages_list.append(word.title()) # Add in title case
-
-    # Remove duplicates and sort
-    languages_list = sorted(list(set(languages_list)))
-
-    return ", ".join(languages_list) if languages_list else "Not Found"
-
-
-# --- Resume Processing Function ---
-def process_resume(uploaded_file, job_description_text):
-    """
-    Processes an uploaded resume and a job description to extract information,
-    calculate similarity, and generate insights.
-    """
-    if model is None or ml_model is None:
-        st.error("ML models not loaded. Cannot process resume.")
-        return None
-
-    # Extract text from resume
-    resume_text = extract_text_from_pdf(uploaded_file)
-    if "[ERROR]" in resume_text:
-        st.error(f"Failed to extract text from resume: {resume_text}")
-        return None
-
-    # --- Extract Resume Details ---
-    with st.spinner("Extracting resume details..."):
-        name = extract_name(resume_text)
-        email = extract_email(resume_text)
-        phone = extract_phone_number(resume_text)
-        location = extract_location(resume_text)
-        experience = extract_years_of_experience(resume_text)
-        cgpa = extract_cgpa(resume_text)
-        education_details = extract_education_details(resume_text)
-        work_history_details = extract_work_history(resume_text)
-        project_details = extract_project_details(resume_text)
-        
-        # Extract skills, categorized
-        raw_resume_skills, categorized_resume_skills = extract_relevant_keywords(resume_text, MASTER_SKILLS)
-        
-        # Extract languages (now with empty master list, relies on section detection)
-        extracted_languages = extract_languages(resume_text)
-
-    # --- Process Job Description ---
-    # Extract skills from JD
-    jd_skills, _ = extract_relevant_keywords(job_description_text, MASTER_SKILLS)
-    jd_cleaned = clean_text(job_description_text)
-
-    # --- Calculate Similarity (using SentenceTransformer embeddings) ---
-    with st.spinner("Calculating resume-JD similarity..."):
-        resume_embedding = model.encode(clean_text(resume_text), convert_to_tensor=True)
-        jd_embedding = model.encode(jd_cleaned, convert_to_tensor=True)
-        
-        # Cosine similarity between resume and JD embeddings
-        similarity_score = cosine_similarity(resume_embedding.reshape(1, -1), jd_embedding.reshape(1, -1))[0][0]
-        # Normalize score to 0-100 scale for easier interpretation
-        normalized_similarity = (similarity_score + 1) / 2 * 100 # Adjust from -1 to 1 range to 0 to 100
-        
-        # Calculate skill match percentage
-        matching_skills = raw_resume_skills.intersection(jd_skills)
-        skill_match_percentage = (len(matching_skills) / len(jd_skills) * 100) if jd_skills else 0
-
-    # --- Predict Screening Outcome (using pre-trained ML model) ---
-    with st.spinner("Predicting screening outcome..."):
-        # Create a feature vector for the ML model.
-        # This is a simplified example; a real model would need more structured features.
-        # For demonstration, let's use experience, CGPA, and similarity as features.
-        # Ensure features are in the format expected by your ml_screening_model.pkl
-        # The model was likely trained on a specific set of features.
-        
-        # Placeholder for feature vector - adjust this based on your actual model's training
-        # For a simple demo, let's create a dummy feature array.
-        # In a real scenario, you'd need to ensure the features match those used for training.
-        # Example: features = np.array([[experience, cgpa, normalized_similarity, len(matching_skills)]])
-        
-        # If your model was trained on embeddings, you might directly use embeddings.
-        # If it was trained on extracted features, you need to reconstruct those.
-        
-        # For now, let's assume the model expects a single embedding or a simple feature set.
-        # If ml_screening_model.pkl is a classifier on embeddings, you'd do:
-        # prediction = ml_model.predict(resume_embedding.cpu().numpy().reshape(1, -1))[0]
-        # prediction_proba = ml_model.predict_proba(resume_embedding.cpu().numpy().reshape(1, -1))[0]
-        
-        # Assuming ml_screening_model.pkl is a simple classifier on a few numerical features:
-        # Create a dummy feature vector. You MUST replace this with actual features
-        # your ml_screening_model.pkl was trained on.
-        # Example: if trained on [experience, normalized_similarity, skill_match_percentage]
-        features_for_prediction = np.array([[experience if experience is not None else 0, 
-                                             normalized_similarity, 
-                                             skill_match_percentage]])
-        
-        try:
-            prediction = ml_model.predict(features_for_prediction)[0]
-            prediction_proba = ml_model.predict_proba(features_for_prediction)[0]
-            # Assuming binary classification: 0 for Reject, 1 for Hire
-            hire_probability = prediction_proba[1] * 100 if len(prediction_proba) > 1 else (100 if prediction == 1 else 0)
-            screening_outcome = "Recommended for Interview" if prediction == 1 else "Not Recommended (Reject)"
-        except Exception as e:
-            st.warning(f"Could not make a screening prediction (ML model error): {e}. Displaying only extracted info and similarity.")
-            screening_outcome = "Prediction Unavailable"
-            hire_probability = "N/A"
-
-    # --- Generate Certificate Link (THIS IS THE CERTIFICATION PART) ---
-    # The CERTIFICATE_BASE_URL should be defined in main.py or passed here.
-    # For this script, let's assume it's passed or defined globally for demonstration.
-    # In a real app, this would come from a configuration or environment variable.
-    # Example: CERTIFICATE_BASE_URL = "https://your-github-username.github.io/your-repo/certificate.html"
-    # For local testing, you might use a placeholder.
-    CERTIFICATE_BASE_URL = st.session_state.get('CERTIFICATE_BASE_URL', 'http://localhost:8501/certificate.html') # Fallback for local testing
-
-    certificate_id = str(uuid.uuid4()) # Generate a unique ID for the certificate
-    # Encode parameters for URL
-    params = {
-        "id": certificate_id,
-        "name": name if name else "Candidate",
-        "score": f"{normalized_similarity:.1f}",
-        "date": datetime.now().strftime("%Y-%m-%d"),
-        "jd_used": urllib.parse.quote(st.session_state.get('jd_file_name', 'General Job Description'))
-    }
-    # Construct the certificate URL
-    certificate_link = f"{CERTIFICATE_BASE_URL}?{urllib.parse.urlencode(params)}"
-
-    # --- Prepare Results ---
-    results = {
-        "Resume Text": resume_text,
-        "Extracted Information": {
-            "Name": name,
-            "Email": email,
-            "Phone Number": phone,
-            "Location": location,
-            "Years of Experience": experience,
-            "CGPA (Normalized to 4.0)": cgpa,
-            "Education": education_details,
-            "Work History": work_history_details,
-            "Projects": project_details,
-            "Skills Found": list(raw_resume_skills),
-            "Categorized Skills": categorized_resume_skills,
-            "Languages": extracted_languages
-        },
-        "Similarity Score (Resume vs. JD)": f"{normalized_similarity:.2f}%",
-        "Skill Match Percentage": f"{skill_match_percentage:.2f}%",
-        "Screening Outcome": screening_outcome,
-        "Probability of Hire": f"{hire_probability:.2f}%" if isinstance(hire_probability, float) else hire_probability,
-        "Certificate Link": certificate_link, # <<< CERTIFICATE LINK ADDED TO RESULTS
-        "Certificate Data (for Firestore)": { # <<< CERTIFICATE DATA FOR FIRESTORE ADDED TO RESULTS
-            "certificate_id": certificate_id,
-            "name": name if name else "Candidate",
-            "score": normalized_similarity,
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "jd_used": st.session_state.get('jd_file_name', 'General Job Description'),
-            "timestamp": datetime.now().isoformat()
-        }
-    }
-    return results
-
-# --- Visualization Functions ---
-def plot_skill_wordcloud(skills_dict, title="Skills Word Cloud"):
-    """Generates and displays a word cloud from categorized skills."""
-    all_skills = [skill for category, skills in skills_dict.items() for skill in skills]
-    if not all_skills:
-        st.warning("No skills found to generate word cloud.")
-        return
-
-    wordcloud = WordCloud(width=800, height=400, background_color='white', colormap='viridis').generate(" ".join(all_skills))
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.imshow(wordcloud, interpolation='bilinear')
-    ax.axis('off')
-    ax.set_title(title)
-    st.pyplot(fig)
-    plt.close(fig) # Close the figure to prevent display issues
-
-def plot_skill_category_breakdown(categorized_skills_dict):
-    """Plots a bar chart of skill categories."""
-    if not categorized_skills_dict:
-        st.warning("No categorized skills to plot.")
-        return
-
-    category_counts = {category: len(skills) for category, skills in categorized_skills_dict.items()}
-    df_categories = pd.DataFrame(category_counts.items(), columns=['Category', 'Count']).sort_values(by='Count', ascending=False)
-
-    if df_categories.empty:
-        st.warning("No categorized skills to plot.")
-        return
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.barplot(x='Count', y='Category', data=df_categories, palette='viridis', ax=ax)
-    ax.set_title('Skill Category Breakdown')
-    ax.set_xlabel('Number of Skills')
-    ax.set_ylabel('Skill Category')
-    st.pyplot(fig)
-    plt.close(fig) # Close the figure to prevent display issues
-
-def plot_score_gauge(score, title="Match Score"):
-    """
-    Creates a simple gauge chart for the match score.
-    This is a simplified visual representation.
-    """
-    fig, ax = plt.subplots(figsize=(6, 6), subplot_kw={'projection': 'polar'})
     
-    # Define the gauge colors and ranges
-    colors = ['#FF4B4B', '#FFA500', '#ADD8E6', '#90EE90'] # Red, Orange, Light Blue, Light Green
-    ranges = [0, 25, 50, 75, 100]
+    # Sort languages by length descending to prioritize longer phrases first (e.g., "Ancient Greek" before "Greek")
+    sorted_all_languages = sorted(all_languages, key=len, reverse=True)
+
+    # Look for a "Languages" section header with more flexibility
+    # Added more variations and optional punctuation/spacing
+    languages_section_match = re.search(
+        r'\b(languages|language skills|linguistic abilities|proficiencies in languages|known languages)\s*[:\s]*(\n|$)',
+        cleaned_full_text, re.IGNORECASE
+    )
     
-    # Draw the arcs
-    for i in range(len(colors)):
-        ax.bar(x=np.radians(90), width=np.radians(45), height=1, bottom=ranges[i]/100, 
-               color=colors[i], align='edge', edgecolor='white', linewidth=2, alpha=0.7)
+    text_to_search_for_languages = cleaned_full_text # Default to full text
 
-    # Convert score to radians for placement on the arc
-    angle = np.radians((score / 100) * 180) # Map 0-100 to 0-180 degrees
-    
-    # Draw the needle
-    ax.plot([0, angle], [0, 1], color='black', linewidth=3, linestyle='-', marker='>', markersize=10)
-    
-    # Set limits and remove unnecessary elements
-    ax.set_theta_zero_location("W") # Start from West (left)
-    ax.set_theta_direction(-1) # Go clockwise
-    ax.set_rticks([]) # Remove radial ticks
-    ax.set_xticks(np.radians(np.linspace(0, 180, 5))) # Set angular ticks for 0, 45, 90, 135, 180
-    ax.set_xticklabels(['0%', '25%', '50%', '75%', '100%'])
-    ax.set_rlim(0, 1) # Set radial limits
-    ax.set_title(f"{title}: {score:.2f}%", va='bottom', fontsize=16)
-    
-    st.pyplot(fig)
-    plt.close(fig) # Close the figure to prevent display issues
-
-
-# --- Streamlit UI ---
-def main():
-    st.set_page_config(layout="wide", page_title="ScreenerPro - AI Resume Screener")
-
-    st.title("📄 ScreenerPro: AI-Powered Resume Screener")
-    st.markdown("""
-    Upload a candidate's resume (PDF) and provide a job description.
-    Our AI will extract key information, calculate a match score, and provide insights.
-    """)
-
-    # Job Description Input
-    st.header("1. Provide Job Description")
-    jd_upload_option = st.radio("How would you like to provide the Job Description?", ("Upload JD File (PDF)", "Paste JD Text"))
-
-    job_description_text = ""
-    jd_file_name = "Manual JD Input"
-
-    if jd_upload_option == "Upload JD File (PDF)":
-        jd_file = st.file_uploader("Upload Job Description PDF", type=["pdf"], key="jd_file_uploader")
-        if jd_file:
-            st.info("Extracting text from Job Description PDF...")
-            job_description_text = extract_text_from_pdf(jd_file)
-            jd_file_name = jd_file.name
-            if "[ERROR]" in job_description_text:
-                st.error(f"Error extracting text from JD: {job_description_text}")
-                job_description_text = "" # Clear invalid text
-            else:
-                st.success("Job Description PDF processed successfully!")
-                with st.expander("View Extracted Job Description Text"):
-                    st.text_area("Extracted JD Text", job_description_text, height=200, disabled=True)
+    if languages_section_match:
+        start_index = languages_section_match.end()
+        # Define potential end markers for the languages section
+        sections = ['education', 'experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications', 'interests', 'hobbies', 'achievements']
+        end_index = len(cleaned_full_text)
+        for section in sections:
+            section_match = re.search(r'\b' + re.escape(section) + r'\b', cleaned_full_text[start_index:], re.IGNORECASE)
+            if section_match:
+                end_index = start_index + section_match.start()
+                break
+        
+        languages_text_segment = cleaned_full_text[start_index:end_index].strip()
+        
+        # Extract languages from the identified section
+        for lang in sorted_all_languages:
+            # Use a more flexible regex to capture language names, potentially with descriptors
+            # e.g., "English (Fluent)", "French - Native", "Spanish, Conversational", "German: Basic"
+            # The regex will look for the language name followed by optional characters/words
+            # up to a newline or another language.
+            pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
+            if re.search(pattern, languages_text_segment, re.IGNORECASE):
+                # Add the properly cased language name from the *original* all_languages list if it exists,
+                # otherwise add the matched abbreviation/alias.
+                if lang == "de":
+                    languages_list.add("German")
+                else:
+                    languages_list.add(lang.title()) # Add the properly cased language name
     else:
-        job_description_text = st.text_area("Paste Job Description Text Here", height=300, 
-                                            placeholder="e.g., 'We are looking for a Data Scientist with strong Python skills...'")
-        jd_file_name = "Pasted JD Text"
+        # Fallback: if no explicit section, try to find languages anywhere in the cleaned full text
+        for lang in sorted_all_languages:
+            pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
+            if re.search(pattern, cleaned_full_text, re.IGNORECASE):
+                if lang == "de":
+                    languages_list.add("German")
+                else:
+                    languages_list.add(lang.title())
+
+    return ", ".join(sorted(list(languages_list))) if languages_list else "Not Found"
+
+def extract_certifications(text):
+    """
+    Extracts certification details (Name, URL) from text.
+    Looks for a "Certifications" section and tries to find names and URLs.
+    Returns a list of dicts.
+    """
+    cert_details = []
     
-    # Store JD file name in session state for certificate
-    st.session_state['jd_file_name'] = jd_file_name
+    # Define keywords that often precede or indicate a certifications section
+    cert_section_keywords = r'(?:certifications|licenses|credentials|awards|certificates)'
+    
+    # Find the start of the certifications section
+    cert_section_match = re.search(cert_section_keywords + r'\s*(\n|$)', text, re.IGNORECASE)
+    
+    if not cert_section_match:
+        cert_text = text # Fallback to full text if no clear section header
+        start_index = 0
+    else:
+        start_index = cert_section_match.end()
+        # Define potential end markers for the certifications section
+        sections = ['education', 'experience', 'work history', 'skills', 'projects', 'awards', 'publications', 'interests', 'hobbies']
+        end_index = len(text)
+        for section in sections:
+            section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
+            if section_match:
+                end_index = start_index + section_match.start()
+                break
+        cert_text = text[start_index:end_index].strip()
+    
+    if not cert_text:
+        return [] # No certification text found
 
-    st.header("2. Upload Candidate Resume")
-    uploaded_file = st.file_uploader("Upload Resume PDF", type=["pdf"], key="resume_file_uploader")
+    lines = [line.strip() for line in cert_text.split('\n') if line.strip()]
+    
+    # Regex for a URL
+    url_regex = r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)'
+    
+    current_cert_name = None
+    current_cert_url = None
 
-    process_button = st.button("✨ Process Resume")
+    for line in lines:
+        line_lower = line.lower()
+        
+        # Check for URL first
+        url_match = re.search(url_regex, line)
+        if url_match:
+            current_cert_url = url_match.group(0)
+            # If a name was already captured, associate this URL with it
+            if current_cert_name:
+                cert_details.append({"Name": current_cert_name, "URL": current_cert_url})
+                current_cert_name = None # Reset for next cert
+                current_cert_url = None
+            continue # Move to next line after finding URL
 
-    if process_button:
-        if not job_description_text:
-            st.error("Please provide a Job Description before processing the resume.")
-        elif not uploaded_file:
-            st.error("Please upload a Resume PDF to process.")
+        # Look for potential certification names (capitalized words, not too long, not a date)
+        # Avoid lines that are clearly just bullet points or short descriptions
+        if line and (line[0].isupper() or re.match(r'^\d', line)) and \
+           len(line.split()) < 10 and \
+           not re.search(r'\d{4}', line) and \
+           not re.match(r'^[•*-]', line):
+            
+            # If we have a previous name but no URL, and this line looks like a new cert, save the old one
+            if current_cert_name and not current_cert_url:
+                cert_details.append({"Name": current_cert_name, "URL": "Not Found"})
+            
+            current_cert_name = line.strip()
+            current_cert_url = None # Reset URL for new cert
+
+    # Add the last certification if it was being processed
+    if current_cert_name:
+        cert_details.append({"Name": current_cert_name, "URL": current_cert_url or "Not Found"})
+            
+    return cert_details
+
+def format_education_details(edu_list):
+    """Formats a list of education dictionaries into a readable string."""
+    if not edu_list:
+        return "Not Found"
+    formatted_entries = []
+    for entry in edu_list:
+        parts = []
+        if entry.get("Degree"):
+            parts.append(entry["Degree"])
+        if entry.get("Major"):
+            parts.append(f"in {entry['Major']}")
+        if entry.get("University"):
+            parts.append(f"from {entry['University']}")
+        if entry.get("Year"):
+            parts.append(f"({entry['Year']})")
+        formatted_entries.append(" ".join(parts).strip())
+    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
+
+def format_work_history(work_list):
+    """Formats a list of work history dictionaries into a readable string."""
+    if not work_list:
+        return "Not Found"
+    formatted_entries = []
+    for entry in work_list:
+        parts = []
+        if entry.get("Title"):
+            parts.append(entry["Title"])
+        if entry.get("Company"):
+            parts.append(f"at {entry['Company']}")
+        if entry.get("Start Date") and entry.get("End Date"):
+            parts.append(f"({entry['Start Date']} - {entry['End Date']})")
+        elif entry.get("Start Date"):
+            parts.append(f"(Since {entry['Start Date']})")
+        formatted_entries.append(" ".join(parts).strip())
+    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
+
+def format_project_details(proj_list):
+    """Formats a list of project dictionaries into a readable string."""
+    if not proj_list:
+        return "Not Found"
+    formatted_entries = []
+    for entry in proj_list:
+        parts = []
+        if entry.get("Project Title"):
+            parts.append(f"**{entry['Project Title']}**")
+        if entry.get("Technologies Used"):
+            parts.append(f"({entry['Technologies Used']})")
+        # Description can be long, so maybe just a snippet or indicate presence
+        if entry.get("Description") and entry["Description"].strip():
+            desc_snippet = entry["Description"].split('\n')[0][:50] + "..." if len(entry["Description"]) > 50 else entry["Description"]
+            parts.append(f'"{desc_snippet}"')
+        formatted_entries.append(" ".join(parts).strip())
+    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
+
+def format_certification_details(cert_list):
+    """Formats a list of certification dictionaries into a readable string with clickable links."""
+    if not cert_list:
+        return "Not Found"
+    formatted_entries = []
+    for entry in cert_list:
+        name = entry.get("Name", "Unnamed Certification")
+        url = entry.get("URL")
+        if url and url != "Not Found":
+            formatted_entries.append(f"[{name}]({url})")
         else:
-            with st.spinner("Processing resume and generating insights... This may take a moment, especially for scanned PDFs."):
-                # Reset file pointer for the resume file before processing
-                uploaded_file.seek(0)
-                results = process_resume(uploaded_file, job_description_text)
+            formatted_entries.append(name)
+    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
 
-            if results:
-                st.success("Resume processed successfully!")
-                
-                st.subheader("📊 Screening Results")
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Overall Match Score", results["Similarity Score (Resume vs. JD)"])
-                    st.metric("Skill Match Percentage", results["Skill Match Percentage"])
-                    st.metric("AI Screening Outcome", results["Screening Outcome"])
-                    if isinstance(results["Probability of Hire"], str):
-                        st.metric("Probability of Hire", results["Probability of Hire"])
-                    else:
-                        st.metric("Probability of Hire", f"{results['Probability of Hire']:.2f}%")
+# --- Concise AI Suggestion Function (for table display) ---
+@st.cache_data(show_spinner="Generating concise AI Suggestion...")
+def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_similarity, cgpa):
+    """
+    Generates a concise AI suggestion based on rules, focusing on overall fit and key points.
+    Now includes CGPA in the assessment.
+    """
+    overall_fit_description = ""
+    review_focus_text = ""
+    key_strength_hint = ""
 
-                    # Display the certificate link prominently (THIS IS THE DISPLAY PART)
-                    st.markdown(f"### 🎉 Official Certificate:")
-                    st.markdown(f"Click [here]({results['Certificate Link']}) to view/download the candidate's certificate.", unsafe_allow_html=True)
-                    st.info("Share this link with the candidate as proof of their assessment!")
-                    
-                    # Store certificate data in session state to be picked up by main.py for Firestore
-                    st.session_state['certificate_data_to_save'] = results['Certificate Data (for Firestore)']
+    # Define thresholds
+    high_score = 85
+    moderate_score = 65
+    high_exp = 4
+    moderate_exp = 2
+    high_sem_sim = 0.75
+    moderate_sem_sim = 0.4
+    high_cgpa = 3.5 # Assuming normalized to 4.0 scale
+    moderate_cgpa = 3.0
 
-                with col2:
-                    st.write("### Match Score Gauge")
-                    # Convert score to float for the gauge plot
-                    score_value = float(results["Similarity Score (Resume vs. JD)"].replace('%', ''))
-                    plot_score_gauge(score_value)
+    # Base assessment
+    if score >= high_score and years_exp >= high_exp and semantic_similarity >= high_sem_sim:
+        overall_fit_description = "High alignment."
+        key_strength_hint = "Strong technical and experience match, quick integration expected."
+        review_focus_text = "Cultural fit, project contributions."
+    elif score >= moderate_score and years_exp >= moderate_exp and semantic_similarity >= moderate_sem_sim:
+        overall_fit_description = "Moderate fit."
+        key_strength_hint = "Good foundational skills, potential for growth."
+        review_focus_text = "Depth of experience, skill application, learning agility."
+    else:
+        overall_fit_description = "Limited alignment."
+        key_strength_hint = "May require significant development or a different role."
+        review_focus_text = "Foundational skills, transferable experience, long-term potential."
 
-                st.subheader("🔍 Detailed Resume Insights")
+    # Incorporate CGPA into the suggestion
+    cgpa_note = ""
+    if cgpa is not None:
+        if cgpa >= high_cgpa:
+            cgpa_note = "Excellent academic record. "
+        elif cgpa >= moderate_cgpa:
+            cgpa_note = "Solid academic background. "
+        else:
+            cgpa_note = "Academic record may need review. "
+    else:
+        cgpa_note = "CGPA not found. "
 
-                st.markdown("#### Extracted Personal Information")
-                personal_info_df = pd.DataFrame([
-                    {"Field": "Name", "Value": results["Extracted Information"]["Name"]},
-                    {"Field": "Email", "Value": results["Extracted Information"]["Email"]},
-                    {"Field": "Phone Number", "Value": results["Extracted Information"]["Phone Number"]},
-                    {"Field": "Location", "Value": results["Extracted Information"]["Location"]},
-                    {"Field": "Years of Experience", "Value": results["Extracted Information"]["Years of Experience"]},
-                    {"Field": "CGPA (Normalized to 4.0)", "Value": results["Extracted Information"]["CGPA (Normalized to 4.0)"]},
-                    {"Field": "Languages", "Value": results["Extracted Information"]["Languages"]}
-                ])
-                st.table(personal_info_df)
+    summary_text = f"**Fit:** {overall_fit_description} **Strengths:** {cgpa_note}{key_strength_hint} **Focus:** {review_focus_text}"
+    return summary_text
 
-                st.markdown("#### Education History")
-                if results["Extracted Information"]["Education"]:
-                    st.dataframe(pd.DataFrame(results["Extracted Information"]["Education"]))
-                else:
-                    st.info("No detailed education history extracted.")
+# --- Detailed HR Assessment Function (for top candidate display) ---
+@st.cache_data(show_spinner="Generating detailed HR Assessment...")
+def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_similarity, cgpa, jd_text, resume_text, matched_keywords, missing_skills, max_exp_cutoff):
+    """
+    Generates a detailed, multi-paragraph HR assessment for a candidate.
+    Now includes matched and missing skills, CGPA, and considers max experience.
+    """
+    assessment_parts = []
+    overall_assessment_title = ""
+    next_steps_focus = ""
 
-                st.markdown("#### Work History")
-                if results["Extracted Information"]["Work History"]:
-                    st.dataframe(pd.DataFrame(results["Extracted Information"]["Work History"]))
-                else:
-                    st.info("No detailed work history extracted.")
+    # Convert lists to strings for display if they are lists
+    matched_kws_str = ", ".join(matched_keywords) if isinstance(matched_keywords, list) else matched_keywords
+    missing_skills_str = ", ".join(missing_skills) if isinstance(missing_skills, list) else missing_skills
 
-                st.markdown("#### Projects")
-                if results["Extracted Information"]["Projects"]:
-                    st.dataframe(pd.DataFrame(results["Extracted Information"]["Projects"]))
-                else:
-                    st.info("No detailed project information extracted.")
+    # Define thresholds
+    high_score = 90
+    strong_score = 80
+    promising_score = 60
+    high_exp = 5
+    strong_exp = 3
+    promising_exp = 1
+    high_sem_sim = 0.85
+    strong_sem_sim = 0.7
+    promising_sem_sim = 0.35
+    high_cgpa = 3.5 # Assuming normalized to 4.0 scale
+    strong_cgpa = 3.0
+    promising_cgpa = 2.5
 
-                st.markdown("#### Skills Analysis")
-                st.write(f"**Skills found in Resume:** {', '.join(results['Extracted Information']['Skills Found'])}")
-                st.write(f"**Skills required by Job Description:** {', '.join(jd_skills)}") # Corrected to show JD skills
-                st.write(f"**Matching Skills:** {', '.join(results['Extracted Information']['Skills Found'].intersection(jd_skills))}") # Corrected to show matching skills
+    # Tier 1: Exceptional Candidate
+    if score >= high_score and years_exp >= high_exp and years_exp <= max_exp_cutoff and semantic_similarity >= high_sem_sim and (cgpa is None or cgpa >= high_cgpa):
+        overall_assessment_title = "Exceptional Candidate: Highly Aligned with Strategic Needs"
+        assessment_parts.append(f"**{candidate_name}** presents an **exceptional profile** with a high score of {score:.2f}% and {years_exp:.1f} years of experience. This demonstrates a profound alignment with the job description's core requirements, further evidenced by a strong semantic similarity of {semantic_similarity:.2f}.")
+        if cgpa is not None:
+            assessment_parts.append(f"Their academic record, with a CGPA of {cgpa:.2f} (normalized to 4.0 scale), further solidifies their strong foundational knowledge.")
+        assessment_parts.append(f"**Key Strengths:** This candidate possesses a robust skill set directly matching critical keywords in the JD, including: *{matched_kws_str if matched_kws_str else 'No specific keywords listed, but overall strong match'}*. Their extensive experience indicates a capacity for leadership and handling complex challenges, suggesting immediate productivity and minimal ramp-up time. They are poised to make significant contributions from day one.")
+        assessment_parts.append("The resume highlights a clear career progression and a history of successful project delivery, often exceeding expectations. Their qualifications exceed expectations, making them a top-tier applicant for this role.")
+        assessment_parts.append("This individual's profile suggests they are not only capable of fulfilling the role's duties but also have the potential to mentor others, drive innovation, and take on strategic initiatives within the team. Their background indicates a strong fit for a high-impact position.")
+        next_steps_focus = "The next steps should focus on assessing cultural integration, exploring leadership potential, and delving into strategic contributions during the interview. Prepare for a deep dive into their most challenging projects, how they navigated complex scenarios, and their long-term vision. Consider fast-tracking this candidate through the interview process and potentially involving senior leadership early on."
+        assessment_parts.append(f"**Action:** Strongly recommend for immediate interview. Prioritize for hiring and consider for advanced roles if applicable.")
 
-                st.markdown("---")
-                st.subheader("Visualizations")
-                
-                col_viz1, col_viz2 = st.columns(2)
-                with col_viz1:
-                    plot_skill_wordcloud(results["Extracted Information"]["Categorized Skills"], "Resume Skills Word Cloud")
-                with col_viz2:
-                    plot_skill_category_breakdown(results["Extracted Information"]["Categorized Skills"])
+    # Tier 2: Strong Candidate
+    elif score >= strong_score and years_exp >= strong_exp and years_exp <= max_exp_cutoff and semantic_similarity >= strong_sem_sim and (cgpa is None or cgpa >= strong_cgpa):
+        overall_assessment_title = "Strong Candidate: Excellent Potential for Key Contributions"
+        assessment_parts.append(f"**{candidate_name}** is a **strong candidate** with a score of {score:.2f}% and {years_exp:.1f} years of experience. They show excellent alignment with the job description, supported by a solid semantic similarity of {semantic_similarity:.2f}.")
+        if cgpa is not None:
+            assessment_parts.append(f"Their academic performance, with a CGPA of {cgpa:.2f}, indicates a solid theoretical grounding.")
+        assessment_parts.append(f"**Key Strengths:** Significant overlap in required skills and practical experience that directly addresses the job's demands. Matched keywords include: *{matched_kws_str if matched_kws_str else 'No specific keywords listed, but overall strong match'}*. This individual is likely to integrate well and contribute effectively from an early stage, bringing valuable expertise to the team.")
+        assessment_parts.append("Their resume indicates a consistent track record of achieving results and adapting to new challenges. They demonstrate a solid understanding of the domain and could quickly become a valuable asset, requiring moderate onboarding.")
+        assessment_parts.append("This candidate is well-suited for the role and demonstrates the core competencies required. Their experience suggests they can handle typical challenges and contribute positively to team dynamics.")
+        next_steps_focus = "During the interview, explore specific project methodologies, problem-solving approaches, and long-term career aspirations to confirm alignment with team dynamics and growth opportunities within the company. Focus on behavioral questions to understand their collaboration style, initiative, and how they handle feedback. A technical assessment might be beneficial to confirm depth of skills."
+        assessment_parts.append(f"**Action:** Recommend for interview. Good fit for the role, with potential for growth.")
 
-                with st.expander("View Raw Extracted Resume Text"):
-                    st.text_area("Resume Text", results["Resume Text"], height=300, disabled=True)
+    # Tier 3: Promising Candidate
+    elif score >= promising_score and years_exp >= promising_exp and years_exp <= max_exp_cutoff and semantic_similarity >= promising_sem_sim and (cgpa is None or cgpa >= promising_cgpa):
+        overall_assessment_title = "Promising Candidate: Requires Focused Review on Specific Gaps"
+        assessment_parts.append(f"**{candidate_name}** is a **promising candidate** with a score of {score:.2f}% and {years_exp:.1f} years of experience. While demonstrating a foundational understanding (semantic similarity: {semantic_similarity:.2f}), there are areas that warrant deeper investigation to ensure a complete fit.")
+        
+        gaps_identified = []
+        if score < 70:
+            gaps_identified.append("The overall score suggests some core skill areas may need development or further clarification.")
+        if years_exp < promising_exp:
+            gaps_identified.append(f"Experience ({years_exp:.1f} yrs) is on the lower side; assess their ability to scale up quickly and take on more responsibility.")
+        if semantic_similarity < 0.5:
+            gaps_identified.append("Semantic understanding of the JD's nuances might be limited; probe their theoretical knowledge versus practical application in real-world scenarios.")
+        if cgpa is not None and cgpa < promising_cgpa:
+            gaps_identified.append(f"Academic record (CGPA: {cgpa:.2f}) is below preferred, consider its relevance to role demands.")
+        if missing_skills_str:
+            gaps_identified.append(f"**Potential Missing Skills:** *{missing_skills_str}*. Focus interview questions on these areas to assess their current proficiency or learning agility.")
+        
+        if years_exp > max_exp_cutoff:
+            gaps_identified.append(f"Experience ({years_exp:.1f} yrs) exceeds the maximum desired ({max_exp_cutoff} yrs). Evaluate if this indicates overqualification or a potential mismatch in role expectations.")
 
+        if gaps_identified:
+            assessment_parts.append("Areas for further exploration include: " + " ".join(gaps_identified))
+        
+        assessment_parts.append("The candidate shows potential, especially if they can demonstrate quick learning or relevant transferable skills. Their resume indicates a willingness to grow and take on new challenges, which is a positive sign for development opportunities.")
+        next_steps_focus = "The interview should focus on validating foundational skills, understanding their learning agility, and assessing their potential for growth within the role. Be prepared to discuss specific examples of how they've applied relevant skills and how they handle challenges, particularly in areas where skills are missing. Consider a skills assessment or a structured case study to gauge problem-solving abilities. Discuss their motivation for this role and long-term career goals."
+        assessment_parts.append(f"**Action:** Consider for initial phone screen or junior role. Requires careful evaluation and potentially a development plan.")
+
+    # Tier 4: Limited Match
+    else:
+        overall_assessment_title = "Limited Match: Consider Only for Niche Needs or Pipeline Building"
+        assessment_parts.append(f"**{candidate_name}** shows a **limited match** with a score = {score:.2f}% and {years_exp:.1f} years of experience (semantic similarity: {semantic_similarity:.2f}). This profile indicates a significant deviation from the core requirements of the job description.")
+        if cgpa is not None:
+            assessment_parts.append(f"Their academic record (CGPA: {cgpa:.2f}) also indicates a potential mismatch.")
+        assessment_parts.append(f"**Key Concerns:** A low overlap in essential skills and potentially insufficient experience for the role's demands. Many key skills appear to be missing: *{missing_skills_str if missing_skills_str else 'No specific missing skills listed, but overall low match'}*. While some transferable skills may exist, a substantial investment in training or a re-evaluation of role fit would likely be required for this candidate to succeed.")
+        
+        if years_exp > max_exp_cutoff:
+            assessment_parts.append(f"Additionally, their experience ({years_exp:.1f} yrs) significantly exceeds the maximum desired ({max_exp_cutoff} yrs), which might indicate overqualification or a mismatch in career trajectory for this specific opening.")
+
+        assessment_parts.append("The resume does not strongly align with the technical or experience demands of this specific position. Their background may be more suited for a different type of role or industry, or an entry-level position if their core skills are strong but experience is lacking.")
+        assessment_parts.append("This candidate might not be able to meet immediate role requirements without extensive support. Their current profile suggests a mismatch with the current opening.")
+        next_steps_focus = "This candidate is generally not recommended for the current role unless there are specific, unforeseen niche requirements or a strategic need to broaden the candidate pool significantly. If proceeding, focus on understanding their fundamental capabilities, their motivation for this specific role despite the mismatch, and long-term career aspirations. It might be more beneficial to suggest other roles within the organization or provide feedback for future applications."
+        assessment_parts.append(f"**Action:** Not recommended for this role. Consider for other open positions or future pipeline, or politely decline.")
+
+    final_assessment = f"**Overall HR Assessment: {overall_assessment_title}**\n\n"
+    final_assessment += "\n".join(assessment_parts)
+
+    return final_assessment
+
+
+def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills):
+    """
+    Calculates a semantic score using an ML model and provides additional details.
+    Falls back to smart_score if the ML model is not loaded or prediction fails.
+    Applies STOP_WORDS filtering for keyword analysis (internally, not for display).
+    Now includes CGPA and weighted keyword matching in the scoring.
+    """
+    jd_clean = clean_text(jd_text)
+    resume_clean = clean_text(resume_text)
+
+    score = 0.0
+    semantic_similarity = 0.0
+
+    # Extract raw skills for scoring
+    resume_raw_skills, _ = extract_relevant_keywords(resume_clean, MASTER_SKILLS)
+    jd_raw_skills, _ = extract_relevant_keywords(jd_clean, MASTER_SKILLS)
+
+    # Calculate weighted keyword overlap
+    weighted_keyword_overlap_score = 0
+    total_jd_skill_weight = 0
+
+    # Define weights
+    WEIGHT_HIGH = 3
+    WEIGHT_MEDIUM = 2
+    WEIGHT_BASE = 1
+
+    for jd_skill in jd_raw_skills:
+        current_weight = WEIGHT_BASE
+        if jd_skill in [s.lower() for s in high_priority_skills]:
+            current_weight = WEIGHT_HIGH
+        elif jd_skill in [s.lower() for s in medium_priority_skills]:
+            current_weight = WEIGHT_MEDIUM
+        
+        total_jd_skill_weight += current_weight
+        
+        if jd_skill in resume_raw_skills:
+            weighted_keyword_overlap_score += current_weight
+
+    if total_jd_skill_weight > 0:
+        weighted_jd_coverage_percentage = (weighted_keyword_overlap_score / total_jd_skill_weight) * 100
+    else:
+        weighted_jd_coverage_percentage = 0.0
+
+
+    if ml_model is None or model is None:
+        st.warning("ML models not loaded. Providing basic score and generic feedback.")
+        # Simplified fallback for score and feedback
+        basic_score = (weighted_jd_coverage_percentage * 0.7) # Use weighted coverage
+        basic_score += min(years_exp * 5, 30) # Add up to 30 for experience
+        
+        # Add a small CGPA bonus/penalty for fallback score
+        if cgpa is not None:
+            if cgpa >= 3.5:
+                basic_score += 5
+            elif cgpa < 2.5:
+                basic_score -= 5
+        
+        score = round(min(basic_score, 100), 2)
+        
+        return score, round(semantic_similarity, 2)
+
+    try:
+        jd_embed = model.encode(jd_clean)
+        resume_embed = model.encode(resume_clean)
+
+        semantic_similarity = cosine_similarity(jd_embed.reshape(1, -1), resume_embed.reshape(1, -1))[0][0]
+        semantic_similarity = float(np.clip(semantic_similarity, 0, 1))
+
+        years_exp_for_model = float(years_exp) if years_exp is not None else 0.0
+
+        # Features for the ML model - now using weighted_keyword_overlap_score
+        features = np.concatenate([jd_embed, resume_embed, [years_exp_for_model], [weighted_keyword_overlap_score]])
+
+        predicted_score = ml_model.predict([features])[0]
+
+        blended_score = (predicted_score * 0.6) + \
+                        (weighted_jd_coverage_percentage * 0.1) + \
+                        (semantic_similarity * 100 * 0.3)
+
+        if semantic_similarity > 0.7 and years_exp >= 3:
+            blended_score += 5
+        
+        # Adjust score based on CGPA (if available)
+        if cgpa is not None:
+            if cgpa >= 3.5: # Excellent CGPA
+                blended_score += 3
+            elif cgpa >= 3.0: # Good CGPA
+                blended_score += 1
+            elif cgpa < 2.5: # Lower CGPA, slight penalty
+                blended_score -= 2
+
+
+        score = float(np.clip(blended_score, 0, 100))
+        
+        return round(score, 2), round(semantic_similarity, 2)
+
+    except Exception as e:
+        st.warning(f"Error during semantic scoring, falling back to basic: {e}")
+        # Simplified fallback for score and feedback if ML prediction fails
+        basic_score = (weighted_jd_coverage_percentage * 0.7) # Use weighted coverage
+        basic_score += min(years_exp * 5, 30) # Add up to 30 for experience
+        
+        # Add a small CGPA bonus/penalty for fallback score
+        if cgpa is not None:
+            if cgpa >= 3.5:
+                basic_score += 5
+            elif cgpa < 2.5:
+                basic_score -= 5
+
+        score = round(min(basic_score, 100), 2)
+
+        return score, 0.0 # Return 0 for semantic similarity on fallback
+
+
+# --- Email Generation Function ---
+def create_mailto_link(recipient_email, candidate_name, job_title="Job Opportunity", sender_name="Recruiting Team"):
+    """
+    Generates a mailto: link with pre-filled subject and body for inviting a candidate.
+    """
+    subject = urllib.parse.quote(f"Invitation for Interview - {job_title} - {candidate_name}")
+    body = urllib.parse.quote(f"""Dear {candidate_name},
+
+We were very impressed with your profile and would like to invite you for an interview for the {job_title} position.
+
+Best regards,
+
+The {sender_name}""")
+    return f"mailto:{recipient_email}?subject={subject}&body={body}"
+
+# --- Function to encapsulate the Resume Screener logic ---
+def resume_screener_page():
+    st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
+
+    # --- Initial Tesseract Check ---
+    tesseract_cmd_path = get_tesseract_cmd()
+    if not tesseract_cmd_path:
+        st.error("Tesseract OCR engine not found. Please ensure it's installed and in your system's PATH.")
+        st.info("On Streamlit Community Cloud, ensure you have a `packages.txt` file in your repository's root with `tesseract-ocr` and `tesseract-ocr-eng` listed.")
+        st.stop() # Stop the app if Tesseract is not found
+
+    # --- Job Description and Controls Section ---
+    st.markdown("## ⚙️ Define Job Requirements & Screening Criteria")
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        jd_text = ""
+        job_roles = {"Upload my own": None}
+        if os.path.exists("data"):
+            for fname in os.listdir("data"):
+                if fname.endswith(".txt"):
+                    job_roles[fname.replace(".txt", "").replace("_", " ").title()] = os.path.join("data", fname)
+
+        jd_option = st.selectbox("📌 **Select a Pre-Loaded Job Role or Upload Your Own Job Description**", list(job_roles.keys()))
+        
+        # Determine the JD name to be stored in results
+        jd_name_for_results = ""
+        if jd_option == "Upload my own":
+            # --- MODIFIED: Allow PDF and TXT for JD upload ---
+            jd_file = st.file_uploader("Upload Job Description (TXT, PDF)", type=["txt", "pdf"], help="Upload a .txt or .pdf file containing the job description.")
+            if jd_file:
+                jd_text = extract_text_from_file(jd_file) # Use the robust text extraction
+                jd_name_for_results = jd_file.name.replace('.pdf', '').replace('.txt', '')
             else:
-                st.error("Failed to process resume. Please check the uploaded file and job description.")
+                jd_name_for_results = "Uploaded JD (No file selected)"
+        else:
+            jd_path = job_roles[jd_option]
+            if jd_path and os.path.exists(jd_path):
+                with open(jd_path, "r", encoding="utf-8") as f:
+                    jd_text = f.read()
+            jd_name_for_results = jd_option
 
-if __name__ == "__main__":
-    main()
+        if jd_text:
+            with st.expander("📝 View Loaded Job Description"):
+                st.text_area("Job Description Content", jd_text, height=200, disabled=True, label_visibility="collapsed")
+
+    with col2:
+        # Store cutoff and min_experience in session state
+        cutoff = st.slider("📈 **Minimum Score Cutoff (%)**", 0, 100, 75, help="Candidates scoring below this percentage will be flagged for closer review or considered less suitable.")
+        st.session_state['screening_cutoff_score'] = cutoff # Store in session state
+
+        min_experience = st.slider("💼 **Minimum Experience Required (Years)**", 0, 15, 2, help="Candidates with less than this experience will be noted.")
+        st.session_state['screening_min_experience'] = min_experience # Store in session state
+
+        max_experience = st.slider("⬆️ **Maximum Experience Allowed (Years)**", 0, 20, 10, help="Candidates with more than this experience might be considered overqualified or outside the target range.")
+        st.session_state['screening_max_experience'] = max_experience # Store in session state
+
+        # New CGPA Cutoff Slider
+        min_cgpa = st.slider("🎓 **Minimum CGPA Required (4.0 Scale)**", 0.0, 4.0, 2.5, 0.1, help="Candidates with CGPA below this value (normalized to 4.0) will be noted.")
+        st.session_state['screening_min_cgpa'] = min_cgpa # Store in session state
+
+        st.markdown("---")
+        st.info("Once criteria are set, upload resumes below to begin screening.")
+
+    # --- Skill Weighting Section ---
+    st.markdown("## 🎯 Skill Prioritization (Optional)")
+    st.caption("Assign higher importance to specific skills in the Job Description.")
+    
+    # Use the dynamically generated MASTER_SKILLS for selection
+    all_master_skills = sorted(list(MASTER_SKILLS))
+
+    col_weights_1, col_weights_2 = st.columns(2)
+    with col_weights_1:
+        high_priority_skills = st.multiselect(
+            "🌟 **High Priority Skills (Weight x3)**",
+            options=all_master_skills,
+            help="Select skills that are absolutely critical for this role. These will significantly boost the score if found."
+        )
+    with col_weights_2:
+        medium_priority_skills = st.multiselect(
+            "✨ **Medium Priority Skills (Weight x2)**",
+            options=[s for s in all_master_skills if s not in high_priority_skills], # Prevent overlap
+            help="Select skills that are very important, but not as critical as high priority ones."
+        )
+
+    # --- Updated File Uploader to accept PDF and Images ---
+    resume_files = st.file_uploader("📄 **Upload Resumes (PDF, JPG, PNG)**", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, help="Upload one or more PDF or image resumes for screening.")
+
+    # Initialize or update the comprehensive_df in session state
+    if 'comprehensive_df' not in st.session_state:
+        st.session_state['comprehensive_df'] = pd.DataFrame()
+    
+    # Store raw resume texts for search functionality
+    if 'resume_raw_texts' not in st.session_state:
+        st.session_state['resume_raw_texts'] = {}
+
+    if jd_text and resume_files:
+        # --- Job Description Keyword Cloud ---
+        st.markdown("---")
+        st.markdown("## ☁️ Job Description Keyword Cloud")
+        st.caption("Visualizing the most frequent and important keywords from the Job Description.")
+        st.info("💡 To filter candidates by these skills, use the 'Filter Candidates by Skill' section below the main results table.")
+        
+        # Use all_master_skills for cloud generation
+        jd_words_for_cloud_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
+        jd_words_for_cloud = " ".join(list(jd_words_for_cloud_set))
+
+        if jd_words_for_cloud:
+            wordcloud = WordCloud(width=800, height=400, background_color='white', collocations=False).generate(jd_words_for_cloud)
+            fig, ax = plt.subplots(figsize=(10, 5))
+            ax.imshow(wordcloud, interpolation='bilinear')
+            ax.axis('off')
+            st.pyplot(fig)
+            plt.close(fig)
+        else:
+            st.info("No significant keywords to display for the Job Description. Please ensure your JD has sufficient content or adjust your SKILL_CATEGORIES list.")
+        st.markdown("---")
+
+        results = []
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        for i, file in enumerate(resume_files):
+            status_text.text(f"Processing {file.name} ({i+1}/{len(resume_files)})...")
+            progress_bar.progress((i + 1) / len(resume_files))
+
+            text = extract_text_from_file(file) # Use the updated function
+            if text.startswith("[ERROR]"):
+                st.error(f"Failed to process {file.name}: {text.replace('[ERROR] ', '')}")
+                continue
+
+            # Store raw text in session state for search
+            st.session_state['resume_raw_texts'][file.name] = text
+
+            exp = extract_years_of_experience(text)
+            email = extract_email(text)
+            phone = extract_phone_number(text)
+            location = extract_location(text)
+            languages = extract_languages(text)
+            
+            # Extract structured details
+            education_details_raw = extract_education_details(text)
+            work_history_raw = extract_work_history(text)
+            project_details_raw = extract_project_details(text)
+            certifications_raw = extract_certifications(text) # New: Extract certifications
+
+            # Format structured details for display in the DataFrame
+            education_details_formatted = format_education_details(education_details_raw)
+            work_history_formatted = format_work_history(work_history_raw)
+            project_details_formatted = format_project_details(project_details_raw)
+            certifications_formatted = format_certification_details(certifications_raw) # New: Format certifications
+
+            candidate_name = extract_name(text) or file.name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title()
+            cgpa = extract_cgpa(text)
+
+            # Calculate Matched Keywords and Missing Skills using the new function
+            resume_raw_skills_set, resume_categorized_skills = extract_relevant_keywords(text, all_master_skills)
+            jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, all_master_skills)
+
+            matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
+            # Corrected: Missing skills are JD skills NOT in resume skills
+            missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
+
+            score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills)
+            
+            # Generate the CONCISE AI suggestion for the table
+            concise_ai_suggestion = generate_concise_ai_suggestion(
+                candidate_name=candidate_name,
+                score=score,
+                years_exp=exp,
+                semantic_similarity=semantic_similarity,
+                cgpa=cgpa
+            )
+
+            # Generate the DETAILED HR assessment for the top candidate
+            detailed_hr_assessment = generate_detailed_hr_assessment(
+                candidate_name=candidate_name,
+                score=score,
+                years_exp=exp,
+                semantic_similarity=semantic_similarity,
+                cgpa=cgpa,
+                jd_text=jd_text,
+                resume_text=text,
+                matched_keywords=matched_keywords,
+                missing_skills=missing_skills,
+                max_exp_cutoff=max_experience
+            )
+
+            results.append({
+                "File Name": file.name,
+                "Candidate Name": candidate_name,
+                "Score (%)": score,
+                "Years Experience": exp,
+                "CGPA (4.0 Scale)": cgpa,
+                "Email": email or "Not Found",
+                "Phone Number": phone or "Not Found",
+                "Location": location or "Not Found",
+                "Languages": languages,
+                "Education Details": education_details_formatted,
+                "Work History": work_history_formatted,
+                "Project Details": project_details_formatted,
+                "Certifications": certifications_formatted, # New: Add certifications
+                "AI Suggestion": concise_ai_suggestion,
+                "Detailed HR Assessment": detailed_hr_assessment,
+                "Matched Keywords": ", ".join(matched_keywords),
+                "Missing Skills": ", ".join(missing_skills),
+                "Matched Keywords (Categorized)": dict(resume_categorized_skills),
+                "Missing Skills (Categorized)": dict(jd_categorized_skills),
+                "Semantic Similarity": semantic_similarity,
+                "Resume Raw Text": text,
+                "JD Used": jd_name_for_results,
+                "Date Screened": datetime.now().date() # Add Date Screened here
+            })
+            
+        progress_bar.empty()
+        status_text.empty()
+
+        # Create the initial DataFrame from results and store in session state
+        st.session_state['comprehensive_df'] = pd.DataFrame(results).sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
+        
+        # Add a 'Tag' column for quick categorization
+        st.session_state['comprehensive_df']['Tag'] = st.session_state['comprehensive_df'].apply(lambda row: 
+            "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.85 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.5) else (
+            "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.7 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.0) else (
+            "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 and row['Years Experience'] <= max_experience and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 2.5) else (
+            "⚠️ Needs Review" if row['Score (%)'] >= 40 else 
+            "❌ Limited Match"))), axis=1)
+
+        # Save results to CSV for analytics.py to use
+        st.session_state['comprehensive_df'].to_csv("results.csv", index=False)
+
+
+        # --- Overall Candidate Comparison Chart ---
+        st.markdown("## 📊 Candidate Score Comparison")
+        st.caption("Visual overview of how each candidate ranks against the job requirements.")
+        # Check for dark mode to adjust plot colors
+        dark_mode = st.session_state.get("dark_mode_main", False)
+
+        if not st.session_state['comprehensive_df'].empty:
+            fig, ax = plt.subplots(figsize=(12, 7))
+            # Define colors: Green for top, Yellow for moderate, Red for low
+            colors = ['#4CAF50' if s >= cutoff else '#FFC107' if s >= (cutoff * 0.75) else '#F44346' for s in st.session_state['comprehensive_df']['Score (%)']]
+            bars = ax.bar(st.session_state['comprehensive_df']['Candidate Name'], st.session_state['comprehensive_df']['Score (%)'], color=colors)
+            ax.set_xlabel("Candidate", fontsize=14, color='white' if dark_mode else 'black')
+            ax.set_ylabel("Score (%)", fontsize=14, color='white' if dark_mode else 'black')
+            ax.set_title("Resume Screening Scores Across Candidates", fontsize=16, fontweight='bold', color='white' if dark_mode else 'black')
+            ax.set_ylim(0, 100)
+            plt.xticks(rotation=60, ha='right', fontsize=10, color='white' if dark_mode else 'black')
+            plt.yticks(fontsize=10, color='white' if dark_mode else 'black')
+            ax.tick_params(axis='x', colors='white' if dark_mode else 'black')
+            ax.tick_params(axis='y', colors='white' if dark_mode else 'black')
+
+            # Set background and spine colors for dark mode
+            if dark_mode:
+                fig.patch.set_facecolor('#1E1E1E')
+                ax.set_facecolor('#2D2D2D')
+                ax.spines['bottom'].set_color('white')
+                ax.spines['top'].set_color('white')
+                ax.spines['left'].set_color('white')
+                ax.spines['right'].set_color('white')
+            
+            for bar in bars:
+                yval = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f"{yval:.1f}", ha='center', va='bottom', fontsize=9, color='white' if dark_mode else 'black')
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+        else:
+            st.info("Upload resumes to see a comparison chart.")
+
+        st.markdown("---")
+
+        # --- TOP CANDIDATE AI RECOMMENDATION (Game Changer Feature) ---
+        st.markdown("## 👑 Top Candidate AI Assessment")
+        st.caption("A concise, AI-powered assessment for the most suitable candidate.")
+        
+        if not st.session_state['comprehensive_df'].empty:
+            top_candidate = st.session_state['comprehensive_df'].iloc[0] # Get the top candidate (already sorted by score)
+            
+            # Safely format CGPA and Semantic Similarity for display
+            cgpa_display = f"{top_candidate['CGPA (4.0 Scale)']:.2f}" if pd.notna(top_candidate['CGPA (4.0 Scale)']) else "N/A"
+            semantic_sim_display = f"{top_candidate['Semantic Similarity']:.2f}" if pd.notna(top_candidate['Semantic Similarity']) else "N/A"
+
+            st.markdown(f"### **{top_candidate['Candidate Name']}**")
+            st.markdown(f"**Score:** {top_candidate['Score (%)']:.2f}% | **Experience:** {top_candidate['Years Experience']:.1f} years | **CGPA:** {cgpa_display} (4.0 Scale) | **Semantic Similarity:** {semantic_sim_display}")
+            st.markdown(f"**AI Assessment:**")
+            st.markdown(top_candidate['Detailed HR Assessment']) # Display the detailed HR assessment here
+            
+            # Display Categorized Matched Skills for the top candidate
+            st.markdown("#### Matched Skills Breakdown:")
+            if top_candidate['Matched Keywords (Categorized)']:
+                # Ensure it's a dictionary before iterating
+                if isinstance(top_candidate['Matched Keywords (Categorized)'], dict):
+                    for category, skills in top_candidate['Matched Keywords (Categorized)'].items():
+                        st.write(f"**{category}:** {', '.join(skills)}")
+                else:
+                    st.write(f"Raw Matched Keywords: {top_candidate['Matched Keywords']}")
+            else:
+                st.write("No categorized matched skills found.")
+
+            # Display Categorized Missing Skills for the top candidate
+            st.markdown("#### Missing Skills Breakdown (from JD):")
+            # Need to re-calculate missing skills based on JD's categorized skills and candidate's raw skills
+            jd_raw_skills_set, jd_categorized_skills_for_top = extract_relevant_keywords(jd_text, all_master_skills)
+            resume_raw_skills_set_for_top, _ = extract_relevant_keywords(top_candidate['Resume Raw Text'], all_master_skills)
+            
+            missing_skills_for_top = jd_raw_skills_set.difference(resume_raw_skills_set_for_top)
+            
+            if missing_skills_for_top:
+                missing_categorized = collections.defaultdict(list)
+                for skill in missing_skills_for_top:
+                    found_category = False
+                    for category, skills_in_category in SKILL_CATEGORIES.items():
+                        if skill.lower() in [s.lower() for s in skills_in_category]:
+                            missing_categorized[category].append(skill)
+                            found_category = True
+                            break
+                    if not found_category:
+                        missing_categorized["Uncategorized"].append(skill)
+                
+                if missing_categorized: # Check if there are any categorized missing skills
+                    for category, skills in missing_categorized.items():
+                        st.write(f"**{category}:** {', '.join(skills)}")
+                else:
+                    st.write("No categorized missing skills found for this candidate relative to the JD.")
+            else:
+                st.write("No missing skills found for this candidate relative to the JD.")
+
+
+            # Action button for the top candidate
+            if top_candidate['Email'] != "Not Found":
+                mailto_link_top = create_mailto_link(
+                    recipient_email=top_candidate['Email'],
+                    candidate_name=top_candidate['Candidate Name'],
+                    job_title=jd_name_for_results if jd_name_for_results != "Uploaded JD (No file selected)" else "Job Opportunity"
+                )
+                st.markdown(f'<a href="{mailto_link_top}" target="_blank"><button style="background-color:#00cec9;color:white;border:none;padding:10px 20px;text-align:center;text-decoration:none;display:inline-block;font-size:16px;margin:4px 2px;cursor:pointer;border-radius:8px;">📧 Invite Top Candidate for Interview</button></a>', unsafe_allow_html=True)
+            else:
+                st.info(f"Email address not found for {top_candidate['Candidate Name']}. Cannot send automated invitation.")
+            
+            st.markdown("---")
+            st.info("For detailed analytics, matched keywords, and missing skills for ALL candidates, please navigate to the **Analytics Dashboard**.")
+
+        else:
+            st.info("No candidates processed yet to determine the top candidate.")
+
+
+        # === AI Recommendation for Shortlisted Candidates (Streamlined) ===
+        # This section now focuses on a quick summary for *all* shortlisted,
+        # with the top one highlighted above.
+        st.markdown("## 🌟 Candidates Meeting Criteria Overview")
+        st.caption("Candidates automatically identified as meeting your defined score, experience, and CGPA criteria.")
+
+        # Filter candidates based on the sliders
+        auto_shortlisted_candidates = st.session_state['comprehensive_df'][
+            (st.session_state['comprehensive_df']['Score (%)'] >= cutoff) & 
+            (st.session_state['comprehensive_df']['Years Experience'] >= min_experience) &
+            (st.session_state['comprehensive_df']['Years Experience'] <= max_experience) &
+            ((st.session_state['comprehensive_df']['CGPA (4.0 Scale)'].isnull()) | (st.session_state['comprehensive_df']['CGPA (4.0 Scale)'] >= min_cgpa))
+        ].copy() # Use .copy() to avoid SettingWithCopyWarning
+
+        if not auto_shortlisted_candidates.empty:
+            st.success(f"**{len(auto_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, and minimum CGPA ≥ {min_cgpa} or N/A).")
+            
+            # Display a concise table for automatically shortlisted candidates
+            display_auto_shortlisted_cols = [
+                'Candidate Name',
+                'Score (%)',
+                'Years Experience',
+                'CGPA (4.0 Scale)',
+                'Semantic Similarity',
+                'Email',
+                'AI Suggestion'
+            ]
+            
+            st.dataframe(
+                auto_shortlisted_candidates[display_auto_shortlisted_cols],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Score (%)": st.column_config.ProgressColumn(
+                        "Score (%)",
+                        help="Matching score against job requirements",
+                        format="%.1f", # Changed to .1f for consistency
+                        min_value=0,
+                        max_value=100,
+                    ),
+                    "Years Experience": st.column_config.NumberColumn(
+                        "Years Experience",
+                        help="Total years of professional experience",
+                        format="%.1f years",
+                    ),
+                    "CGPA (4.0 Scale)": st.column_config.NumberColumn(
+                        "CGPA (4.0 Scale)",
+                        help="Candidate's CGPA normalized to a 4.0 scale",
+                        format="%.2f",
+                        min_value=0.0,
+                        max_value=4.0
+                    ),
+                    "Semantic Similarity": st.column_config.NumberColumn(
+                        "Semantic Similarity",
+                        help="Conceptual similarity between JD and Resume (higher is better)",
+                        format="%.2f",
+                        min_value=0,
+                        max_value=1
+                    ),
+                    "AI Suggestion": st.column_config.Column(
+                        "AI Suggestion",
+                        help="AI's concise overall assessment and recommendation"
+                    )
+                }
+            )
+            st.info("For individual detailed AI assessments and action steps, please refer to the table below.")
+
+        else:
+            st.warning(f"No candidates met the defined screening criteria (score cutoff, experience between {min_experience}-{max_experience} years, and minimum CGPA). You might consider adjusting the sliders or reviewing the uploaded resumes/JD.")
+
+        st.markdown("---")
+
+        st.markdown("## 📋 Comprehensive Candidate Results Table")
+        st.caption("Full details for all processed resumes. Use the filters below to refine the view.")
+        
+        # --- Interactive Filters for Comprehensive Table ---
+        st.markdown("### 🔍 Filter Candidates")
+        filter_col1, filter_col2, filter_col3 = st.columns(3)
+        filter_col4, filter_col5, filter_col6 = st.columns(3)
+
+        with filter_col1:
+            # Populate multiselect with skills from the JD's word cloud set
+            jd_raw_skills_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
+            all_unique_jd_skills = sorted(list(jd_raw_skills_set))
+            selected_filter_skills = st.multiselect(
+                "**Skills (AND logic):**",
+                options=all_unique_jd_skills,
+                help="Only candidates possessing ALL selected skills will be shown."
+            )
+        with filter_col2:
+            search_query = st.text_input(
+                "**Keyword Search:**",
+                placeholder="Name, Email, Location, Raw Text...",
+                help="Search for text across Candidate Name, Email, Location, and Resume Raw Text."
+            )
+        with filter_col3:
+            selected_tags = st.multiselect(
+                "**AI Tag:**",
+                options=["👑 Exceptional Match", "🔥 Strong Candidate", "✨ Promising Fit", "⚠️ Needs Review", "❌ Limited Match"],
+                help="Filter by AI-generated assessment tags."
+            )
+        
+        with filter_col4:
+            min_score_filter, max_score_filter = st.slider(
+                "**Score Range (%):**",
+                0, 100, (0, 100), help="Filter candidates by their overall score range."
+            )
+        with filter_col5:
+            min_exp_filter, max_exp_filter = st.slider(
+                "**Experience Range (Years):**",
+                0, 20, (0, 20), help="Filter candidates by their years of experience range."
+            )
+        with filter_col6:
+            min_cgpa_filter, max_cgpa_filter = st.slider(
+                "**CGPA Range (4.0 Scale):**",
+                0.0, 4.0, (0.0, 4.0), 0.1, help="Filter candidates by their CGPA range (normalized to 4.0)."
+            )
+        
+        # Additional filters
+        filter_col_loc, filter_col_lang, filter_col_cert = st.columns(3)
+        with filter_col_loc:
+            all_locations = sorted(st.session_state['comprehensive_df']['Location'].unique())
+            selected_locations = st.multiselect(
+                "**Location:**",
+                options=all_locations,
+                help="Filter by candidate location."
+            )
+        with filter_col_lang:
+            # Extract all unique languages from the 'Languages' column across all candidates
+            all_languages_from_df = sorted(list(set(
+                lang.strip() for langs_str in st.session_state['comprehensive_df']['Languages'] if langs_str != "Not Found" for lang in langs_str.split(',')
+            )))
+            selected_languages = st.multiselect(
+                "**Languages:**",
+                options=all_languages_from_df,
+                help="Filter by languages spoken by the candidate."
+            )
+        with filter_col_cert: # New filter for Certifications
+            # Extract all unique certification names from the 'Certifications' column
+            all_certs_from_df = sorted(list(set(
+                re.sub(r'\[(.*?)\]\(.*?\)', r'\1', cert_str).strip() # Extract name from markdown link
+                for certs_entry in st.session_state['comprehensive_df']['Certifications'] if certs_entry != "Not Found"
+                for cert_str in certs_entry.split(';')
+            )))
+            selected_certifications = st.multiselect(
+                "**Certifications:**",
+                options=all_certs_from_df,
+                help="Filter by certifications held by the candidate."
+            )
+
+
+        # Apply all filters to the comprehensive DataFrame
+        filtered_display_df = st.session_state['comprehensive_df'].copy()
+
+        if selected_filter_skills:
+            for skill in selected_filter_skills:
+                # Use a regex for whole word match to prevent partial matches
+                filtered_display_df = filtered_display_df[filtered_display_df['Matched Keywords'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
+
+        if search_query:
+            search_query_lower = search_query.lower()
+            filtered_display_df = filtered_display_df[
+                filtered_display_df['Candidate Name'].str.lower().str.contains(search_query_lower, na=False) |
+                filtered_display_df['Email'].str.lower().str.contains(search_query_lower, na=False) |
+                filtered_display_df['Phone Number'].str.lower().str.contains(search_query_lower, na=False) | # Added Phone Number to search
+                filtered_display_df['Location'].str.lower().str.contains(search_query_lower, na=False) |
+                filtered_display_df['Resume Raw Text'].str.lower().str.contains(search_query_lower, na=False)
+            ]
+        
+        if selected_tags:
+            filtered_display_df = filtered_display_df[filtered_display_df['Tag'].isin(selected_tags)]
+        
+        # Apply numerical range filters
+        filtered_display_df = filtered_display_df[
+            (filtered_display_df['Score (%)'] >= min_score_filter) & (filtered_display_df['Score (%)'] <= max_score_filter)
+        ]
+        filtered_display_df = filtered_display_df[
+            (filtered_display_df['Years Experience'] >= min_exp_filter) & (filtered_display_df['Years Experience'] <= max_exp_filter)
+        ]
+        # For CGPA, handle None values gracefully (e.g., treat None as outside the filter range unless range is full 0-4)
+        if not (min_cgpa_filter == 0.0 and max_cgpa_filter == 4.0):
+            filtered_display_df = filtered_display_df[
+                ((filtered_display_df['CGPA (4.0 Scale)'].notnull()) & 
+                 (filtered_display_df['CGPA (4.0 Scale)'] >= min_cgpa_filter) & 
+                 (filtered_display_df['CGPA (4.0 Scale)'] <= max_cgpa_filter))
+            ]
+        
+        if selected_locations:
+            # Filter rows where ANY of the selected locations are present in the 'Location' string
+            location_pattern = '|'.join([re.escape(loc) for loc in selected_locations])
+            filtered_display_df = filtered_display_df[
+                filtered_display_df['Location'].str.contains(location_pattern, case=False, na=False)
+            ]
+        
+        if selected_languages:
+            # Filter rows where ANY of the selected languages are present in the 'Languages' string
+            language_pattern = '|'.join([re.escape(lang) for lang in selected_languages])
+            filtered_display_df = filtered_display_df[
+                filtered_display_df['Languages'].str.contains(language_pattern, case=False, na=False)
+            ]
+        
+        if selected_certifications: # Apply certifications filter
+            # For each selected certification, check if it's present in the 'Certifications' string
+            for cert in selected_certifications:
+                # Use regex to match the certification name, accounting for potential markdown link format
+                cert_pattern = r'(?:\[)?' + re.escape(cert) + r'(?:\]\(.*?\))?'
+                filtered_display_df = filtered_display_df[
+                    filtered_display_df['Certifications'].str.contains(cert_pattern, case=False, na=False)
+                ]
+
+
+        # Define columns to display in the comprehensive table
+        comprehensive_cols = [
+            'Candidate Name',
+            'Score (%)',
+            'Years Experience',
+            'CGPA (4.0 Scale)',
+            'Email',
+            'Phone Number',
+            'Location',
+            'Languages',
+            'Education Details',
+            'Work History',
+            'Project Details',
+            'Certifications', # New: Add certifications to display
+            'Semantic Similarity',
+            'Tag',
+            'AI Suggestion',
+            'Matched Keywords',
+            'Missing Skills',
+            'JD Used',
+            'Date Screened' # Added Date Screened to the comprehensive table
+        ]
+        
+        # Ensure all columns exist before trying to display them
+        final_display_cols = [col for col in comprehensive_cols if col in filtered_display_df.columns]
+
+        st.dataframe(
+            filtered_display_df[final_display_cols],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Score (%)": st.column_config.ProgressColumn(
+                    "Score (%)",
+                    help="Matching score against job requirements",
+                    format="%.1f",
+                    min_value=0,
+                    max_value=100,
+                ),
+                "Years Experience": st.column_config.NumberColumn(
+                    "Years Experience",
+                    help="Total years of professional experience",
+                    format="%.1f years",
+                ),
+                "CGPA (4.0 Scale)": st.column_config.NumberColumn(
+                    "CGPA (4.0 Scale)",
+                    help="Candidate's CGPA normalized to a 4.0 scale",
+                    format="%.2f",
+                    min_value=0.0,
+                    max_value=4.0
+                ),
+                "Semantic Similarity": st.column_config.NumberColumn(
+                    "Semantic Similarity",
+                    help="Conceptual similarity between JD and Resume (higher is better)",
+                    format="%.2f",
+                    min_value=0,
+                    max_value=1
+                ),
+                "AI Suggestion": st.column_config.Column(
+                    "AI Suggestion",
+                    help="AI's concise overall assessment and recommendation"
+                ),
+                "Matched Keywords": st.column_config.Column(
+                    "Matched Keywords",
+                    help="Keywords found in both JD and Resume"
+                ),
+                "Missing Skills": st.column_config.Column(
+                    "Missing Skills",
+                    help="Key skills from JD not found in Resume"
+                ),
+                "JD Used": st.column_config.Column(
+                    "JD Used",
+                    help="Job Description used for this screening"
+                ),
+                "Date Screened": st.column_config.DateColumn(
+                    "Date Screened",
+                    help="Date when the resume was screened",
+                    format="YYYY-MM-DD"
+                ),
+                "Phone Number": st.column_config.Column(
+                    "Phone Number",
+                    help="Candidate's phone number extracted from resume"
+                ),
+                "Location": st.column_config.Column(
+                    "Location",
+                    help="Candidate's location extracted from resume"
+                ),
+                "Languages": st.column_config.Column(
+                    "Languages",
+                    help="Languages spoken by the candidate"
+                ),
+                "Education Details": st.column_config.Column(
+                    "Education Details",
+                    help="Structured education history (University, Degree, Major, Year)"
+                ),
+                "Work History": st.column_config.Column(
+                    "Work History",
+                    help="Structured work experience (Company, Title, Dates)"
+                ),
+                "Project Details": st.column_config.Column(
+                    "Project Details",
+                    help="Structured project experience (Title, Description, Technologies)"
+                ),
+                "Certifications": st.column_config.Column( # New: Column config for Certifications
+                    "Certifications",
+                    help="Certifications obtained by the candidate, with links if available"
+                )
+            }
+        )
+
+        st.info("Remember to check the Analytics Dashboard for in-depth visualizations of skill overlaps, gaps, and other metrics!")
+    else:
+        st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
