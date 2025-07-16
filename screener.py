@@ -900,7 +900,9 @@ def extract_languages(text):
         "senufo", "wolof", "mandinka", "susu", "krio", "temne", "limba", "mende", "gola", "vai",
         "kpele", "loma", "bandi", "kpelle", "kru", "bassa", "grebo", "krahn", "dan", "mano",
         "guerze", "kono", "kisi", "gola", "de", "bassa", "kru", "grebo", "krahn", "dan", "mano",
-        "guerze", "kono", "kisi", "gola", "de"
+        "guerze", "kono", "kisi", "gola", "de",
+        # Added common abbreviations/alternative names
+        "de" # For German
     ]
     
     # Sort languages by length descending to match longer phrases first (e.g., "Ancient Greek" before "Greek")
@@ -936,13 +938,21 @@ def extract_languages(text):
             # up to a newline or another language.
             pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
             if re.search(pattern, languages_text_segment, re.IGNORECASE):
-                languages_list.add(lang.title()) # Add the properly cased language name
+                # Add the properly cased language name from the *original* all_languages list if it exists,
+                # otherwise add the matched abbreviation/alias.
+                if lang == "de":
+                    languages_list.add("German")
+                else:
+                    languages_list.add(lang.title()) # Add the properly cased language name
     else:
         # Fallback: if no explicit section, try to find languages anywhere in the cleaned full text
         for lang in sorted_all_languages:
             pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
             if re.search(pattern, cleaned_full_text, re.IGNORECASE):
-                languages_list.add(lang.title())
+                if lang == "de":
+                    languages_list.add("German")
+                else:
+                    languages_list.add(lang.title())
 
     return ", ".join(sorted(list(languages_list))) if languages_list else "Not Found"
 
@@ -1756,12 +1766,12 @@ def resume_screener_page():
             )
         with filter_col_lang:
             # Extract all unique languages from the 'Languages' column across all candidates
-            all_languages = sorted(list(set(
+            all_languages_from_df = sorted(list(set(
                 lang.strip() for langs_str in st.session_state['comprehensive_df']['Languages'] if langs_str != "Not Found" for lang in langs_str.split(',')
             )))
             selected_languages = st.multiselect(
                 "**Languages:**",
-                options=all_languages,
+                options=all_languages_from_df,
                 help="Filter by languages spoken by the candidate."
             )
 
