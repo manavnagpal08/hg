@@ -370,6 +370,10 @@ def login_section():
     if "username" not in st.session_state:
         st.session_state.username = None
 
+    # If already authenticated, just return True and don't render the form
+    if st.session_state.get("authenticated", False):
+        return True
+
     # Initialize active_login_tab_selection if not present
     if "active_login_tab_selection" not in st.session_state:
         # Default to 'Register' if no users, otherwise 'Login'
@@ -401,18 +405,19 @@ def login_section():
                         st.session_state.authenticated = True
                         st.session_state.username = username
                         st.session_state.user_company = user_data.get("company", "N/A") # Store company name
-                        st.success("✅ Login successful!")
+                        st.success("✅ Login successful! Redirecting...")
                         # --- Load session data after successful login ---
                         # Load data using the REST API function
                         load_session_data_from_firestore_rest(st.session_state.username)
-                        st.rerun()
+                        st.rerun() # This will cause a re-run, and the next time login_section is called, it will return True immediately.
+                        return True # This line will technically not be reached due to rerun, but good for clarity.
                     else:
                         st.error("❌ Invalid username or password.")
-
+                        return False # Login failed
     with tabs[1]: # Register tab
         register_section()
 
-    return st.session_state.authenticated
+    return False # Form not submitted or initial load, user is not authenticated yet
 
 # Helper function to check if the current user is an admin
 def is_current_user_admin():
@@ -614,12 +619,14 @@ st.sidebar.image("logo.png", width=200) # Placeholder logo
 st.sidebar.title("🧠 ScreenerPro")
 
 # --- Auth ---
-# Only show the login section if the user is NOT authenticated
-if not st.session_state.get("authenticated", False):
-    login_section()
-    st.stop() # Stop execution here if not authenticated, so main content isn't shown
+# Call login_section, which will handle displaying the form and setting st.session_state.authenticated
+# It will also return True if authentication is successful, or False otherwise (or stop execution).
+authenticated = login_section()
 
-# If authenticated, proceed with the rest of the application
+if not authenticated:
+    st.stop() # Stop if not authenticated
+
+# If authenticated is True, proceed with the rest of the application
 else:
     # Log successful login
     if st.session_state.get('last_login_logged_for_user') != st.session_state.username:
