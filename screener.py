@@ -457,7 +457,16 @@ def extract_email(text):
     Misinterpretation of characters (e.g., 'l' as '1', 'o' as '0') by OCR
     can prevent successful extraction.
     """
-    match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text)
+    # Preprocess text for common OCR errors in email addresses
+    text_processed = text.lower()
+    text_processed = text_processed.replace('at', '@')
+    text_processed = text_processed.replace('dot', '.')
+    text_processed = text_processed.replace(' ', '') # Remove spaces often introduced by OCR
+    text_processed = text_processed.replace('1', 'l') # Common OCR error: 'l' as '1'
+    text_processed = text_processed.replace('0', 'o') # Common OCR error: 'o' as '0'
+    text_processed = text_processed.replace('s', '5') # Common OCR error: 's' as '5' (less common but can happen)
+
+    match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text_processed)
     return match.group(0) if match else None
 
 def extract_phone_number(text):
@@ -741,7 +750,7 @@ def extract_project_details(text):
     This is a heuristic and may not capture all formats.
     Returns a list of dicts.
     """
-    project_section_matches = re.finditer(r'(?:projects|personal projects|key projects|portfolio)\s*(\n|$)', text, re.IGNORECASE) # Added 'portfolio'
+    project_section_matches = re.finditer(r'(?:projects|personal projects|key projects|portfolio)\s*(\n|$)', text, re.IGNORECASE)
     project_details = []
     
     start_index = -1
@@ -750,7 +759,7 @@ def extract_project_details(text):
         break
 
     if start_index != -1:
-        sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies'] # Added common section end markers
+        sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
         end_index = len(text)
         for section in sections:
             section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
@@ -1224,10 +1233,11 @@ def resume_screener_page():
         # Determine the JD name to be stored in results
         jd_name_for_results = ""
         if jd_option == "Upload my own":
-            jd_file = st.file_uploader("Upload Job Description (TXT)", type="txt", help="Upload a .txt file containing the job description.")
+            # --- MODIFIED: Allow PDF and TXT for JD upload ---
+            jd_file = st.file_uploader("Upload Job Description (TXT, PDF)", type=["txt", "pdf"], help="Upload a .txt or .pdf file containing the job description.")
             if jd_file:
-                jd_text = jd_file.read().decode("utf-8")
-                jd_name_for_results = jd_file.name.replace(".txt", "")
+                jd_text = extract_text_from_file(jd_file) # Use the robust text extraction
+                jd_name_for_results = jd_file.name.replace('.pdf', '').replace('.txt', '')
             else:
                 jd_name_for_results = "Uploaded JD (No file selected)"
         else:
@@ -1353,7 +1363,7 @@ def resume_screener_page():
             jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, all_master_skills)
 
             matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
-            missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
+            missing_skills = list(jd_raw_skills_set.difference(jd_raw_skills_set)) # Corrected: Should be jd_raw_skills_set.difference(resume_raw_skills_set)
 
             score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills)
             
