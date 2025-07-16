@@ -1483,7 +1483,6 @@ def resume_screener_page():
             # --- Certificate Logic ---
             certificate_id = str(uuid.uuid4()) # Generate a unique ID for the certificate
             certificate_rank = "Not Applicable"
-            verification_url = "N/A" # Default to N/A
 
             if score >= 90:
                 certificate_rank = "🏅 Elite Match" # Top 10% equivalent
@@ -1492,10 +1491,6 @@ def resume_screener_page():
             elif score >= 75: # This is the general shortlisted threshold
                 certificate_rank = "✅ Good Fit"
             
-            # Only set verification URL if a certificate rank is assigned
-            if certificate_rank != "Not Applicable":
-                verification_url = f"https://certificateess.netlify.app/{certificate_id}" # Your provided URL
-
             results.append({
                 "File Name": file.name,
                 "Candidate Name": candidate_name,
@@ -1520,8 +1515,7 @@ def resume_screener_page():
                 "JD Used": jd_name_for_results,
                 "Date Screened": datetime.now().date(), # Add Date Screened here
                 "Certificate ID": certificate_id, # Store Certificate ID
-                "Certificate Rank": certificate_rank, # Store Certificate Rank
-                "Verification URL": verification_url # Store Verification URL directly here
+                "Certificate Rank": certificate_rank # Store Certificate Rank
             })
             
         progress_bar.empty()
@@ -1688,8 +1682,7 @@ def resume_screener_page():
                 'Semantic Similarity',
                 'Email',
                 'AI Suggestion',
-                'Certificate Rank', # New: Display Certificate Rank here
-                'Verification URL' # New: Display Verification URL here
+                'Certificate Rank' # Removed 'Verification URL'
             ]
             
             st.dataframe(
@@ -1730,12 +1723,8 @@ def resume_screener_page():
                     "Certificate Rank": st.column_config.Column( # New: Certificate Rank column config
                         "Certificate Rank",
                         help="ScreenerPro Certification Level"
-                    ),
-                    "Verification URL": st.column_config.LinkColumn( # New: Link Column for Verification URL
-                        "Verification URL",
-                        help="Direct link to the candidate's certificate verification page",
-                        display_text="View Certificate" # Display "View Certificate" instead of full URL
                     )
+                    # Removed "Verification URL" column config
                 }
             )
             st.info("For individual detailed AI assessments and action steps, please refer to the table below.")
@@ -1879,7 +1868,6 @@ def resume_screener_page():
             'Tag',
             'AI Suggestion',
             'Certificate Rank', # New: Certificate Rank
-            'Verification URL', # Explicitly added here
             'Matched Keywords',
             'Missing Skills',
             'JD Used',
@@ -1903,7 +1891,7 @@ def resume_screener_page():
                 
                 # Add action buttons as a string for display in the table
                 actions_html = ""
-                if row_dict['Certificate Rank'] != "Not Applicable" and row_dict['Verification URL'] != "N/A":
+                if row_dict['Certificate Rank'] != "Not Applicable": # Check only for Certificate Rank
                     # Button to view certificate in a modal
                     actions_html += f"""
                     <button onclick="parent.postMessage({{type: 'streamlit:setSessionState', args: ['view_certificate_id', '{row_dict['Certificate ID']}']}}, '*')" 
@@ -1969,11 +1957,7 @@ def resume_screener_page():
                         "Certificate Rank",
                         help="ScreenerPro Certification Level"
                     ),
-                    "Verification URL": st.column_config.LinkColumn( # Make this a clickable link
-                        "Verification URL",
-                        help="Direct link to the candidate's certificate verification page",
-                        display_text="View Certificate" # Display "View Certificate" instead of full URL
-                    ),
+                    # Removed "Verification URL" column config
                     "Matched Keywords": st.column_config.Column(
                         "Matched Keywords",
                         help="Keywords found in both JD and Resume"
@@ -2250,4 +2234,3 @@ def generate_certificate_html(candidate_data):
     </html>
     """
     return html_content
-
