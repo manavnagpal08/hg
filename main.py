@@ -1498,7 +1498,7 @@ else:
                                 st.session_state['comprehensive_df'].loc[idx_to_update, 'Certificate ID'] = certificate_id
                                 st.session_state['comprehensive_df'].loc[idx_to_update, 'Certificate Rank'] = certificate_data['rank']
                                 st.session_state['comprehensive_df'].loc[idx_to_update, 'Verification URL'] = \
-                                    f"https://screenerpro.in/certificate/{certificate_id}" # IMPORTANT: Update this base URL
+                                    f"https://certificateess.netlify.app/{certificate_id}" # IMPORTANT: Updated this base URL
                                 
                                 st.toast(f"Candidate {result.get('Candidate Name', 'N/A')} certified!")
                                 log_activity_main(f"Candidate '{result.get('Candidate Name', 'N/A')}' certified with ID: {certificate_id}.")
