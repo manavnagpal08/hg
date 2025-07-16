@@ -23,10 +23,12 @@ FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
 FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
 
 # Base URL for the public certificate page (update this if you host it elsewhere)
-# For GitHub Pages, it's typically: "https://<YOUR_GITHUB_USERNAME>.github.io/<YOUR_REPOSITORY_NAME>/certificate.html"
-CERTIFICATE_BASE_URL = "https://manavnagpal08.github.io/certification/certificate.html" # REMEMBER TO UPDATE THIS!
+# For Streamlit multi-page app, the base URL points to the Streamlit page itself.
+# The URL will automatically include the default port (e.g., 8501)
+# IMPORTANT: This should match the path to your certificate_page.py in the 'pages' folder.
+CERTIFICATE_BASE_URL = "http://localhost:8501/Certificate_Page" # Corrected URL for Streamlit page
 
-# Certification Threshold
+# Certification Threshold (used in screener.py, but good to have here for context)
 CERTIFICATION_THRESHOLD = 80 # Score needed to qualify for a certificate
 
 
@@ -381,6 +383,7 @@ def save_certificate_to_firestore_rest(certificate_data: dict):
             st.error("Cannot save certificate: missing certificate_id.")
             return
 
+        # Correct document path for public certificates
         doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/public/certificates/{certificate_id}"
         url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
 
@@ -898,93 +901,10 @@ else:
             display_cols_for_table.append('Tag')
         if 'JD Used' in filtered_df.columns:
             display_cols_for_table.append('JD Used')
-        if 'Certificate ID' in filtered_df.columns: # Added for certificate
-            display_cols_for_table.append('Certificate ID')
-        if 'Certificate URL' in filtered_df.columns: # Added for certificate
-            display_cols_for_table.append('Certificate URL')
-
 
         st.dataframe(
             filtered_df[display_cols_for_table].sort_values(by="Score (%)", ascending=False),
-            use_container_width=True,
-            column_config={
-                "Certificate URL": st.column_config.LinkColumn(
-                    "Certificate Link",
-                    help="Click to view and download the official Screener Pro Certification.",
-                    display_text="View Certificate" # Text to display for the link
-                ),
-                "Score (%)": st.column_config.ProgressColumn(
-                    "Score (%)",
-                    help="Matching score against job requirements",
-                    format="%.1f",
-                    min_value=0,
-                    max_value=100,
-                ),
-                "Years Experience": st.column_config.NumberColumn(
-                    "Years Experience",
-                    help="Total years of professional experience",
-                    format="%.1f years",
-                ),
-                "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                    "CGPA (4.0 Scale)",
-                    help="Candidate's CGPA normalized to a 4.0 scale",
-                    format="%.2f",
-                    min_value=0.0,
-                    max_value=4.0
-                ),
-                "Semantic Similarity": st.column_config.NumberColumn(
-                    "Semantic Similarity",
-                    help="Conceptual similarity between JD and Resume (higher is better)",
-                    format="%.2f",
-                    min_value=0,
-                    max_value=1
-                ),
-                "AI Suggestion": st.column_config.Column(
-                    "AI Suggestion",
-                    help="AI's concise overall assessment and recommendation"
-                ),
-                "Matched Keywords": st.column_config.Column(
-                    "Matched Keywords",
-                    help="Keywords found in both JD and Resume"
-                ),
-                "Missing Skills": st.column_config.Column(
-                    "Missing Skills",
-                    help="Key skills from JD not found in Resume"
-                ),
-                "JD Used": st.column_config.Column(
-                    "JD Used",
-                    help="Job Description used for this screening"
-                ),
-                "Date Screened": st.column_config.DateColumn(
-                    "Date Screened",
-                    help="Date when the resume was screened",
-                    format="YYYY-MM-DD"
-                ),
-                "Phone Number": st.column_config.Column(
-                    "Phone Number",
-                    help="Candidate's phone number extracted from resume"
-                ),
-                "Location": st.column_config.Column(
-                    "Location",
-                    help="Candidate's location extracted from resume"
-                ),
-                "Languages": st.column_config.Column(
-                    "Languages",
-                    help="Languages spoken by the candidate"
-                ),
-                "Education Details": st.column_config.Column(
-                    "Education Details",
-                    help="Structured education history (University, Degree, Major, Year)"
-                ),
-                "Work History": st.column_config.Column(
-                    "Work History",
-                    help="Structured work experience (Company, Title, Dates)"
-                ),
-                "Project Details": st.column_config.Column(
-                    "Project Details",
-                    help="Structured project experience (Title, Description, Technologies)"
-                )
-            }
+            use_container_width=True
         )
 
         @st.cache_data
@@ -1511,18 +1431,19 @@ else:
     # Page Routing via function calls (remaining pages)
     # ======================
     elif tab == "🧠 Resume Screener":
+        # Pass the CERTIFICATE_BASE_URL to screener.py via session state
+        st.session_state['CERTIFICATE_BASE_URL'] = CERTIFICATE_BASE_URL
         try:
             # Import the screener page function (assuming it's in a separate file)
-            from screener import resume_screener_page
-            # Pass necessary Firebase/certification variables to the screener page
-            resume_screener_page(
-                FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
-                FIREBASE_PROJECT_ID=FIREBASE_PROJECT_ID,
-                FIRESTORE_BASE_URL=FIRESTORE_BASE_URL,
-                CERTIFICATE_BASE_URL=CERTIFICATE_BASE_URL,
-                CERTIFICATION_THRESHOLD=CERTIFICATION_THRESHOLD,
-                save_certificate_to_firestore_rest=save_certificate_to_firestore_rest # Pass the function itself
-            )
+            from screener import main as resume_screener_page_main # Import main function from screener.py
+            resume_screener_page_main() # Call the imported function
+
+            # --- Check for certificate data to save after screener runs ---
+            if 'certificate_data_to_save' in st.session_state and st.session_state['certificate_data_to_save']:
+                certificate_data = st.session_state['certificate_data_to_save']
+                save_certificate_to_firestore_rest(certificate_data)
+                del st.session_state['certificate_data_to_save'] # Clear after saving to prevent re-saving
+
             # The logging and pending approval logic here should ideally be handled within resume_screener_page itself
             # after a successful screening operation. For now, keeping it here for demonstration.
             if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
@@ -1534,7 +1455,9 @@ else:
 
                 # Example: Triggering a pending approval for a high-scoring candidate
                 for result in st.session_state['comprehensive_df'].to_dict('records'):
-                    if result.get('Score (%)', 0) >= 90 and result['Candidate Name'] not in [app['candidate_name'] for app in st.session_state.get('pending_approvals', []) if app['status'] == 'pending']:
+                    # Ensure candidate is not already in pending approvals
+                    if result.get('Score (%)', 0) >= 90 and \
+                       result['Candidate Name'] not in [app['candidate_name'] for app in st.session_state.get('pending_approvals', []) if app['status'] == 'pending']:
                         if 'pending_approvals' not in st.session_state:
                             st.session_state.pending_approvals = []
                         st.session_state.pending_approvals.append({
@@ -1549,7 +1472,7 @@ else:
                         st.toast(f"Candidate {result['Candidate Name']} sent for approval!")
 
         except ImportError:
-            st.error("`screener.py` not found or `resume_screener_page` function not defined. Please ensure 'screener.py' exists and contains the 'resume_screener_page' function.")
+            st.error("`screener.py` not found or `main` function not defined within it. Please ensure 'screener.py' exists and contains the 'main' function.")
         except Exception as e:
             st.error(f"Error loading Resume Screener: {e}")
 
@@ -1625,3 +1548,4 @@ else:
         st.session_state.pop('username', None)
         st.success("✅ Logged out.")
         st.rerun()
+
