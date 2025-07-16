@@ -452,21 +452,47 @@ def extract_years_of_experience(text):
 
 def extract_email(text):
     """
-    Extracts an email address from the given text.
-    Note: Effectiveness is highly dependent on the quality of OCR output.
-    Misinterpretation of characters (e.g., 'l' as '1', 'o' as '0') by OCR
-    can prevent successful extraction.
+    Extracts an email address from the given text, with enhanced preprocessing
+    to handle common OCR errors.
     """
-    # Preprocess text for common OCR errors in email addresses
     text_processed = text.lower()
-    text_processed = text_processed.replace('at', '@')
-    text_processed = text_processed.replace('dot', '.')
-    text_processed = text_processed.replace(' ', '') # Remove spaces often introduced by OCR
-    text_processed = text_processed.replace('1', 'l') # Common OCR error: 'l' as '1'
-    text_processed = text_processed.replace('0', 'o') # Common OCR error: 'o' as '0'
-    text_processed = text_processed.replace('s', '5') # Common OCR error: 's' as '5' (less common but can happen)
 
-    match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text_processed)
+    # Aggressive replacements for common OCR errors in email parts
+    text_processed = text_processed.replace(' ', '') # Remove all spaces
+    text_processed = text_processed.replace('dot', '.')
+    text_processed = text_processed.replace('(dot)', '.')
+    text_processed = text_processed.replace('[dot]', '.')
+    text_processed = text_processed.replace('-dot-', '.')
+    text_processed = text_processed.replace('_dot_', '.')
+    
+    text_processed = text_processed.replace('at', '@')
+    text_processed = text_processed.replace('(at)', '@')
+    text_processed = text_processed.replace('[at]', '@')
+    text_processed = text_processed.replace('-at-', '@')
+    text_processed = text_processed.replace('_at_', '@')
+
+    # Common character confusions by OCR
+    text_processed = text_processed.replace('1', 'l') # 'l' as '1'
+    text_processed = text_processed.replace('0', 'o') # 'o' as '0'
+    text_processed = text_processed.replace('s', '5') # 's' as '5'
+    text_processed = text_processed.replace('g', 'q') # 'q' as 'g' (less common but can happen)
+    text_processed = text_processed.replace('i', 'l') # 'l' as 'i' (for example, in 'mail')
+    text_processed = text_processed.replace('v', 'y') # 'y' as 'v' (less common)
+
+    # Specific domain corrections if they appear standalone or malformed
+    text_processed = re.sub(r'(\w+)@(\w+)\s*com\b', r'\1@\2.com', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*org\b', r'\1@\2.org', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*net\b', r'\1@\2.net', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*in\b', r'\1@\2.in', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*co\.in\b', r'\1@\2.co.in', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*co\.uk\b', r'\1@\2.co.uk', text_processed)
+
+    # Regex for email address. More specific to common email patterns.
+    # Allows for a wider range of characters in username and domain,
+    # and specifically looks for common TLDs.
+    email_regex = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|org|net|edu|gov|mil|in|co\.in|co\.uk|io|ai|dev|info|biz|me|us|ca|fr|de|jp|au|cn|ru|outlook)\b'
+    
+    match = re.search(email_regex, text_processed)
     return match.group(0) if match else None
 
 def extract_phone_number(text):
@@ -556,7 +582,7 @@ def extract_cgpa(text):
         if match[0] and match[0].strip(): # First pattern: (cgpa|gpa)\s*[:\s]*(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?
             raw_cgpa = float(match[0])
             scale = float(match[1]) if match[1] else None
-        elif match[2] and match[2].strip(): # Second pattern: (\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(cgpa|gpa)
+        elif match[2] and match[2].strip(): # Second pattern: (\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(?:cgpa|gpa)
             raw_cgpa = float(match[2])
             scale = float(match[3]) if match[3] else None
         else:
@@ -771,35 +797,47 @@ def extract_project_details(text):
         
         lines = [line.strip() for line in project_text.split('\n') if line.strip()]
         
-        current_project = {"Project Title": None, "Description": [], "Technologies Used": []}
+        current_project = {"Project Title": None, "Description": [], "Technologies Used": set()} # Use set for technologies to avoid duplicates
         
+        # Keywords that often indicate a new project entry or a project title
+        project_title_keywords = [
+            "project", "case study", "portfolio", "developed", "implemented", "created", "designed",
+            "built", "contributed to", "achieved", "led", "managed", "research project", "final year project"
+        ]
+
         for i, line in enumerate(lines):
+            line_lower = line.lower()
+            
             # Heuristic for a new project title:
-            # 1. Starts with a capital letter or number
+            # 1. Starts with a capital letter or number (more relaxed check)
             # 2. Contains at least two words
             # 3. Not excessively long (e.g., less than 15 words)
-            # 4. Does not contain common date patterns
-            # 5. Not a bullet point if it's the start of a description (e.g., "• Developed...")
+            # 4. Does not contain common date patterns (e.g., "Jan 2020 - Dec 2022")
+            # 5. Not a bullet point if it's clearly a description point (e.g., "• Developed...")
+            # 6. Contains a project-related keyword (optional, but can help)
             
             is_potential_title = (
-                (line and line[0].isupper()) or # Starts with capital
-                (line and re.match(r'^\d', line)) # Starts with a number (e.g., "Project 1: Title")
-            ) and \
-            len(line.split()) > 1 and \
-            len(line.split()) < 15 and \
-            not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line) and \
-            not re.match(r'^[•*-]\s*', line) # Not a bullet point line
+                (line and (line[0].isupper() or re.match(r'^\d', line))) and # Starts with capital or number
+                len(line.split()) > 1 and \
+                len(line.split()) < 15 and \
+                not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line) and \
+                not re.match(r'^[•*-]\s*(?:developed|implemented|created|designed|built|contributed|achieved|led|managed)', line_lower) and \
+                any(keyword in line_lower for keyword in project_title_keywords) # Check for project-related keywords
+            )
 
-            if is_potential_title:
+            # Also consider if the line is a URL, as project titles sometimes include links
+            is_url = re.match(r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)', line_lower)
+
+            if is_potential_title or is_url:
                 if current_project["Project Title"] is not None or current_project["Description"]: # If we have a previous project, save it
                     if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
                         project_details.append({
                             "Project Title": current_project["Project Title"],
-                            "Description": "\n".join(current_project["Description"]),
-                            "Technologies Used": ", ".join(sorted(list(set(current_project["Technologies Used"]))))
+                            "Description": "\n".join(current_project["Description"]).strip(),
+                            "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"]))) # Convert set to list for joining
                         })
                 # Start a new project
-                current_project = {"Project Title": line, "Description": [], "Technologies Used": []}
+                current_project = {"Project Title": line, "Description": [], "Technologies Used": set()}
             else:
                 # Add line to current project's description
                 current_project["Description"].append(line)
@@ -807,16 +845,19 @@ def extract_project_details(text):
             # Extract technologies from the current line, regardless if it's a title or description
             line_lower = line.lower()
             for skill in MASTER_SKILLS:
-                if re.search(r'\b' + re.escape(skill.lower()) + r'\b', line_lower):
-                    current_project["Technologies Used"].append(skill)
-        
+                # Re-clean the individual line for skill extraction to be sure.
+                cleaned_line_for_skill = clean_text(line)
+                
+                if re.search(r'\b' + re.escape(skill.lower()) + r'\b', cleaned_line_for_skill):
+                    current_project["Technologies Used"].add(skill) # Add to set
+
         # Add the last project if it exists
         if current_project["Project Title"] is not None or current_project["Description"]:
             if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
                 project_details.append({
                     "Project Title": current_project["Project Title"],
-                    "Description": "\n".join(current_project["Description"]),
-                    "Technologies Used": ", ".join(sorted(list(set(current_project["Technologies Used"]))))
+                    "Description": "\n".join(current_project["Description"]).strip(),
+                    "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
                 })
     return project_details
 
@@ -854,15 +895,19 @@ def extract_languages(text):
         
         languages_text = text_lower[start_index:end_index].strip()
         
+        # Apply clean_text to the extracted languages section
+        cleaned_languages_text = clean_text(languages_text)
+        
         # Extract languages from the identified section
         for lang in all_languages:
-            if re.search(r'\b' + re.escape(lang) + r'\b', languages_text):
+            if re.search(r'\b' + re.escape(lang) + r'\b', cleaned_languages_text):
                 languages_list.append(lang.title())
     else:
         # Fallback: if no explicit section, try to find languages anywhere in the text
-        # This is less precise but can catch languages mentioned in summary/profile
+        # Clean the entire text for fallback language extraction
+        cleaned_full_text = clean_text(text)
         for lang in all_languages:
-            if re.search(r'\b' + re.escape(lang) + r'\b', text_lower):
+            if re.search(r'\b' + re.escape(lang) + r'\b', cleaned_full_text):
                 if lang.title() not in languages_list: # Avoid duplicates if found in multiple places
                     languages_list.append(lang.title())
 
@@ -1363,7 +1408,7 @@ def resume_screener_page():
             jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, all_master_skills)
 
             matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
-            missing_skills = list(jd_raw_skills_set.difference(jd_raw_skills_set)) # Corrected: Should be jd_raw_skills_set.difference(resume_raw_skills_set)
+            missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) # Corrected: Should be jd_raw_skills_set.difference(resume_raw_skills_set)
 
             score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills)
             
@@ -1804,7 +1849,8 @@ def resume_screener_page():
                 "Missing Skills": st.column_config.Column(
                     "Missing Skills",
                     help="Key skills from JD not found in Resume"
-                ),
+                )
+                ,
                 "JD Used": st.column_config.Column(
                     "JD Used",
                     help="Job Description used for this screening"
