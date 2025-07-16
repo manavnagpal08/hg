@@ -18,3 +18,5 @@ pytesseract
 Pillow
 numpy
 opencv-python-headless # Optional, but highly recommended for image preprocessing
+joblib
+pdf2image
