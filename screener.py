@@ -1682,7 +1682,7 @@ def resume_screener_page():
                 'Semantic Similarity',
                 'Email',
                 'AI Suggestion',
-                'Certificate Rank' # Removed 'Verification URL'
+                'Certificate Rank' 
             ]
             
             st.dataframe(
@@ -1693,7 +1693,7 @@ def resume_screener_page():
                     "Score (%)": st.column_config.ProgressColumn(
                         "Score (%)",
                         help="Matching score against job requirements",
-                        format="%.1f", # Changed to .1f for consistency
+                        format="%.1f", 
                         min_value=0,
                         max_value=100,
                     ),
@@ -1720,11 +1720,10 @@ def resume_screener_page():
                         "AI Suggestion",
                         help="AI's concise overall assessment and recommendation"
                     ),
-                    "Certificate Rank": st.column_config.Column( # New: Certificate Rank column config
+                    "Certificate Rank": st.column_config.Column( 
                         "Certificate Rank",
                         help="ScreenerPro Certification Level"
                     )
-                    # Removed "Verification URL" column config
                 }
             )
             st.info("For individual detailed AI assessments and action steps, please refer to the table below.")
@@ -1953,11 +1952,11 @@ def resume_screener_page():
                         "AI Suggestion",
                         help="AI's concise overall assessment and recommendation"
                     ),
-                    "Certificate Rank": st.column_config.Column(
+                    "Certificate Rank": st.column_config.Column( # Now always visible
                         "Certificate Rank",
-                        help="ScreenerPro Certification Level"
+                        help="ScreenerPro Certification Level",
+                        width="small" # Make it a bit smaller
                     ),
-                    # Removed "Verification URL" column config
                     "Matched Keywords": st.column_config.Column(
                         "Matched Keywords",
                         help="Keywords found in both JD and Resume"
