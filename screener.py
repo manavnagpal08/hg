@@ -384,42 +384,71 @@ def extract_years_of_experience(text):
     """Extracts years of experience from a given text by parsing date ranges or keywords."""
     text = text.lower()
     total_months = 0
-    job_date_ranges = re.findall(
+    
+    # Regex for various date formats: Month YYYY - Month YYYY, Month YYYY - Present, YYYY - YYYY, YYYY - Present
+    date_patterns = [
+        # Month YYYY - Month YYYY or Present
         r'(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})\s*(?:to|–|-)\s*(present|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})',
-        text
-    )
+        # YYYY - YYYY or Present
+        r'(\b\d{4})\s*(?:to|–|-)\s*(present|\b\d{4})'
+    ]
 
-    for start, end in job_date_ranges:
-        try:
-            start_date = datetime.strptime(start.strip(), '%b %Y')
-        except ValueError:
-            try:
-                start_date = datetime.strptime(start.strip(), '%B %Y')
-            except ValueError:
-                continue
+    for pattern in date_patterns:
+        job_date_ranges = re.findall(pattern, text)
+        for start_str, end_str in job_date_ranges:
+            start_date = None
+            end_date = None
 
-        if end.strip() == 'present':
-            end_date = datetime.now()
-        else:
+            # Try parsing start date
             try:
-                end_date = datetime.strptime(end.strip(), '%b %Y')
+                # Try full month name (e.g., January)
+                start_date = datetime.strptime(start_str.strip(), '%B %Y')
             except ValueError:
                 try:
-                    end_date = datetime.strptime(end.strip(), '%B %Y')
+                    # Try abbreviated month name (e.g., Jan)
+                    start_date = datetime.strptime(start_str.strip(), '%b %Y')
                 except ValueError:
-                    continue
+                    try:
+                        # Try parsing as year only
+                        start_date = datetime(int(start_str.strip()), 1, 1)
+                    except ValueError:
+                        pass # Cannot parse, skip this date range
 
-        delta_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
-        total_months += max(delta_months, 0)
+            if start_date is None:
+                continue # Skip if start date cannot be parsed
 
-    if total_months == 0:
+            # Try parsing end date
+            if end_str.strip() == 'present':
+                end_date = datetime.now()
+            else:
+                try:
+                    end_date = datetime.strptime(end_str.strip(), '%B %Y')
+                except ValueError:
+                    try:
+                        end_date = datetime.strptime(end_str.strip(), '%b %Y')
+                    except ValueError:
+                        try:
+                            # Try parsing as year only, assume end of year for simplicity
+                            end_date = datetime(int(end_str.strip()), 12, 31)
+                        except ValueError:
+                            pass # Cannot parse, skip this date range
+            
+            if end_date is None:
+                continue # Skip if end date cannot be parsed
+
+            delta_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
+            total_months += max(delta_months, 0)
+
+    if total_months > 0: # Only return calculated experience if dates were found
+        return round(total_months / 12, 1)
+    else: # Fallback to keyword-based search only if no date ranges yielded experience
         match = re.search(r'(\d+(?:\.\d+)?)\s*(\+)?\s*(year|yrs|years)\b', text)
         if not match:
             match = re.search(r'experience[^\d]{0,10}(\d+(?:\.\d+)?)', text)
         if match:
             return float(match.group(1))
 
-    return round(total_months / 12, 1)
+    return 0.0 # Default to 0.0 if nothing found
 
 def extract_email(text):
     """
@@ -731,25 +760,29 @@ def extract_project_details(text):
         
         project_text = text[start_index:end_index].strip()
         
-        # New approach for splitting project blocks:
-        # Look for lines that seem like titles (start with capital, contains at least two words, not too long, not just numbers/dates)
-        lines = project_text.split('\n')
+        lines = [line.strip() for line in project_text.split('\n') if line.strip()]
+        
         current_project = {"Project Title": None, "Description": [], "Technologies Used": []}
         
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
+        for i, line in enumerate(lines):
             # Heuristic for a new project title:
-            # Starts with a capital letter, contains at least two words, and doesn't look like a simple bullet point or date
-            is_potential_title = bool(re.match(r'^[A-Z][a-zA-Z\s,\-&.]+\s+[A-Za-z]', line)) and \
-                                 len(line.split()) > 1 and \
-                                 len(line.split()) < 15 and \
-                                 not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line) # Exclude date ranges as titles
+            # 1. Starts with a capital letter or number
+            # 2. Contains at least two words
+            # 3. Not excessively long (e.g., less than 15 words)
+            # 4. Does not contain common date patterns
+            # 5. Not a bullet point if it's the start of a description (e.g., "• Developed...")
+            
+            is_potential_title = (
+                (line and line[0].isupper()) or # Starts with capital
+                (line and re.match(r'^\d', line)) # Starts with a number (e.g., "Project 1: Title")
+            ) and \
+            len(line.split()) > 1 and \
+            len(line.split()) < 15 and \
+            not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line) and \
+            not re.match(r'^[•*-]\s*', line) # Not a bullet point line
 
             if is_potential_title:
-                if current_project["Project Title"] is not None or current_project["Description"]: # If we already have a project, save it
+                if current_project["Project Title"] is not None or current_project["Description"]: # If we have a previous project, save it
                     if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
                         project_details.append({
                             "Project Title": current_project["Project Title"],
@@ -762,11 +795,11 @@ def extract_project_details(text):
                 # Add line to current project's description
                 current_project["Description"].append(line)
                 
-                # Extract technologies from the current line
-                line_lower = line.lower()
-                for skill in MASTER_SKILLS:
-                    if re.search(r'\b' + re.escape(skill.lower()) + r'\b', line_lower):
-                        current_project["Technologies Used"].append(skill)
+            # Extract technologies from the current line, regardless if it's a title or description
+            line_lower = line.lower()
+            for skill in MASTER_SKILLS:
+                if re.search(r'\b' + re.escape(skill.lower()) + r'\b', line_lower):
+                    current_project["Technologies Used"].append(skill)
         
         # Add the last project if it exists
         if current_project["Project Title"] is not None or current_project["Description"]:
