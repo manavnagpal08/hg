@@ -15,6 +15,7 @@ import nltk
 import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
+import uuid # Import uuid for generating unique IDs
 
 # --- OCR Specific Imports ---
 from PIL import Image
@@ -905,7 +906,7 @@ def extract_languages(text):
         "de" # For German
     ]
     
-    # Sort languages by length descending to match longer phrases first (e.g., "Ancient Greek" before "Greek")
+    # Sort languages by length descending to prioritize longer phrases first (e.g., "Ancient Greek" before "Greek")
     sorted_all_languages = sorted(all_languages, key=len, reverse=True)
 
     # Look for a "Languages" section header with more flexibility
@@ -1479,6 +1480,22 @@ def resume_screener_page():
                 max_exp_cutoff=max_experience
             )
 
+            # --- Certificate Logic ---
+            certificate_id = str(uuid.uuid4()) # Generate a unique ID for the certificate
+            certificate_rank = "Not Applicable"
+            verification_url = "N/A" # Default to N/A
+
+            if score >= 90:
+                certificate_rank = "🏅 Elite Match" # Top 10% equivalent
+            elif score >= 80:
+                certificate_rank = "⭐ Strong Match"
+            elif score >= 75: # This is the general shortlisted threshold
+                certificate_rank = "✅ Good Fit"
+            
+            # Only set verification URL if a certificate rank is assigned
+            if certificate_rank != "Not Applicable":
+                verification_url = f"https://certificateess.netlify.app/{certificate_id}" # Your provided URL
+
             results.append({
                 "File Name": file.name,
                 "Candidate Name": candidate_name,
@@ -1501,7 +1518,10 @@ def resume_screener_page():
                 "Semantic Similarity": semantic_similarity,
                 "Resume Raw Text": text,
                 "JD Used": jd_name_for_results,
-                "Date Screened": datetime.now().date() # Add Date Screened here
+                "Date Screened": datetime.now().date(), # Add Date Screened here
+                "Certificate ID": certificate_id, # Store Certificate ID
+                "Certificate Rank": certificate_rank, # Store Certificate Rank
+                "Verification URL": verification_url # Store Verification URL directly here
             })
             
         progress_bar.empty()
@@ -1575,6 +1595,11 @@ def resume_screener_page():
 
             st.markdown(f"### **{top_candidate['Candidate Name']}**")
             st.markdown(f"**Score:** {top_candidate['Score (%)']:.2f}% | **Experience:** {top_candidate['Years Experience']:.1f} years | **CGPA:** {cgpa_display} (4.0 Scale) | **Semantic Similarity:** {semantic_sim_display}")
+            
+            # Display Certificate Rank/Badge for the top candidate
+            if top_candidate['Certificate Rank'] != "Not Applicable":
+                st.markdown(f"**ScreenerPro Certification:** {top_candidate['Certificate Rank']}")
+
             st.markdown(f"**AI Assessment:**")
             st.markdown(top_candidate['Detailed HR Assessment']) # Display the detailed HR assessment here
             
@@ -1662,7 +1687,9 @@ def resume_screener_page():
                 'CGPA (4.0 Scale)',
                 'Semantic Similarity',
                 'Email',
-                'AI Suggestion'
+                'AI Suggestion',
+                'Certificate Rank', # New: Display Certificate Rank here
+                'Verification URL' # New: Display Verification URL here
             ]
             
             st.dataframe(
@@ -1699,6 +1726,15 @@ def resume_screener_page():
                     "AI Suggestion": st.column_config.Column(
                         "AI Suggestion",
                         help="AI's concise overall assessment and recommendation"
+                    ),
+                    "Certificate Rank": st.column_config.Column( # New: Certificate Rank column config
+                        "Certificate Rank",
+                        help="ScreenerPro Certification Level"
+                    ),
+                    "Verification URL": st.column_config.LinkColumn( # New: Link Column for Verification URL
+                        "Verification URL",
+                        help="Direct link to the candidate's certificate verification page",
+                        display_text="View Certificate" # Display "View Certificate" instead of full URL
                     )
                 }
             )
@@ -1842,94 +1878,376 @@ def resume_screener_page():
             'Semantic Similarity',
             'Tag',
             'AI Suggestion',
+            'Certificate Rank', # New: Certificate Rank
+            'Verification URL', # Explicitly added here
             'Matched Keywords',
             'Missing Skills',
             'JD Used',
-            'Date Screened' # Added Date Screened to the comprehensive table
+            'Date Screened', # Added Date Screened to the comprehensive table
+            'Certificate ID' # New: Certificate ID (hidden by default, used for actions)
         ]
         
         # Ensure all columns exist before trying to display them
         final_display_cols = [col for col in comprehensive_cols if col in filtered_display_df.columns]
 
-        st.dataframe(
-            filtered_display_df[final_display_cols],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Score (%)": st.column_config.ProgressColumn(
-                    "Score (%)",
-                    help="Matching score against job requirements",
-                    format="%.1f",
-                    min_value=0,
-                    max_value=100,
-                ),
-                "Years Experience": st.column_config.NumberColumn(
-                    "Years Experience",
-                    help="Total years of professional experience",
-                    format="%.1f years",
-                ),
-                "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                    "CGPA (4.0 Scale)",
-                    help="Candidate's CGPA normalized to a 4.0 scale",
-                    format="%.2f",
-                    min_value=0.0,
-                    max_value=4.0
-                ),
-                "Semantic Similarity": st.column_config.NumberColumn(
-                    "Semantic Similarity",
-                    help="Conceptual similarity between JD and Resume (higher is better)",
-                    format="%.2f",
-                    min_value=0,
-                    max_value=1
-                ),
-                "AI Suggestion": st.column_config.Column(
-                    "AI Suggestion",
-                    help="AI's concise overall assessment and recommendation"
-                ),
-                "Matched Keywords": st.column_config.Column(
-                    "Matched Keywords",
-                    help="Keywords found in both JD and Resume"
-                ),
-                "Missing Skills": st.column_config.Column(
-                    "Missing Skills",
-                    help="Key skills from JD not found in Resume"
-                ),
-                "JD Used": st.column_config.Column(
-                    "JD Used",
-                    help="Job Description used for this screening"
-                ),
-                "Date Screened": st.column_config.DateColumn(
-                    "Date Screened",
-                    help="Date when the resume was screened",
-                    format="YYYY-MM-DD"
-                ),
-                "Phone Number": st.column_config.Column(
-                    "Phone Number",
-                    help="Candidate's phone number extracted from resume"
-                ),
-                "Location": st.column_config.Column(
-                    "Location",
-                    help="Candidate's location extracted from resume"
-                ),
-                "Languages": st.column_config.Column(
-                    "Languages",
-                    help="Languages spoken by the candidate"
-                ),
-                "Education Details": st.column_config.Column(
-                    "Education Details",
-                    help="Structured education history (University, Degree, Major, Year)"
-                ),
-                "Work History": st.column_config.Column(
-                    "Work History",
-                    help="Structured work experience (Company, Title, Dates)"
-                ),
-                "Project Details": st.column_config.Column(
-                    "Project Details",
-                    help="Structured project experience (Title, Description, Technologies)"
-                )
-            }
-        )
+        # Add a placeholder for the certificate modal
+        certificate_modal_placeholder = st.empty()
+
+        # Iterate through filtered_display_df to show rows and buttons
+        st.markdown("### Filtered Candidate Results")
+        if not filtered_display_df.empty:
+            # Create a list of dictionaries for the table, including action buttons
+            display_rows = []
+            for idx, row in filtered_display_df.iterrows():
+                row_dict = row.to_dict()
+                
+                # Add action buttons as a string for display in the table
+                actions_html = ""
+                if row_dict['Certificate Rank'] != "Not Applicable" and row_dict['Verification URL'] != "N/A":
+                    # Button to view certificate in a modal
+                    actions_html += f"""
+                    <button onclick="parent.postMessage({{type: 'streamlit:setSessionState', args: ['view_certificate_id', '{row_dict['Certificate ID']}']}}, '*')" 
+                            style="background-color:#00cec9;color:white;border:none;padding:5px 10px;text-align:center;text-decoration:none;display:inline-block;font-size:12px;margin:2px;cursor:pointer;border-radius:5px;">
+                        View Certificate
+                    </button>
+                    """
+                    # Button to download certificate (HTML)
+                    download_link = f"data:text/html;charset=utf-8,{urllib.parse.quote(generate_certificate_html(row_dict))}"
+                    actions_html += f"""
+                    <a href="{download_link}" download="ScreenerPro_Certificate_{row_dict['Candidate Name'].replace(' ', '_')}.html"
+                       style="background-color:#00b0a8;color:white;border:none;padding:5px 10px;text-align:center;text-decoration:none;display:inline-block;font-size:12px;margin:2px;cursor:pointer;border-radius:5px;">
+                        Download PDF
+                    </a>
+                    """
+                
+                row_dict['Actions'] = actions_html
+                display_rows.append(row_dict)
+
+            # Convert to DataFrame for display
+            display_df_with_actions = pd.DataFrame(display_rows)
+            
+            # Define columns to display, including the new 'Actions' column
+            final_display_cols_with_actions = [col for col in comprehensive_cols if col in display_df_with_actions.columns]
+            final_display_cols_with_actions.append('Actions') # Add the actions column
+
+            st.dataframe(
+                display_df_with_actions[final_display_cols_with_actions],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Score (%)": st.column_config.ProgressColumn(
+                        "Score (%)",
+                        help="Matching score against job requirements",
+                        format="%.1f",
+                        min_value=0,
+                        max_value=100,
+                    ),
+                    "Years Experience": st.column_config.NumberColumn(
+                        "Years Experience",
+                        help="Total years of professional experience",
+                        format="%.1f years",
+                    ),
+                    "CGPA (4.0 Scale)": st.column_config.NumberColumn(
+                        "CGPA (4.0 Scale)",
+                        help="Candidate's CGPA normalized to a 4.0 scale",
+                        format="%.2f",
+                        min_value=0.0,
+                        max_value=4.0
+                    ),
+                    "Semantic Similarity": st.column_config.NumberColumn(
+                        "Semantic Similarity",
+                        help="Conceptual similarity between JD and Resume (higher is better)",
+                        format="%.2f",
+                        min_value=0,
+                        max_value=1
+                    ),
+                    "AI Suggestion": st.column_config.Column(
+                        "AI Suggestion",
+                        help="AI's concise overall assessment and recommendation"
+                    ),
+                    "Certificate Rank": st.column_config.Column(
+                        "Certificate Rank",
+                        help="ScreenerPro Certification Level"
+                    ),
+                    "Verification URL": st.column_config.LinkColumn( # Make this a clickable link
+                        "Verification URL",
+                        help="Direct link to the candidate's certificate verification page",
+                        display_text="View Certificate" # Display "View Certificate" instead of full URL
+                    ),
+                    "Matched Keywords": st.column_config.Column(
+                        "Matched Keywords",
+                        help="Keywords found in both JD and Resume"
+                    ),
+                    "Missing Skills": st.column_config.Column(
+                        "Missing Skills",
+                        help="Key skills from JD not found in Resume"
+                    ),
+                    "JD Used": st.column_config.Column(
+                        "JD Used",
+                        help="Job Description used for this screening"
+                    ),
+                    "Date Screened": st.column_config.DateColumn(
+                        "Date Screened",
+                        help="Date when the resume was screened",
+                        format="YYYY-MM-DD"
+                    ),
+                    "Phone Number": st.column_config.Column(
+                        "Phone Number",
+                        help="Candidate's phone number extracted from resume"
+                    ),
+                    "Location": st.column_config.Column(
+                        "Location",
+                        help="Candidate's location extracted from resume"
+                    ),
+                    "Languages": st.column_config.Column(
+                        "Languages",
+                        help="Languages spoken by the candidate"
+                    ),
+                    "Education Details": st.column_config.Column(
+                        "Education Details",
+                        help="Structured education history (University, Degree, Major, Year)"
+                    ),
+                    "Work History": st.column_config.Column(
+                        "Work History",
+                        help="Structured work experience (Company, Title, Dates)"
+                    ),
+                    "Project Details": st.column_config.Column(
+                        "Project Details",
+                        help="Structured project experience (Title, Description, Technologies)"
+                    ),
+                    "Certificate ID": st.column_config.Column( # Hide Certificate ID, it's for internal use
+                        "Certificate ID",
+                        help="Unique ID for the certificate",
+                        disabled=True,
+                        width="hidden"
+                    ),
+                    "Actions": st.column_config.Column( # Actions column for buttons
+                        "Actions",
+                        help="View or Download Certificate",
+                        width="medium"
+                    )
+                }
+            )
+            
+            # Handle certificate display when a button is clicked via session state
+            if 'view_certificate_id' in st.session_state and st.session_state.view_certificate_id:
+                cert_id_to_view = st.session_state.view_certificate_id
+                
+                # Find the candidate data for this certificate ID
+                candidate_data_for_cert = filtered_display_df[filtered_display_df['Certificate ID'] == cert_id_to_view].iloc[0].to_dict()
+                
+                if candidate_data_for_cert:
+                    # Display the certificate HTML in a modal-like fashion
+                    with certificate_modal_placeholder.container():
+                        st.markdown("""
+                        <style>
+                        .certificate-overlay {
+                            position: fixed;
+                            top: 0;
+                            left: 0;
+                            width: 100%;
+                            height: 100%;
+                            background-color: rgba(0, 0, 0, 0.7);
+                            display: flex;
+                            justify-content: center;
+                            align-items: center;
+                            z-index: 1000;
+                        }
+                        .certificate-content {
+                            background: white;
+                            padding: 20px;
+                            border-radius: 10px;
+                            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+                            max-width: 800px;
+                            max-height: 90vh;
+                            overflow-y: auto;
+                            position: relative;
+                        }
+                        .close-button {
+                            position: absolute;
+                            top: 10px;
+                            right: 10px;
+                            background: #f44336;
+                            color: white;
+                            border: none;
+                            border-radius: 50%;
+                            width: 30px;
+                            height: 30px;
+                            cursor: pointer;
+                            font-size: 18px;
+                            line-height: 1;
+                            text-align: center;
+                        }
+                        </style>
+                        """, unsafe_allow_html=True)
+
+                        st.markdown(f"""
+                        <div class="certificate-overlay">
+                            <div class="certificate-content">
+                                <button class="close-button" onclick="parent.postMessage({{type: 'streamlit:setSessionState', args: ['view_certificate_id', null]}}, '*')">&times;</button>
+                                {generate_certificate_html(candidate_data_for_cert)}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                # Reset the session state variable after displaying
+                # This is handled by the JS in the close button, but also good to have a fallback
+                # if st.session_state.view_certificate_id:
+                #     del st.session_state.view_certificate_id # This would close it immediately, need user interaction
+
+        else:
+            st.info("No candidates match the current filter criteria.")
+
 
         st.info("Remember to check the Analytics Dashboard for in-depth visualizations of skill overlaps, gaps, and other metrics!")
     else:
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
+
+# --- Certificate HTML Generation Function ---
+def generate_certificate_html(candidate_data):
+    """
+    Generates the HTML content for a ScreenerPro Certification.
+    """
+    candidate_name = candidate_data.get('Candidate Name', 'Candidate Name')
+    score = candidate_data.get('Score (%)', 0.0)
+    certificate_rank = candidate_data.get('Certificate Rank', 'Not Applicable')
+    date_screened = candidate_data.get('Date Screened', datetime.now().date()).strftime("%B %d, %Y")
+    certificate_id = candidate_data.get('Certificate ID', 'N/A')
+    
+    # Define colors based on dark mode (assuming main.py's dark_mode state is accessible)
+    # For a self-contained HTML, we'll use a fixed light mode style for the certificate itself
+    # to ensure it prints well.
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>ScreenerPro Certification - {candidate_name}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+        <style>
+            body {{
+                font-family: 'Inter', sans-serif;
+                background-color: #f8f9fa;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                padding: 20px;
+                box-sizing: border-box;
+            }}
+            .certificate-container {{
+                width: 100%;
+                max-width: 800px;
+                background: linear-gradient(145deg, #ffffff, #e6e6e6);
+                border: 10px solid #00cec9;
+                border-radius: 20px;
+                box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
+                padding: 40px;
+                text-align: center;
+                position: relative;
+                overflow: hidden;
+            }}
+            .certificate-header {{
+                font-family: 'Playfair Display', serif;
+                font-size: 2.5em;
+                color: #00cec9;
+                margin-bottom: 20px;
+                font-weight: 700;
+                text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+            }}
+            .certificate-subheader {{
+                font-size: 1.2em;
+                color: #555;
+                margin-bottom: 30px;
+            }}
+            .certificate-body {{
+                margin-bottom: 40px;
+            }}
+            .certificate-body p {{
+                font-size: 1.1em;
+                line-height: 1.6;
+                color: #333;
+            }}
+            .candidate-name {{
+                font-family: 'Playfair Display', serif;
+                font-size: 2.8em;
+                color: #34495e;
+                margin: 20px 0;
+                font-weight: 700;
+                border-bottom: 2px dashed #ccc;
+                display: inline-block;
+                padding-bottom: 5px;
+            }}
+            .score-rank {{
+                font-size: 1.4em;
+                color: #00cec9;
+                font-weight: 600;
+                margin-top: 20px;
+            }}
+            .date-id {{
+                font-size: 0.9em;
+                color: #777;
+                margin-top: 30px;
+            }}
+            .logo {{
+                width: 150px;
+                margin-bottom: 20px;
+            }}
+            .footer-text {{
+                font-size: 0.8em;
+                color: #999;
+                margin-top: 40px;
+            }}
+            .badge-icon {{
+                font-size: 3em; /* Larger icon */
+                margin-bottom: 15px;
+                color: #ffd700; /* Gold color for badge */
+            }}
+
+            /* Print styles */
+            @media print {{
+                body {{
+                    background-color: #fff;
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
+                }}
+                .certificate-container {{
+                    border: 5px solid #00cec9;
+                    box-shadow: none;
+                }}
+                .certificate-header, .candidate-name, .score-rank {{
+                    color: #00cec9 !important;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="certificate-container">
+            <img src="https://placehold.co/150x50/00cec9/ffffff?text=ScreenerPro" alt="ScreenerPro Logo" class="logo">
+            <div class="certificate-header">ScreenerPro Certification of Excellence</div>
+            <div class="certificate-subheader">This is to certify that</div>
+            <div class="candidate-name">{candidate_name}</div>
+            <div class="certificate-body">
+                <p>has been screened by ScreenerPro and achieved a ranking of</p>
+                <div class="score-rank">
+                    {certificate_rank}
+                </div>
+                <p>with an impressive Screener Score of **{score:.1f}%**.</p>
+                <p>This recognition is awarded based on a comprehensive assessment of resume quality, skill relevance, and overall profile strength against industry benchmarks and specific job requirements.</p>
+            </div>
+            <div class="date-id">
+                Date: {date_screened}<br>
+                Certificate ID: {certificate_id}
+            </div>
+            <div class="footer-text">
+                Verified by ScreenerPro.
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return html_content
+
