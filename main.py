@@ -24,7 +24,7 @@ FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PR
 
 # Base URL for the public certificate page (update this if you host it elsewhere)
 # For GitHub Pages, it's typically: "https://<YOUR_GITHUB_USERNAME>.github.io/<YOUR_REPOSITORY_NAME>/certificate.html"
-CERTIFICATE_BASE_URL = "https://manavnagpal08.github.io/certification/certificate.html"
+CERTIFICATE_BASE_URL = "https://manavnagpal08.github.io/certification/certificate.html" # REMEMBER TO UPDATE THIS!
 
 # Certification Threshold
 CERTIFICATION_THRESHOLD = 85 # Score needed to qualify for a certificate
