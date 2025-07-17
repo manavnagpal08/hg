@@ -24,7 +24,7 @@ from email.mime.text import MIMEText
 from PIL import Image
 import pytesseract
 import cv2
-from pdf22image import convert_from_bytes
+from pdf2image import convert_from_bytes
 import shutil
 
 try:
@@ -1036,8 +1036,14 @@ The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
 def send_certificate_email(recipient_email, candidate_name, certificate_html_content):
-    gmail_address = "screenerpro.ai@gmail.com"
-    gmail_app_password = "hcss uefd gaae wrse"
+    # --- IMPORTANT: REPLACE THESE PLACEHOLDERS WITH YOUR ACTUAL GMAIL CREDENTIALS ---
+    # To enable email sending, you MUST replace "screenerpro.ai@gmail.com" with your
+    # Gmail address and "hcss uefd gaae wrse" with the 16-character App Password
+    # you generated from your Google Account Security settings.
+    # Learn more: https://support.google.com/accounts/answer/185833?hl=en
+    gmail_address = "screenerpro.ai@gmail.com"  # <--- REPLACE THIS WITH YOUR GMAIL ADDRESS
+    gmail_app_password = "kxgr bpdc yavo deoo"  # <--- REPLACE THIS WITH YOUR 16-CHARACTER APP PASSWORD
+    # --- END IMPORTANT ---
 
     if not gmail_address or not gmail_app_password or gmail_address == "screenerpro.ai@gmail.com":
         st.error("Email sending is not configured. Please replace the placeholder Gmail credentials in `screener.py` to enable this feature.")
@@ -1211,7 +1217,7 @@ def resume_screener_page():
             
             education_details_text = extract_education_text(text)
             work_history_raw = extract_work_history(text)
-            project_details_raw = extract_project_details(text, MASTER_SKILLS) # Pass MASTER_SKILLS
+            project_details_raw = extract_project_details(text, MASTER_SKILLS)
             
             education_details_formatted = education_details_text
             work_history_formatted = format_work_history(work_history_raw)
@@ -1772,6 +1778,7 @@ def resume_screener_page():
     else:
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
 
+@st.cache_data
 def generate_certificate_html(candidate_data):
     certificate_template_path = "certification.html"
     
@@ -1799,3 +1806,7 @@ def generate_certificate_html(candidate_data):
     html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
     
     return html_content
+
+# This line ensures the Streamlit app runs
+if __name__ == "__main__":
+    resume_screener_page()
