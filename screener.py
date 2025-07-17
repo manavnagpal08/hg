@@ -1986,7 +1986,7 @@ def generate_certificate_html(candidate_data):
             <div class="score-rank">
                 {{CERTIFICATE_RANK}}
             </div>
-            <p>demonstrating an outstanding Screener Score of **{{SCORE}}%**.</p>
+            <p>demonstrating an outstanding Screener Score of {{SCORE}}%.</p>
             <p>This certification attests to their highly relevant skills, extensive experience, and strong alignment with the demanding requirements of modern professional roles. It signifies their readiness to excel in challenging environments and contribute significantly to organizational success.</p>
         </div>
         <div class="date-id">
