@@ -19,13 +19,17 @@ import uuid
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase # New import for attachments
+from email import encoders # New import for attachments
+import tempfile # New import for temporary files
+import shutil
 
 # --- OCR Specific Imports ---
 from PIL import Image
 import pytesseract
 import cv2
 from pdf2image import convert_from_bytes
-import shutil
+
 
 try:
     nltk.data.find('corpora/stopwords')
@@ -211,6 +215,11 @@ SKILL_CATEGORIES = {
 }
 
 MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
+
+# IMPORTANT: REPLACE THIS WITH THE ACTUAL BASE URL OF YOUR DEPLOYED STREAMLIT APP.
+# This is used for constructing the certificate verification link in the email.
+# If your certificate.html is hosted on a different domain, adjust `verification_link` in `send_certificate_email` accordingly.
+APP_BASE_URL = "YOUR_APP_BASE_URL" # <--- REPLACE THIS
 
 @st.cache_resource
 def get_tesseract_cmd():
@@ -1033,7 +1042,7 @@ Best regards,
 The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
-def send_certificate_email(recipient_email, candidate_name, certificate_id, certificate_rank):
+def send_certificate_email(recipient_email, candidate_name, certificate_id, certificate_rank, score, certificate_html_content, attach_html_file=False):
     # --- IMPORTANT: REPLACE THESE PLACEHOLDERS WITH YOUR ACTUAL GMAIL CREDENTIALS ---
     # To enable email sending, you MUST replace "screenerpro.ai@gmail.com" with your
     # Gmail address and "hcss uefd gaae wrse" with the 16-character App Password
@@ -1047,43 +1056,43 @@ def send_certificate_email(recipient_email, candidate_name, certificate_id, cert
         st.error("Email sending is not configured. Please replace the placeholder Gmail credentials in `screener.py` to enable this feature.")
         return False
 
-    # IMPORTANT: Replace "YOUR_APP_BASE_URL" with the actual base URL of your deployed Streamlit app.
-    # This URL should point to the Streamlit app's certificate page, e.g.,
-    # "https://your-streamlit-app-url.streamlit.app" or "https://your-custom-domain.com".
-    # The certificate.html will then use the ID from the URL to fetch data.
-    APP_BASE_URL = "https://cbie8lbzkfhxgwsbvrsab4.streamlit.app/" # <-- REPLACE THIS
-    verification_link = f"{APP_BASE_URL}/certificate/{certificate_id}"
+    # The verification link will point to your hosted certificate.html page.
+    # Adjust this URL if your certificate.html is hosted on a different domain/path.
+    verification_link = f"{APP_BASE_URL}/certificate/{certificate_id}" # Assuming Streamlit routing or a dedicated route
 
     msg = MIMEMultipart('alternative')
-    msg['Subject'] = f"Congratulations! You've received a ScreenerPro Certificate!"
+    msg['Subject'] = f"🎉 You've Earned It! Here's Your Certification from ScreenerPro"
     msg['From'] = gmail_address
     msg['To'] = recipient_email
 
-    plain_text_body = f"""Dear {candidate_name},
+    plain_text_body = f"""Hi {candidate_name},
 
-Congratulations! You've received a ScreenerPro Certificate for your outstanding profile.
+Congratulations on successfully clearing the ScreenerPro resume screening process with a score of {score:.1f}%!
 
-Your certification rank is: {certificate_rank}
-Certificate ID: {certificate_id}
+We’re proud to award you an official certificate recognizing your skills and employability.
 
-You can view and download your certificate from our official verification page:
-{verification_link}
+👉 View & Download Your Certificate: {verification_link}
 
-Best regards,
-The ScreenerPro Team
+You can add this to your resume, LinkedIn, or share it with employers to stand out.
+
+Have questions? Contact us at support@screenerpro.in
+
+🚀 Keep striving. Keep growing.
+
+– Team ScreenerPro
 """
 
     html_body = f"""
     <html>
         <body>
-            <p>Dear {candidate_name},</p>
-            <p>Congratulations! You've received a ScreenerPro Certificate for your outstanding profile.</p>
-            <p>Your certification rank is: <strong>{certificate_rank}</strong></p>
-            <p>Certificate ID: <strong>{certificate_id}</strong></p>
-            <p>You can view and download your certificate from our official verification page:</p>
-            <p><a href="{verification_link}" style="background-color:#00cec9;color:white;border:none;padding:10px 20px;text-align:center;text-decoration:none;display:inline-block;font-size:16px;margin:4px 2px;cursor:pointer;border-radius:8px;">View and Download Your Certificate</a></p>
-            <p>Best regards,</p>
-            <p>The ScreenerPro Team</p>
+            <p>Hi {candidate_name},</p>
+            <p>Congratulations on successfully clearing the ScreenerPro resume screening process with a score of <strong>{score:.1f}%</strong>!</p>
+            <p>We’re proud to award you an official certificate recognizing your skills and employability.</p>
+            <p>👉 <a href="{verification_link}" style="background-color:#00cec9;color:white;border:none;padding:10px 20px;text-align:center;text-decoration:none;display:inline-block;font-size:16px;margin:4px 2px;cursor:pointer;border-radius:8px;">View & Download Your Certificate</a></p>
+            <p>You can add this to your resume, LinkedIn, or share it with employers to stand out.</p>
+            <p>Have questions? Contact us at support@screenerpro.in</p>
+            <p>🚀 Keep striving. Keep growing.</p>
+            <p>– Team ScreenerPro</p>
         </body>
     </html>
     """
@@ -1094,11 +1103,31 @@ The ScreenerPro Team
     msg.attach(part1)
     msg.attach(part2)
 
+    if attach_html_file and certificate_html_content:
+        try:
+            # Create a temporary file for the HTML content
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html', encoding='utf-8') as tmp_file:
+                tmp_file.write(certificate_html_content)
+                temp_file_path = tmp_file.name
+
+            with open(temp_file_path, 'rb') as fp:
+                attachment = MIMEBase('application', 'octet-stream')
+                attachment.set_payload(fp.read())
+            encoders.encode_base64(attachment)
+            attachment.add_header('Content-Disposition', 'attachment', filename=f'ScreenerPro_Certificate_{candidate_name.replace(" ", "_")}.html')
+            msg.attach(attachment)
+            st.info(f"Attached certificate HTML to email for {candidate_name}.")
+        except Exception as e:
+            st.error(f"Failed to attach certificate HTML: {e}")
+        finally:
+            if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+                os.unlink(temp_file_path) # Clean up the temporary file
+
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
             smtp.login(gmail_address, gmail_app_password)
             smtp.send_message(msg)
-        st.success(f"Certificate successfully emailed to {recipient_email}!")
+        st.success(f"Certificate email sent to {recipient_email}!")
         return True
     except smtplib.SMTPAuthenticationError:
         st.error("Failed to send email: Authentication error. Please check your Gmail address and App Password.")
@@ -1770,10 +1799,11 @@ def resume_screener_page():
                     candidate_data_for_cert = candidate_rows.iloc[0].to_dict()
 
                     if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
-                        certificate_html_content = generate_certificate_html(candidate_data_for_cert)
+                        # Pass APP_BASE_URL to generate_certificate_html
+                        certificate_html_content = generate_certificate_html(candidate_data_for_cert, APP_BASE_URL)
                         st.session_state['certificate_html_content'] = certificate_html_content # Store for preview
 
-                        col_cert_view, col_cert_download = st.columns(2) # Removed email column
+                        col_cert_view, col_cert_download, col_cert_email_option = st.columns(3)
                         with col_cert_view:
                             if st.button("👁️ View Certificate", key="view_cert_button"):
                                 # This button just triggers the preview, content is already generated
@@ -1788,13 +1818,19 @@ def resume_screener_page():
                                 key="download_cert_button"
                             )
                         
+                        with col_cert_email_option:
+                            attach_html = st.checkbox("Attach HTML to Email?", key="attach_html_checkbox", help="If checked, the full HTML certificate file will be attached to the email. Note: Dynamic features (QR code, live verification) may not work when opened locally from attachment.")
+
                         # Automatically send email if certificate is generated and email is available
                         if candidate_data_for_cert.get('Email') and candidate_data_for_cert['Email'] != "Not Found":
                             send_certificate_email(
                                 recipient_email=candidate_data_for_cert['Email'],
                                 candidate_name=candidate_data_for_cert['Candidate Name'],
                                 certificate_id=candidate_data_for_cert['Certificate ID'], # Pass ID
-                                certificate_rank=candidate_data_for_cert['Certificate Rank'] # Pass Rank
+                                certificate_rank=candidate_data_for_cert['Certificate Rank'], # Pass Rank
+                                score=candidate_data_for_cert['Score (%)'], # Pass Score
+                                certificate_html_content=certificate_html_content, # Pass generated HTML
+                                attach_html_file=attach_html # Pass attachment preference
                             )
                         else:
                             st.info(f"No email address found for {candidate_data_for_cert['Candidate Name']}. Certificate could not be sent automatically.")
@@ -1817,7 +1853,7 @@ def resume_screener_page():
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
 
 @st.cache_data
-def generate_certificate_html(candidate_data):
+def generate_certificate_html(candidate_data, app_base_url):
     certificate_template_path = "certification.html"
     
     if not os.path.exists(certificate_template_path):
@@ -1842,6 +1878,7 @@ def generate_certificate_html(candidate_data):
     html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
     html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
     html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
+    html_content = html_content.replace("{{APP_BASE_URL}}", app_base_url) # New replacement
     
     return html_content
 
