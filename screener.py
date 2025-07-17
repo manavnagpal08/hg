@@ -1995,7 +1995,7 @@ def resume_screener_page():
                     with col_cert_view:
                         if st.button("👁️ View Certificate", key="view_cert_button"):
                             st.session_state['view_certificate_id'] = candidate_data_for_cert['Certificate ID']
-                            st.experimental_rerun() # Rerun to trigger modal display
+                            st.rerun() # Rerun to trigger modal display
 
                     with col_cert_download:
                         certificate_html_content = generate_certificate_html(candidate_data_for_cert)
