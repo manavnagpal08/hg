@@ -26,6 +26,7 @@ import shutil
 from weasyprint import HTML
 from concurrent.futures import ThreadPoolExecutor, as_completed # Reverted to ThreadPoolExecutor
 from io import BytesIO
+import traceback # Import traceback for detailed error logging
 
 # --- OCR Specific Imports ---
 from PIL import Image
@@ -95,6 +96,7 @@ CUSTOM_STOP_WORDS = set([
     "artificial", "intelligence", "api", "apis", "rest", "graphql", "agile", "scrum", "kanban",
     "devops", "ci", "cd", "testing", "qa",
     "security", "network", "networking", "virtualization",
+    "containerization", "docker", "kubernetes", "terraform", "ansible", "jenkins", "circleci", "github actions", "azure devops", "mlops",
     "containerization", "docker", "kubernetes", "git", "github", "gitlab", "bitbucket", "jira",
     "confluence", "slack", "microsoft", "google", "amazon", "azure", "oracle", "sap", "crm", "erp",
     "salesforce", "servicenow", "tableau", "powerbi", "qlikview", "excel", "word", "powerpoint",
@@ -323,7 +325,7 @@ def extract_text_from_file(uploaded_file):
                 pdf_text = ''.join(page.extract_text() or '' for page in pdf.pages)
             
             if len(pdf_text.strip()) < 50: # Heuristic for potentially scanned PDF
-                # st.warning(f"Low text extracted from PDF {file_name} using pdfplumber. Attempting OCR...") # Cannot use st.warning in child process
+                # print(f"DEBUG: Low text extracted from PDF {file_name} using pdfplumber. Attempting OCR...")
                 images = convert_from_bytes(file_bytes)
                 for img in images:
                     processed_img = preprocess_image_for_ocr(img)
@@ -333,13 +335,14 @@ def extract_text_from_file(uploaded_file):
 
         except Exception as e:
             # Fallback to OCR directly if pdfplumber fails or for any other PDF error
-            # st.error(f"Error processing PDF {file_name} with pdfplumber: {e}. Trying OCR fallback directly.") # Cannot use st.error in child process
+            # print(f"DEBUG: Error processing PDF {file_name} with pdfplumber: {e}. Trying OCR fallback directly.")
             try:
                 images = convert_from_bytes(file_bytes)
                 for img in images:
                     processed_img = preprocess_image_for_ocr(img)
                     full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
             except Exception as e_ocr:
+                print(f"ERROR: Failed to extract text from PDF via OCR for {file_name}: {str(e_ocr)}")
                 return f"[ERROR] Failed to extract text from PDF via OCR: {str(e_ocr)}"
 
     elif "image" in file_type:
@@ -348,11 +351,14 @@ def extract_text_from_file(uploaded_file):
             processed_img = preprocess_image_for_ocr(img)
             full_text = pytesseract.image_to_string(processed_img, lang='eng')
         except Exception as e:
+            print(f"ERROR: Failed to extract text from image for {file_name}: {str(e)}")
             return f"[ERROR] Failed to extract text from image: {str(e)}"
     else:
+        print(f"ERROR: Unsupported file type for {file_name}: {file_type}")
         return f"[ERROR] Unsupported file type: {file_type}. Please upload a PDF or an image (JPG, PNG)."
 
     if not full_text.strip():
+        print(f"ERROR: No readable text extracted from {file_name}. It might be a very low-quality scan or an empty document.")
         return "[ERROR] No readable text extracted from the file. It might be a very low-quality scan or an empty document."
     
     return full_text
@@ -958,7 +964,6 @@ def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_s
 
     return final_assessment
 
-# semantic_score now accepts model and ml_model as arguments, which are loaded once globally
 @st.cache_data(show_spinner="Calculating Semantic Score...")
 def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills, model, ml_model):
     jd_clean = clean_text(jd_text)
@@ -995,7 +1000,7 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
         weighted_jd_coverage_percentage = 0.0
 
     if ml_model is None or model is None:
-        # st.warning("ML models not loaded in semantic_score. Providing basic score and generic feedback.") # Cannot use st.warning in cached function
+        # print("DEBUG: ML models not loaded in semantic_score. Providing basic score and generic feedback.")
         basic_score = (weighted_jd_coverage_percentage * 0.7)
         basic_score += min(years_exp * 5, 30)
         
@@ -1042,7 +1047,8 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
         return round(score, 2), round(semantic_similarity, 2)
 
     except Exception as e:
-        # st.warning(f"Error during semantic scoring, falling back to basic: {e}") # Cannot use st.warning in cached function
+        print(f"ERROR: Error during semantic scoring: {e}")
+        traceback.print_exc()
         basic_score = (weighted_jd_coverage_percentage * 0.7)
         basic_score += min(years_exp * 5, 30)
         
@@ -1067,7 +1073,6 @@ Best regards,
 The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
-# @st.cache_data is fine here as it's called in the main thread
 @st.cache_data
 def generate_certificate_pdf(html_content):
     """Converts HTML content to PDF bytes."""
@@ -1158,15 +1163,17 @@ def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_ty
     and returns a dictionary of results.
     This function is designed to be run in a ThreadPoolExecutor.
     """
+    print(f"DEBUG: Starting processing for {file_name}")
     try:
-        # Create a BytesIO object to simulate an uploaded file for extract_text_from_file
         uploaded_file_mock = BytesIO(file_data_bytes)
         uploaded_file_mock.name = file_name
         uploaded_file_mock.type = file_type
         
         text = extract_text_from_file(uploaded_file_mock)
-        
+        print(f"DEBUG: Text extraction result for {file_name}: {'SUCCESS' if not text.startswith('[ERROR]') else text}")
+
         if text.startswith("[ERROR]"):
+            print(f"ERROR: Text extraction failed for {file_name}: {text}")
             return {
                 "File Name": file_name,
                 "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
@@ -1181,7 +1188,7 @@ def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_ty
                 "Semantic Similarity": 0.0, "Resume Raw Text": "",
                 "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
                 "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
-                "Tag": "❌ Processing Error"
+                "Tag": "❌ Text Extraction Error"
             }
 
         exp = extract_years_of_experience(text)
@@ -1207,8 +1214,9 @@ def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_ty
         matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
         missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
 
-        # Pass the globally loaded models to semantic_score
+        print(f"DEBUG: Calling semantic_score for {file_name} with models: {global_model is not None}, {global_ml_model is not None}")
         score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills, global_model, global_ml_model)
+        print(f"DEBUG: Semantic score result for {file_name}: Score={score}, Semantic_Similarity={semantic_similarity}")
         
         concise_ai_suggestion = generate_concise_ai_suggestion(
             candidate_name=candidate_name,
@@ -1280,7 +1288,8 @@ def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_ty
             "Tag": tag
         }
     except Exception as e:
-        # print(f"Error processing {file_name} in child process: {e}") # For debugging child process
+        print(f"CRITICAL ERROR: Unhandled exception processing {file_name}: {e}")
+        traceback.print_exc() # Print full traceback for debugging
         return {
             "File Name": file_name,
             "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
@@ -1288,14 +1297,14 @@ def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_ty
             "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
             "Languages": "Not Found", "Education Details": "Not Found",
             "Work History": "Not Found", "Project Details": "Not Found",
-            "AI Suggestion": f"Error: {e}",
-            "Detailed HR Assessment": f"Error processing resume: {e}",
+            "AI Suggestion": f"Critical Error: {e}",
+            "Detailed HR Assessment": f"Critical Error processing resume: {e}",
             "Matched Keywords": "", "Missing Skills": "",
             "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
             "Semantic Similarity": 0.0, "Resume Raw Text": "",
             "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
             "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
-            "Tag": "❌ Processing Error"
+            "Tag": "❌ Critical Processing Error"
         }
 
 
@@ -1456,7 +1465,7 @@ def resume_screener_page():
         status_text.empty()
         
         # Filter out any error results before creating DataFrame
-        results = [r for r in results if r.get("Tag") != "❌ Processing Error"]
+        results = [r for r in results if r.get("Tag") not in ["❌ Processing Error", "❌ Text Extraction Error", "❌ Critical Processing Error"]]
 
         if not results:
             st.warning("No resumes were successfully processed. Please check the files and try again.")
