@@ -38,16 +38,31 @@ from firebase_admin import credentials, firestore
 # Initialize Firebase if not already initialized
 if not firebase_admin._apps:
     try:
-        # Use Streamlit secrets for Firebase service account key
-        firebase_service_account_key_str = st.secrets["FIREBASE_SERVICE_ACCOUNT_KEY"]
-        cred = credentials.Certificate(json.loads(firebase_service_account_key_str))
-        firebase_admin.initialize_app(cred)
-        st.success("Firebase Admin SDK initialized successfully!")
+        # --- START OF MODIFICATION ---
+        # Define the path to your firebase-key.json file
+        # IMPORTANT: For security, it's highly recommended to use Streamlit Secrets
+        # for your Firebase Service Account Key instead of storing it directly in your repo.
+        # If you choose this method, ensure your GitHub repository is PRIVATE.
+        firebase_key_path = os.path.join("config", "firebase-key.json")
+
+        if os.path.exists(firebase_key_path):
+            with open(firebase_key_path, "r") as f:
+                firebase_service_account_key_json = json.load(f)
+            cred = credentials.Certificate(firebase_service_account_key_json)
+            firebase_admin.initialize_app(cred)
+            st.success("Firebase Admin SDK initialized successfully from config file!")
+        else:
+            st.error(f"❌ Firebase Admin SDK initialization error: '{firebase_key_path}' not found. "
+                     "Please ensure your 'firebase-key.json' is in a 'config' folder in your repository, "
+                     "or use Streamlit Secrets for secure deployment.")
+            st.stop()
+        # --- END OF MODIFICATION ---
     except Exception as e:
-        st.error(f"❌ Firebase Admin SDK initialization error: {e}. Please ensure your Firebase service account key secret is correctly configured in Streamlit.")
+        st.error(f"❌ Firebase Admin SDK initialization error: {e}. Please ensure your Firebase service account key is valid.")
         st.stop()
 
 db = firestore.client()
+
 
 try:
     nltk.data.find('corpora/stopwords')
