@@ -17,14 +17,16 @@ def load_users():
             json.dump({}, f)
     with open(USER_DB_FILE, "r") as f:
         users = json.load(f)
-        # Ensure each user has a 'status' key and 'company' key for backward compatibility
+        # Ensure each user has a 'status', 'company', and 'role' key for backward compatibility
         for username, data in users.items():
             if isinstance(data, str): # Old format: "username": "hashed_password"
-                users[username] = {"password": data, "status": "active", "company": "N/A"}
+                users[username] = {"password": data, "status": "active", "company": "N/A", "role": "HR"}
             elif "status" not in data:
                 data["status"] = "active"
             if "company" not in data: # Add company field if missing
                 data["company"] = "N/A"
+            if "role" not in data: # Add role field if missing, default to "HR"
+                data["role"] = "HR"
         return users
 
 def save_users(users):
@@ -70,7 +72,8 @@ def register_section():
                     users[new_username] = {
                         "password": hash_password(new_password),
                         "status": "active",
-                        "company": new_company_name # Store company name
+                        "company": new_company_name, # Store company name
+                        "role": "HR" # Default new users to HR role
                     }
                     save_users(users)
                     st.success("✅ Registration successful! You can now switch to the 'Login' option.")
@@ -84,6 +87,7 @@ def admin_registration_section():
         new_username = st.text_input("New User's Username (Email)", key="new_username_admin_reg")
         new_company_name = st.text_input("New User's Company Name", key="new_company_name_admin_reg") # New field
         new_password = st.text_input("New User's Password", type="password", key="new_password_admin_reg")
+        new_user_role = st.selectbox("Assign Role", ["HR", "Candidate"], key="new_user_role_admin_reg") # New role selection
         admin_register_button = st.form_submit_button("Add New User")
 
     if admin_register_button:
@@ -99,7 +103,8 @@ def admin_registration_section():
                 users[new_username] = {
                     "password": hash_password(new_password),
                     "status": "active",
-                    "company": new_company_name
+                    "company": new_company_name,
+                    "role": new_user_role # Store selected role
                 }
                 save_users(users)
                 st.success(f"✅ User '{new_username}' added successfully!")
@@ -152,28 +157,40 @@ def admin_disable_enable_user_section():
             st.success(f"✅ User '{selected_user}' status set to **{new_status.upper()}**.")
             st.rerun() # Rerun to update the displayed status immediately
 
+def admin_change_user_role_section():
+    """Admin-driven user role change form."""
+    st.subheader("🔄 Change User Role (Admin Only)")
+    users = load_users()
+    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
+
+    if not user_options:
+        st.info("No other users to change roles for.")
+        return
+
+    with st.form("admin_change_user_role_form", clear_on_submit=False):
+        selected_user = st.selectbox("Select User to Change Role For", user_options, key="change_role_user_select")
+        
+        current_role = users[selected_user]["role"]
+        st.info(f"Current role of '{selected_user}': **{current_role.upper()}**")
+
+        new_role = st.selectbox("New Role", ["HR", "Candidate"], index=["HR", "Candidate"].index(current_role), key="new_role_select")
+        
+        if st.form_submit_button(f"Change Role to {new_role.upper()}"):
+            users[selected_user]["role"] = new_role
+            save_users(users)
+            st.success(f"✅ User '{selected_user}' role set to **{new_role.upper()}**.")
+            st.rerun()
+
 
 def login_section():
-    """
-    Handles user login (HR) and public registration.
-    Sets session state variables for authentication and user details.
-    Returns True if authenticated, False otherwise.
-    """
+    """Handles user login and public registration."""
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
     if "username" not in st.session_state:
         st.session_state.username = None
-    if "user_company" not in st.session_state:
-        st.session_state.user_company = None
-    if 'app_mode' not in st.session_state:
-        st.session_state.app_mode = "select_mode" # Default mode before selection
-    if 'candidate_logged_in' not in st.session_state:
-        st.session_state.candidate_logged_in = False
-
-    # If already authenticated, just return True
-    if st.session_state.authenticated:
-        return True
-
+    if "user_role" not in st.session_state: # Initialize user_role
+        st.session_state.user_role = None
+    
     # Initialize active_login_tab_selection if not present
     if "active_login_tab_selection" not in st.session_state:
         # Default to 'Register' if no users, otherwise 'Login'
@@ -182,84 +199,48 @@ def login_section():
         else:
             st.session_state.active_login_tab_selection = "Login"
 
-    st.title("🔐 ScreenerPro Access")
-    st.markdown("Please select your access mode.")
 
-    # Radio buttons for mode selection
-    mode = st.radio(
-        "Select Mode:",
-        ("HR Mode", "Candidate Mode"),
-        key="mode_selection",
-        horizontal=True,
-        index=0 if st.session_state.app_mode == "hr_mode" else 1 if st.session_state.app_mode == "candidate_mode" else 0 # Default to HR mode initially
+    if st.session_state.authenticated:
+        return True
+
+    # Use st.radio to simulate tabs if st.tabs() default_index is not supported
+    tab_selection = st.radio(
+        "Select an option:",
+        ("Login", "Register"),
+        key="login_register_radio",
+        index=0 if st.session_state.active_login_tab_selection == "Login" else 1
     )
 
-    if mode == "HR Mode":
-        st.session_state.app_mode = "hr_mode"
-        # Use st.radio to simulate tabs if st.tabs() default_index is not supported
-        tab_selection = st.radio(
-            "Select an option:",
-            ("Login", "Register"),
-            key="hr_login_register_radio",
-            index=0 if st.session_state.active_login_tab_selection == "Login" else 1
-        )
+    if tab_selection == "Login":
+        st.subheader("🔐 HR Login")
+        st.info("If you don't have an account, please go to the 'Register' option first.") # Added instructional message
+        with st.form("login_form", clear_on_submit=False):
+            username = st.text_input("Username", key="username_login")
+            password = st.text_input("Password", type="password", key="password_login")
+            submitted = st.form_submit_button("Login")
 
-        if tab_selection == "Login":
-            st.subheader("🔐 HR Login")
-            st.info("If you don't have an account, please go to the 'Register' option first.")
-            with st.form("login_form", clear_on_submit=False):
-                username = st.text_input("Username", key="username_login")
-                password = st.text_input("Password", type="password", key="password_login")
-                submitted = st.form_submit_button("Login")
-
-                if submitted:
-                    users = load_users()
-                    if username not in users:
-                        st.error("❌ Invalid username or password. Please register if you don't have an account.")
-                    else:
-                        user_data = users[username]
-                        if user_data["status"] == "disabled":
-                            st.error("❌ Your account has been disabled. Please contact an administrator.")
-                        elif check_password(password, user_data["password"]):
-                            st.session_state.authenticated = True
-                            st.session_state.username = username
-                            st.session_state.user_company = user_data.get("company", "N/A")
-                            st.session_state.candidate_logged_in = False # Ensure candidate mode is off
-                            st.success("✅ HR Login successful!")
-                            st.rerun()
-                        else:
-                            st.error("❌ Invalid username or password.")
-        
-        elif tab_selection == "Register":
-            register_section()
-
-    elif mode == "Candidate Mode":
-        st.session_state.app_mode = "candidate_mode"
-        st.subheader("Candidate Login")
-        if not st.session_state.candidate_logged_in:
-            # Simple password-based login for demonstration
-            candidate_password = st.text_input("Enter Candidate Access Code", type="password", key="candidate_access_code")
-            if st.button("Login as Candidate"):
-                if candidate_password == "candidate123": # Placeholder: Replace with a more secure method
-                    st.session_state.candidate_logged_in = True
-                    st.session_state.authenticated = False # Candidates are not HR authenticated users
-                    st.session_state.username = "Candidate User" # Generic name for candidate mode
-                    st.session_state.user_company = "N/A" # No company for candidates
-                    st.success("Logged in as Candidate!")
-                    st.rerun()
+            if submitted:
+                users = load_users()
+                if username not in users:
+                    st.error("❌ Invalid username or password. Please register if you don't have an account.")
                 else:
-                    st.error("Incorrect Access Code. Please try again.")
-        else:
-            st.info("You are already logged in as a Candidate.")
-            # Option to logout from candidate mode
-            if st.button("Logout from Candidate Mode"):
-                st.session_state.candidate_logged_in = False
-                st.session_state.app_mode = "select_mode"
-                st.session_state.username = None
-                st.session_state.user_company = None
-                st.rerun()
+                    user_data = users[username]
+                    if user_data["status"] == "disabled":
+                        st.error("❌ Your account has been disabled. Please contact an administrator.")
+                    elif check_password(password, user_data["password"]):
+                        st.session_state.authenticated = True
+                        st.session_state.username = username
+                        st.session_state.user_company = user_data.get("company", "N/A") # Store company name
+                        st.session_state.user_role = user_data.get("role", "HR") # Store user role
+                        st.success("✅ Login successful!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid username or password.")
+    
+    elif tab_selection == "Register": # This will be the initially selected option for new users
+        register_section()
 
-    return st.session_state.authenticated or st.session_state.candidate_logged_in
+    return st.session_state.authenticated
 
 # Helper function to check if the current user is an admin
 def is_current_user_admin():
@@ -268,32 +249,8 @@ def is_current_user_admin():
 
 # Example of how to use it if running login.py directly for testing
 if __name__ == "__main__":
-    st.set_page_config(
-        page_title="ScreenerPro Login",
-        page_icon="🔐",
-        layout="centered",
-        initial_sidebar_state="collapsed"
-    )
-    # Apply custom CSS (kept for standalone testing)
-    st.markdown(
-        """
-        <style>
-            html, body, [class*="css"] { font-family: 'Inter', sans-serif; transition: background-color 0.3s ease, color 0.3s ease; }
-            .main .block-container { padding: 2.5rem; border-radius: 20px; box-shadow: 0 15px 40px rgba(0,0,0,0.15); animation: fadeIn 0.8s ease-in-out; transition: background 0.3s ease, box-shadow 0.3s ease; }
-            @keyframes fadeIn { 0% { opacity: 0; transform: translateY(20px); } 100% { opacity: 1; transform: translateY(0); } }
-            h1, h2, h3, h4, h5, h6 { color: #00cec9; font-weight: 700; letter-spacing: -0.02em; }
-            .stButton>button { background-color: #00cec9; color: white; border-radius: 10px; padding: 0.7rem 1.4rem; font-weight: 600; border: none; transition: all 0.3s ease; box-shadow: 0 5px 15px rgba(0,0,0,0.15); cursor: pointer; letter-spacing: 0.02em; }
-            .stButton>button:hover { background-color: #00b0a8; transform: translateY(-4px); box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
-            .stRadio div[role="radiogroup"] label { border-radius: 14px; padding: 0.9rem 1.2rem; font-weight: 600; border: none; transition: all 0.2s ease; box-shadow: 0 3px 10px rgba(0,0,0,0.05); width: 100%; text-align: left; cursor: pointer; display: flex; align-items: center; }
-            .stRadio div[role="radiogroup"] label span:first-child { display: none; }
-            .stRadio div[role="radiogroup"] label:hover { background-color: rgba(0,206,201,0.1); transform: translateX(6px); box-shadow: 0 5px 15px rgba(0,0,0,0.15); }
-            .stRadio div[role="radiogroup"] input:checked + div { background-color: #00cec9; color: white; box-shadow: 0 6px 18px rgba(0,0,0,0.25); transform: translateX(0); border: 1px solid #00a09a; }
-            .stRadio div[role="radiogroup"] input:checked + div p { color: white; }
-            #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
+    st.set_page_config(page_title="Login/Register", layout="centered")
+    st.title("ScreenerPro Authentication (Test)")
     
     # Ensure all admin users exist for testing
     users = load_users()
@@ -301,58 +258,50 @@ if __name__ == "__main__":
 
     for admin_user in ADMIN_USERNAME:
         if admin_user not in users:
-            users[admin_user] = {"password": hash_password(default_admin_password), "status": "active", "company": "AdminCo"}
+            users[admin_user] = {"password": hash_password(default_admin_password), "status": "active", "company": "AdminCo", "role": "HR"} # Admins are HR by default
             st.info(f"Created default admin user: {admin_user} with password '{default_admin_password}'")
     save_users(users) # Save after potentially adding new admin users
 
-    # Call the login section
-    logged_in = login_section()
-
-    if logged_in:
-        st.markdown("---")
-        st.subheader("Login Status (for testing login.py)")
-        st.write(f"**Authenticated:** {st.session_state.authenticated}")
-        st.write(f"**Candidate Logged In:** {st.session_state.candidate_logged_in}")
-        st.write(f"**App Mode:** {st.session_state.app_mode}")
-        if st.session_state.username:
-            st.write(f"**Username:** {st.session_state.username}")
-        if st.session_state.user_company:
-            st.write(f"**Company:** {st.session_state.user_company}")
+    if login_section():
+        st.write(f"Welcome, {st.session_state.username}! Your role is: {st.session_state.user_role}")
+        st.write(f"Your company: {st.session_state.get('user_company', 'N/A')}") # Display company
+        st.write("You are logged in.")
         
-        if st.session_state.authenticated and is_current_user_admin():
+        if is_current_user_admin():
             st.markdown("---")
             st.header("Admin Test Section (You are admin)")
             admin_registration_section()
             admin_password_reset_section()
             admin_disable_enable_user_section()
+            admin_change_user_role_section() # New admin function
 
             st.subheader("👥 All Registered Users (Admin View):")
+            # This part requires pandas, which is typically in main.py.
+            # For standalone login.py testing, ensure pandas is imported.
             try:
+                # import pandas as pd # Already imported at the top of the file
                 users_data = load_users()
                 if users_data:
                     display_users = []
                     for user, data in users_data.items():
                         hashed_pass = data.get("password", data) if isinstance(data, dict) else data
                         status = data.get("status", "N/A") if isinstance(data, dict) else "N/A"
-                        company = data.get("company", "N/A")
-                        display_users.append([user, hashed_pass, status, company])
-                    st.dataframe(pd.DataFrame(display_users, columns=["Email/Username", "Hashed Password (DO NOT EXPOSE)", "Status", "Company"]), use_container_width=True)
+                        company = data.get("company", "N/A") # Get company
+                        role = data.get("role", "N/A") # Get role
+                        display_users.append([user, hashed_pass, status, company, role]) # Add company and role to the list
+                    st.dataframe(pd.DataFrame(display_users, columns=["Email/Username", "Hashed Password (DO NOT EXPOSE)", "Status", "Company", "Role"]), use_container_width=True) # Update columns list
                 else:
                     st.info("No users registered yet.")
             except ImportError:
                 st.warning("Pandas is not imported. User table cannot be displayed.")
             except Exception as e:
                 st.error(f"Error loading user data: {e}")
-        elif st.session_state.authenticated: # HR user, not admin
-            st.info("You are logged in as an HR user. Admin features are not available.")
-        
-        if st.session_state.authenticated or st.session_state.candidate_logged_in:
-            if st.button("Logout"):
-                st.session_state.authenticated = False
-                st.session_state.candidate_logged_in = False
-                st.session_state.app_mode = "select_mode"
-                st.session_state.pop('username', None)
-                st.session_state.pop('user_company', None)
-                st.rerun()
+        else:
+            st.info(f"Log in as one of the admin accounts ({', '.join(ADMIN_USERNAME)}) to see admin features.")
+            
+        if st.button("Logout"):
+            st.session_state.authenticated = False
+            st.session_state.pop('username', None)
+            st.rerun()
     else:
         st.info("Please login or register to continue.")
