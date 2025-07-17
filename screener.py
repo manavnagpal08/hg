@@ -2135,4 +2135,54 @@ def generate_certificate_html(candidate_data):
                 box-shadow: none;
             }
             .logo-text, .certificate-header, .candidate-name, .score-rank {
-                color: #00c
+                color: #00cec9 !important; /* Ensure colors are printed */
+                text-shadow: none !important;
+            }
+            .candidate-name {
+                animation: none !important; /* Disable animation for print */
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="certificate-container">
+        <div class="logo-text">ScreenerPro</div>
+        <div class="certificate-header">Certification of Excellence</div>
+        <div class="certificate-subheader">This is to proudly certify that</div>
+        <div class="candidate-name">{{CANDIDATE_NAME}}</div>
+        <div class="certificate-body">
+            <p>has successfully completed the comprehensive AI-powered screening process by ScreenerPro and achieved a distinguished ranking of</p>
+            <div class="score-rank">
+                {{CERTIFICATE_RANK}}
+            </div>
+            <p>demonstrating an outstanding Screener Score of **{{SCORE}}%**.</p>
+            <p>This certification attests to their highly relevant skills, extensive experience, and strong alignment with the demanding requirements of modern professional roles. It signifies their readiness to excel in challenging environments and contribute significantly to organizational success.</p>
+        </div>
+        <div class="date-id">
+            Awarded on: {{DATE_SCREENED}}<br>
+            Certificate ID: {{CERTIFICATE_ID}}
+        </div>
+        <div class="footer-text">
+            This certificate is digitally verified by ScreenerPro.
+        </div>
+    </div>
+</body>
+</html>
+    """
+
+    candidate_name = candidate_data.get('Candidate Name', 'Candidate Name')
+    score = candidate_data.get('Score (%)', 0.0)
+    certificate_rank = candidate_data.get('Certificate Rank', 'Not Applicable')
+    date_screened = candidate_data.get('Date Screened', datetime.now().date()).strftime("%B %d, %Y")
+    certificate_id = candidate_data.get('Certificate ID', 'N/A')
+    
+    html_content = html_template.replace("{{CANDIDATE_NAME}}", candidate_name)
+    html_content = html_content.replace("{{SCORE}}", f"{score:.1f}")
+    html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
+    html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
+    html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
+
+    return html_content
+
+if __name__ == "__main__":
+    resume_screener_page()
