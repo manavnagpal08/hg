@@ -17,7 +17,7 @@ import requests
 from about_us import about_us_page
 from privacy_policy import privacy_policy_page
 # Import the screener functions from the updated screener.py
-from screener import resume_screener_page, candidate_screener_page
+from screener import resume_screener_page
 
 # --- Firebase REST Setup (for main.py's own data persistence, e.g., session data) ---
 # IMPORTANT: Replace "YOUR_FIREBASE_WEB_API_KEY" with your actual Firebase Web API Key
