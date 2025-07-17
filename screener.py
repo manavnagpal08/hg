@@ -1283,6 +1283,24 @@ The {sender_name}""")
 def resume_screener_page():
     st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
 
+    # Initialize all session state variables at the very beginning
+    if 'screening_cutoff_score' not in st.session_state:
+        st.session_state['screening_cutoff_score'] = 75
+    if 'screening_min_experience' not in st.session_state:
+        st.session_state['screening_min_experience'] = 2
+    if 'screening_max_experience' not in st.session_state:
+        st.session_state['screening_max_experience'] = 10
+    if 'screening_min_cgpa' not in st.session_state:
+        st.session_state['screening_min_cgpa'] = 2.5
+    
+    # Initialize DataFrame and raw texts
+    if 'comprehensive_df' not in st.session_state:
+        st.session_state['comprehensive_df'] = pd.DataFrame()
+    if 'resume_raw_texts' not in st.session_state:
+        st.session_state['resume_raw_texts'] = {}
+    if 'view_certificate_id' not in st.session_state:
+        st.session_state['view_certificate_id'] = None
+
     # --- Initial Tesseract Check ---
     tesseract_cmd_path = get_tesseract_cmd()
     if not tesseract_cmd_path:
@@ -1327,17 +1345,17 @@ def resume_screener_page():
 
     with col2:
         # Store cutoff and min_experience in session state
-        cutoff = st.slider("📈 **Minimum Score Cutoff (%)**", 0, 100, 75, help="Candidates scoring below this percentage will be flagged for closer review or considered less suitable.")
+        cutoff = st.slider("📈 **Minimum Score Cutoff (%)**", 0, 100, 75, key="min_score_cutoff_slider", help="Candidates scoring below this percentage will be flagged for closer review or considered less suitable.")
         st.session_state['screening_cutoff_score'] = cutoff # Store in session state
 
-        min_experience = st.slider("💼 **Minimum Experience Required (Years)**", 0, 15, 2, help="Candidates with less than this experience will be noted.")
+        min_experience = st.slider("💼 **Minimum Experience Required (Years)**", 0, 15, 2, key="min_exp_slider", help="Candidates with less than this experience will be noted.")
         st.session_state['screening_min_experience'] = min_experience # Store in session state
 
-        max_experience = st.slider("⬆️ **Maximum Experience Allowed (Years)**", 0, 20, 10, help="Candidates with more than this experience might be considered overqualified or outside the target range.")
+        max_experience = st.slider("⬆️ **Maximum Experience Allowed (Years)**", 0, 20, 10, key="max_exp_slider", help="Candidates with more than this experience might be considered overqualified or outside the target range.")
         st.session_state['screening_max_experience'] = max_experience # Store in session state
 
         # New CGPA Cutoff Slider
-        min_cgpa = st.slider("🎓 **Minimum CGPA Required (4.0 Scale)**", 0.0, 4.0, 2.5, 0.1, help="Candidates with CGPA below this value (normalized to 4.0) will be noted.")
+        min_cgpa = st.slider("🎓 **Minimum CGPA Required (4.0 Scale)**", 0.0, 4.0, 2.5, 0.1, key="min_cgpa_slider", help="Candidates with CGPA below this value (normalized to 4.0) will be noted.")
         st.session_state['screening_min_cgpa'] = min_cgpa # Store in session state
 
         st.markdown("---")
@@ -1366,14 +1384,6 @@ def resume_screener_page():
 
     # --- Updated File Uploader to accept PDF and Images ---
     resume_files = st.file_uploader("📄 **Upload Resumes (PDF, JPG, PNG)**", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, help="Upload one or more PDF or image resumes for screening.")
-
-    # Initialize or update the comprehensive_df in session state
-    if 'comprehensive_df' not in st.session_state:
-        st.session_state['comprehensive_df'] = pd.DataFrame()
-    
-    # Store raw resume texts for search functionality
-    if 'resume_raw_texts' not in st.session_state:
-        st.session_state['resume_raw_texts'] = {}
 
     if jd_text and resume_files:
         # --- Job Description Keyword Cloud ---
@@ -1652,9 +1662,14 @@ def resume_screener_page():
         auto_shortlisted_candidates = st.session_state['comprehensive_df'][
             (st.session_state['comprehensive_df']['Score (%)'] >= cutoff) & 
             (st.session_state['comprehensive_df']['Years Experience'] >= min_experience) &
-            (st.session_state['comprehensive_df']['Years Experience'] <= max_experience) &
-            ((st.session_state['comprehensive_df']['CGPA (4.0 Scale)'].isnull()) | (st.session_state['CGPA (4.0 Scale)'] >= min_cgpa))
+            (st.session_state['comprehensive_df']['Years Experience'] <= max_experience)
         ].copy() # Use .copy() to avoid SettingWithCopyWarning
+
+        # Apply CGPA filter only if the column exists and is not entirely null
+        if 'CGPA (4.0 Scale)' in auto_shortlisted_candidates.columns and auto_shortlisted_candidates['CGPA (4.0 Scale)'].notnull().any():
+            auto_shortlisted_candidates = auto_shortlisted_candidates[
+                (auto_shortlisted_candidates['CGPA (4.0 Scale)'].isnull()) | (auto_shortlisted_candidates['CGPA (4.0 Scale)'] >= min_cgpa)
+            ]
 
         if not auto_shortlisted_candidates.empty:
             st.success(f"**{len(auto_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, and minimum CGPA ≥ {min_cgpa} or N/A).")
@@ -1752,17 +1767,17 @@ def resume_screener_page():
         with filter_col4:
             min_score_filter, max_score_filter = st.slider(
                 "**Score Range (%):**",
-                0, 100, (0, 100), help="Filter candidates by their overall score range."
+                0, 100, (0, 100), key="score_range_filter", help="Filter candidates by their overall score range."
             )
         with filter_col5:
             min_exp_filter, max_exp_filter = st.slider(
                 "**Experience Range (Years):**",
-                0, 20, (0, 20), help="Filter candidates by their years of experience range."
+                0, 20, (0, 20), key="exp_range_filter", help="Filter candidates by their years of experience range."
             )
         with filter_col6:
             min_cgpa_filter, max_cgpa_filter = st.slider(
                 "**CGPA Range (4.0 Scale):**",
-                0.0, 4.0, (0.0, 4.0), 0.1, help="Filter candidates by their CGPA range (normalized to 4.0)."
+                0.0, 4.0, (0.0, 4.0), 0.1, key="cgpa_range_filter", help="Filter candidates by their CGPA range (normalized to 4.0)."
             )
         
         # Additional filters
@@ -1815,12 +1830,13 @@ def resume_screener_page():
             (filtered_display_df['Years Experience'] >= min_exp_filter) & (filtered_display_df['Years Experience'] <= max_exp_filter)
         ]
         # For CGPA, handle None values gracefully (e.g., treat None as outside the filter range unless range is full 0-4)
-        if not (min_cgpa_filter == 0.0 and max_cgpa_filter == 4.0):
-            filtered_display_df = filtered_display_df[
-                ((filtered_display_df['CGPA (4.0 Scale)'].notnull()) & 
-                 (filtered_display_df['CGPA (4.0 Scale)'] >= min_cgpa_filter) & 
-                 (filtered_display_df['CGPA (4.0 Scale)'] <= max_cgpa_filter))
-            ]
+        if not filtered_display_df.empty and 'CGPA (4.0 Scale)' in filtered_display_df.columns: # Check if column exists before filtering
+            if not (min_cgpa_filter == 0.0 and max_cgpa_filter == 4.0):
+                filtered_display_df = filtered_display_df[
+                    ((filtered_display_df['CGPA (4.0 Scale)'].notnull()) & 
+                     (filtered_display_df['CGPA (4.0 Scale)'] >= min_cgpa_filter) & 
+                     (filtered_display_df['CGPA (4.0 Scale)'] <= max_cgpa_filter))
+                ]
         
         if selected_locations:
             # Filter rows where ANY of the selected locations are present in the 'Location' string
