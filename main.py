@@ -1,2142 +1,1547 @@
 import streamlit as st
-import pdfplumber
-import pandas as pd
-import re
+import json
+import bcrypt
 import os
-import sklearn
-import joblib
-import numpy as np
-from datetime import datetime, date
+import re
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
-from sentence_transformers import SentenceTransformer
-import nltk
+from datetime import datetime
+import plotly.express as px
+import statsmodels.api as sm
 import collections
-from sklearn.metrics.pairwise import cosine_similarity
-import urllib.parse
-import uuid
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
-import tempfile
-import shutil
-from weasyprint import HTML
-from concurrent.futures import ProcessPoolExecutor, as_completed # Changed to ProcessPoolExecutor
-from io import BytesIO
+import requests # Added for REST API calls
 
-# --- OCR Specific Imports ---
-from PIL import Image
-import pytesseract
-import cv2
-from pdf2image import convert_from_bytes
+# Import the new pages
+from about_us import about_us_page
+from privacy_policy import privacy_policy_page
 
-# Global NLTK download check (should run once)
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords')
-
-# Define global constants (these are fine as they are not large objects to be pickled)
-MASTER_CITIES = set([
-    "Bengaluru", "Mumbai", "Delhi", "Chennai", "Hyderabad", "Kolkata", "Pune", "Ahmedabad", "Jaipur", "Lucknow",
-    "Chandigarh", "Kochi", "Coimbatore", "Nagpur", "Bhopal", "Indore", "Gurgaon", "Noida", "Surat", "Visakhapatnam",
-    "Patna", "Vadodara", "Ghaziabad", "Ludhiana", "Agra", "Nashik", "Faridabad", "Meerut", "Rajkot", "Varanasi",
-    "Srinagar", "Aurangabad", "Dhanbad", "Amritsar", "Allahabad", "Ranchi", "Jamshedpur", "Gwalior", "Jabalpur",
-    "Vijayawada", "Jodhpur", "Raipur", "Kota", "Guwahati", "Thiruvananthapuram", "Mysuru", "Hubballi-Dharwad",
-    "Mangaluru", "Belagavi", "Davangere", "Ballari", "Tumakuru", "Shivamogga", "Bidar", "Hassan", "Gadag-Betageri",
-    "Chitradurga", "Udupi", "Kolar", "Mandya", "Chikkamagaluru", "Koppal", "Chamarajanagar", "Yadgir", "Raichur",
-    "Kalaburagi", "Bengaluru Rural", "Dakshina Kannada", "Uttara Kannada", "Kodagu", "Chikkaballapur", "Ramanagara",
-    "Bagalkot", "Gadag", "Haveri", "Vijayanagara", "Krishnagiri", "Vellore", "Salem", "Erode", "Tiruppur", "Madurai",
-    "Tiruchirappalli", "Thanjavur", "Dindigul", "Kanyakumari", "Thoothukudi", "Tirunelveli", "Nagercoil", "Puducherry",
-    "Panaji", "Margao", "Vasco da Gama", "Mapusa", "Ponda", "Bicholim", "Curchorem", "Sanquelim", "Valpoi", "Pernem",
-    "Quepem", "Canacona", "Mormugao", "Sanguem", "Dharbandora", "Tiswadi", "Salcete", "Bardez",
-    "London", "New York", "Paris", "Berlin", "Tokyo", "Sydney", "Toronto", "Vancouver", "Singapore", "Dubai",
-    "San Francisco", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia", "San Antonio", "San Diego",
-    "Dallas", "San Jose", "Austin", "Jacksonville", "Fort Worth", "Columbus", "Charlotte", "Indianapolis",
-    "Seattle", "Denver", "Washington D.C.", "Boston", "Nashville", "El Paso", "Detroit", "Oklahoma City",
-    "Portland", "Las Vegas", "Memphis", "Louisville", "Baltimore", "Milwaukee", "Albuquerque", "Tucson",
-    "Fresno", "Sacramento", "Mesa", "Atlanta", "Kansas City", "Colorado Springs", "Raleigh", "Miami", "Omaha",
-    "Virginia Beach", "Long Beach", "Oakland", "Minneapolis", "Tulsa", "Wichita", "New Orleans", "Cleveland",
-    "Tampa", "Honolulu", "Anaheim", "Santa Ana", "St. Louis", "Riverside", "Lexington", "Pittsburgh", "Cincinnati",
-    "Anchorage", "Plano", "Newark", "Orlando", "Irvine", "Garland", "Hialeah", "Scottsdale", "North Las Vegas",
-    "Chandler", "Laredo", "Chula Vista", "Madison", "Reno", "Buffalo", "Durham", "Rochester", "Winston-Salem",
-    "St. Petersburg", "Jersey City", "Toledo", "Lincoln", "Greensboro", "Boise", "Richmond", "Stockton",
-    "San Bernardino", "Des Moines", "Modesto", "Fayetteville", "Shreveport", "Akron", "Tacoma", "Aurora",
-    "Oxnard", "Fontana", "Montgomery", "Little Rock", "Grand Rapids", "Springfield", "Yonkers", "Augusta",
-    "Mobile", "Port St. Lucie", "Denton", "Spokane", "Chattanooga", "Worcester", "Providence", "Fort Lauderdale",
-    "Chesapeake", "Fremont", "Baton Rouge", "Santa Clarita", "Birmingham", "Glendale", "Huntsville",
-    "Salt Lake City", "Frisco", "McKinney", "Grand Prairie", "Overland Park", "Brownsville", "Killeen",
-    "Pasadena", "Olathe", "Dayton", "Savannah", "Fort Collins", "Naples", "Gainesville", "Lakeland", "Sarasota",
-    "Daytona Beach", "Melbourne", "Clearwater", "St. Augustine", "Key West", "Fort Myers", "Cape Coral",
-    "Coral Springs", "Pompano Beach", "Miami Beach", "West Palm Beach", "Boca Raton", "Fort Pierce",
-    "Port Orange", "Kissimmee", "Sanford", "Ocala", "Bradenton", "Palm Bay", "Deltona", "Largo",
-    "Deerfield Beach", "Boynton Beach", "Coconut Creek", "Sunrise", "Plantation", "Davie", "Miramar",
-    "Hollywood", "Pembroke Pines", "Coral Gables", "Doral", "Aventura", "Sunny Isles Beach", "North Miami",
-    "Miami Gardens", "Homestead", "Cutler Bay", "Pinecrest", "Kendall", "Richmond Heights", "West Kendall",
-    "East Kendall", "South Miami", "Sweetwater", "Opa-locka", "Florida City", "Golden Glades", "Leisure City",
-    "Princeton", "West Perrine", "Naranja", "Goulds", "South Miami Heights", "Country Walk", "The Crossings",
-    "Three Lakes", "Richmond West", "Palmetto Bay", "Palmetto Estates", "Perrine", "Cutler Ridge", "Westview",
-    "Gladeview", "Brownsville", "Liberty City", "West Little River", "Pinewood", "Ojus", "Ives Estates",
-    "Highland Lakes", "Sunny Isles Beach", "Golden Beach", "Bal Harbour", "Surfside", "Bay Harbor Islands",
-    "Indian Creek", "North Bay Village", "Biscayne Park", "El Portal", "Miami Shores", "North Miami Beach",
-    "Aventura"
-])
-
-NLTK_STOP_WORDS = set(nltk.corpus.stopwords.words('english'))
-CUSTOM_STOP_WORDS = set([
-    "work", "experience", "years", "year", "months", "month", "day", "days", "project", "projects",
-    "team", "teams", "developed", "managed", "led", "created", "implemented", "designed",
-    "responsible", "proficient", "knowledge", "ability", "strong", "proven", "demonstrated",
-    "solution", "solutions", "system", "systems", "platform", "platforms", "framework", "frameworks",
-    "database", "databases", "server", "servers", "cloud", "computing", "machine", "learning",
-    "artificial", "intelligence", "api", "apis", "rest", "graphql", "agile", "scrum", "kanban",
-    "devops", "ci", "cd", "testing", "qa",
-    "security", "network", "networking", "virtualization",
-    "containerization", "docker", "kubernetes", "git", "github", "gitlab", "bitbucket", "jira",
-    "confluence", "slack", "microsoft", "google", "amazon", "azure", "oracle", "sap", "crm", "erp",
-    "salesforce", "servicenow", "tableau", "powerbi", "qlikview", "excel", "word", "powerpoint",
-    "outlook", "visio", "html", "css", "js", "web", "data", "science", "analytics", "engineer",
-    "software", "developer", "analyst", "business", "management", "reporting", "analysis", "tools",
-    "python", "java", "javascript", "c++", "c#", "php", "ruby", "go", "swift", "kotlin", "r",
-    "sql", "nosql", "linux", "unix", "windows", "macos", "ios", "android", "mobile", "desktop",
-    "application", "applications", "frontend", "backend", "fullstack", "ui", "ux", "design",
-    "architecture", "architect", "engineering", "scientist", "specialist", "consultant",
-    "associate", "senior", "junior", "lead", "principal", "director", "manager", "head", "chief",
-    "officer", "president", "vice", "executive", "ceo", "cto", "cfo", "coo", "hr", "human",
-    "resources", "recruitment", "talent", "acquisition", "onboarding", "training", "development",
-    "performance", "compensation", "benefits", "payroll", "compliance", "legal", "finance",
-    "accounting", "auditing", "tax", "budgeting", "forecasting", "investments", "marketing",
-    "sales", "customer", "service", "support", "operations", "supply", "chain", "logistics",
-    "procurement", "manufacturing", "production", "quality", "assurance", "control", "research",
-    "innovation", "product", "program", "portfolio", "governance", "risk", "communication",
-    "presentation", "negotiation", "problem", "solving", "critical", "thinking", "analytical",
-    "creativity", "adaptability", "flexibility", "teamwork", "collaboration", "interpersonal",
-    "organizational", "time", "multitasking", "detail", "oriented", "independent", "proactive",
-    "self", "starter", "results", "driven", "client", "facing", "stakeholder", "engagement",
-    "vendor", "budget", "cost", "reduction", "process", "improvement", "standardization",
-    "optimization", "automation", "digital", "transformation", "change", "methodologies",
-    "industry", "regulations", "regulatory", "documentation", "technical", "writing",
-    "dashboards", "visualizations", "workshops", "feedback", "reviews", "appraisals",
-    "offboarding", "employee", "relations", "diversity", "inclusion", "equity", "belonging",
-    "corporate", "social", "responsibility", "csr", "sustainability", "environmental", "esg",
-    "ethics", "integrity", "professionalism", "confidentiality", "discretion", "accuracy",
-    "precision", "efficiency", "effectiveness", "scalability", "robustness", "reliability",
-    "vulnerability", "assessment", "penetration", "incident", "response", "disaster",
-    "recovery", "continuity", "bcp", "drp", "gdpr", "hipaa", "soc2", "iso", "nist", "pci",
-    "dss", "ccpa", "privacy", "protection", "grc", "cybersecurity", "information", "infosec",
-    "threat", "intelligence", "soc", "event", "siem", "identity", "access", "iam", "privileged",
-    "pam", "multi", "factor", "authentication", "mfa", "single", "sign", "on", "sso",
-    "encryption", "decryption", "firewall", "ids", "ips", "vpn", "endpoint", "antivirus",
-    "malware", "detection", "forensics", "handling", "assessments", "policies", "procedures",
-    "guidelines", "mitre", "att&ck", "modeling", "secure", "lifecycle", "sdlc", "awareness",
-    "phishing", "vishing", "smishing", "ransomware", "spyware", "adware", "rootkits",
-    "botnets", "trojans", "viruses", "worms", "zero", "day", "exploits", "patches", "patching",
-    "updates", "upgrades", "configuration", "ticketing", "crm", "erp", "scm", "hcm", "financial",
-    "accounting", "bi", "warehousing", "etl", "extract", "transform", "load", "lineage",
-    "master", "mdm", "lakes", "marts", "big", "hadoop", "spark", "kafka", "flink", "mongodb",
-    "cassandra", "redis", "elasticsearch", "relational", "mysql", "postgresql", "db2",
-    "teradata", "snowflake", "redshift", "synapse", "bigquery", "aurora", "dynamodb",
-    "documentdb", "cosmosdb", "graph", "neo4j", "graphdb", "timeseries", "influxdb",
-    "timescaledb", "columnar", "vertica", "clickhouse", "vector", "pinecone", "weaviate",
-    "milvus", "qdrant", "chroma", "faiss", "annoy", "hnswlib", "scikit", "learn", "tensorflow",
-    "pytorch", "keras", "xgboost", "lightgbm", "catboost", "statsmodels", "numpy", "pandas",
-    "matplotlib", "seaborn", "plotly", "bokeh", "dash", "flask", "django", "fastapi", "spring",
-    "boot", ".net", "core", "node.js", "express.js", "react", "angular", "vue.js", "svelte",
-    "jquery", "bootstrap", "tailwind", "sass", "less", "webpack", "babel", "npm", "yarn",
-    "ansible", "terraform", "jenkins", "gitlab", "github", "actions", "codebuild", "codepipeline",
-    "codedeploy", "build", "deploy", "run", "lambda", "functions", "serverless", "microservices",
-    "gateway", "mesh", "istio", "linkerd", "grpc", "restful", "soap", "message", "queues",
-    "rabbitmq", "activemq", "bus", "sqs", "sns", "pubsub", "version", "control", "svn",
-    "mercurial", "trello", "asana", "monday.com", "smartsheet", "project", "primavera",
-    "zendesk", "freshdesk", "itil", "cobit", "prince2", "pmp", "master", "owner", "lean",
-    "six", "sigma", "black", "belt", "green", "yellow", "qms", "9001", "27001", "14001",
-    "ohsas", "18001", "sa", "8000", "cmii", "cmi", "cism", "cissp", "ceh", "comptia",
-    "security+", "network+", "a+", "linux+", "ccna", "ccnp", "ccie", "certified", "solutions",
-    "architect", "developer", "sysops", "administrator", "specialty", "professional", "azure",
-    "az-900", "az-104", "az-204", "az-303", "az-304", "az-400", "az-500", "az-700", "az-800",
-    "az-801", "dp-900", "dp-100", "dp-203", "ai-900", "ai-102", "da-100", "pl-900", "pl-100",
-    "pl-200", "pl-300", "pl-400", "pl-500", "ms-900", "ms-100", "ms-101", "ms-203", "ms-500",
-    "ms-700", "ms-720", "ms-740", "ms-600", "sc-900", "sc-200", "sc-300", "sc-400", "md-100",
-    "md-101", "mb-200", "mb-210", "mb-220", "mb-230", "mb-240", "mb-260", "mb-300", "mb-310",
-    "mb-320", "mb-330", "mb-340", "mb-400", "mb-500", "mb-600", "mb-700", "mb-800", "mb-910",
-    "mb-920", "gcp-ace", "gcp-pca", "gcp-pde", "gcp-pse", "gcp-pml", "gcp-psa", "gcp-pcd",
-    "gcp-pcn", "gcp-psd", "gcp-pda", "gcp-pci", "gcp-pws", "gcp-pwa", "gcp-pme", "gcp-pms",
-    "gcp-pmd", "gcp-pma", "gcp-pmc", "gcp-pmg", "cisco", "juniper", "red", "hat", "rhcsa",
-    "rhce", "vmware", "vcpa", "vcpd", "vcpi", "vcpe", "vcpx", "citrix", "cc-v", "cc-p",
-    "cc-e", "cc-m", "cc-s", "cc-x", "palo", "alto", "pcnsa", "pcnse", "fortinet", "fcsa",
-    "fcsp", "fcc", "fcnsp", "fct", "fcp", "fcs", "fce", "fcn", "fcnp", "fcnse"
-])
-STOP_WORDS = NLTK_STOP_WORDS.union(CUSTOM_STOP_WORDS)
-
-SKILL_CATEGORIES = {
-    "Programming Languages": ["Python", "Java", "JavaScript", "C++", "C#", "Go", "Ruby", "PHP", "Swift", "Kotlin", "TypeScript", "R", "Bash Scripting", "Shell Scripting"],
-    "Web Technologies": ["HTML5", "CSS3", "React", "Angular", "Vue.js", "Node.js", "Django", "Flask", "Spring Boot", "Express.js", "WebSockets"],
-    "Databases": ["SQL", "NoSQL", "PostgreSQL", "MySQL", "MongoDB", "Cassandra", "Elasticsearch", "Neo4j", "Redis", "BigQuery", "Snowflake", "Redshift", "Aurora", "DynamoDB", "DocumentDB", "CosmosDB"],
-    "Cloud Platforms": ["AWS", "Azure", "Google Cloud Platform", "GCP", "Serverless", "AWS Lambda", "Azure Functions", "Google Cloud Functions"],
-    "DevOps & MLOps": ["Git", "GitHub", "GitLab", "Bitbucket", "CI/CD", "Docker", "Kubernetes", "Terraform", "Ansible", "Jenkins", "CircleCI", "GitHub Actions", "Azure DevOps", "MLOps"],
-    "Data Science & ML": ["Machine Learning", "Deep Learning", "Natural Language Processing", "Computer Vision", "Reinforcement Learning", "Scikit-learn", "TensorFlow", "PyTorch", "Keras", "XGBoost", "LightGBM", "Data Cleaning", "Feature Engineering",
-    "Model Evaluation", "Statistical Modeling", "Time Series Analysis", "Predictive Modeling", "Clustering",
-    "Classification", "Regression", "Neural Networks", "Convolutional Networks", "Recurrent Networks",
-    "Transformers", "LLMs", "Prompt Engineering", "Generative AI", "MLOps", "Data Munging", "A/B Testing",
-    "Experiment Design", "Hypothesis Testing", "Bayesian Statistics", "Causal Inference", "Graph Neural Networks"],
-    "Data Analytics & BI": ["Data Cleaning", "Feature Engineering", "Model Evaluation", "Statistical Analysis", "Time Series Analysis", "Data Munging", "A/B Testing", "Experiment Design", "Hypothesis Testing", "Bayesian Statistics", "Causal Inference", "Excel (Advanced)", "Tableau", "Power BI", "Looker", "Qlik Sense", "Google Data Studio", "Dax", "M Query", "ETL", "ELT", "Data Warehousing", "Data Lake", "Data Modeling", "Business Intelligence", "Data Visualization", "Dashboarding", "Report Generation", "Google Analytics"],
-    "Soft Skills": ["Stakeholder Management", "Risk Management", "Change Management", "Communication Skills", "Public Speaking", "Presentation Skills", "Cross-functional Collaboration",
-    "Problem Solving", "Critical Thinking", "Analytical Skills", "Adaptability", "Time Management",
-    "Organizational Skills", "Attention to Detail", "Leadership", "Mentorship", "Team Leadership",
-    "Decision Making", "Negotiation", "Client Management", "Stakeholder Communication", "Active Listening",
-    "Creativity", "Innovation", "Research", "Data Analysis", "Report Writing", "Documentation"],
-    "Project Management": ["Agile Methodologies", "Scrum", "Kanban", "Jira", "Trello", "Product Lifecycle", "Sprint Planning", "Project Charter", "Gantt Charts", "MVP", "Backlog Grooming",
-    "Program Management", "Portfolio Management", "PMP", "CSM"],
-    "Security": ["Cybersecurity", "Information Security", "Risk Assessment", "Compliance", "GDPR", "HIPAA", "ISO 27001", "Penetration Testing", "Vulnerability Management", "Incident Response", "Security Audits", "Forensics", "Threat Intelligence", "SIEM", "Firewall Management", "Endpoint Security", "IAM", "Cryptography", "Network Security", "Application Security", "Cloud Security"],
-    "Other Tools & Frameworks": ["Jira", "Confluence", "Swagger", "OpenAPI", "Zendesk", "ServiceNow", "Intercom", "Live Chat", "Ticketing Systems", "HubSpot", "Salesforce Marketing Cloud",
-    "QuickBooks", "SAP FICO", "Oracle Financials", "Workday", "Microsoft Dynamics", "NetSuite", "Adobe Creative Suite", "Canva", "Mailchimp", "Hootsuite", "Buffer", "SEMrush", "Ahrefs", "Moz", "Screaming Frog",
-    "JMeter", "Postman", "SoapUI", "SVN", "Perforce", "Asana", "Monday.com", "Miro", "Lucidchart", "Visio", "MS Project", "Primavera", "AutoCAD", "SolidWorks", "MATLAB", "LabVIEW", "Simulink", "ANSYS",
-    "CATIA", "NX", "Revit", "ArcGIS", "QGIS", "OpenCV", "NLTK", "SpaCy", "Gensim", "Hugging Face Transformers",
-    "Docker Compose", "Helm", "Ansible Tower", "SaltStack", "Chef InSpec", "Terraform Cloud", "Vault",
-    "Consul", "Nomad", "Prometheus", "Grafana", "Alertmanager", "Loki", "Tempo", "Jaeger", "Zipkin",
-    "Fluentd", "Logstash", "Kibana", "Grafana Loki", "Datadog", "New Relic", "AppDynamics", "Dynatrace",
-    "Nagios", "Zabbix", "Icinga", "PRTG", "SolarWinds", "Wireshark", "Nmap", "Metasploit", "Burp Suite",
-    "OWASP ZAP", "Nessus", "Qualys", "Rapid7", "Tenable", "CrowdStrike", "SentinelOne", "Palo Alto Networks",
-    "Fortinet", "Cisco Umbrella", "Okta", "Auth0", "Keycloak", "Ping Identity", "Active Directory",
-    "LDAP", "OAuth", "JWT", "OpenID Connect", "SAML", "MFA", "SSO", "PKI", "TLS/SSL", "VPN", "IDS/IPS",
-    "DLP", "CASB", "SOAR", "XDR", "EDR", "MDR", "GRC", "ITIL", "Lean Six Sigma", "CFA", "CPA", "SHRM-CP",
-    "PHR", "CEH", "OSCP", "CCNA", "CISSP", "CISM", "CompTIA Security+"]
-}
-
-MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
-
-# IMPORTANT: REPLACE THESE WITH YOUR ACTUAL DEPLOYMENT URLs
-# This is the base URL of your Streamlit application (e.g., https://your-app-name.streamlit.app)
-APP_BASE_URL = "https://screenerpro-app.streamlit.app" # <--- REPLACE THIS WITH YOUR STREAMLIT APP URL
-# This is the base URL where your certificate.html is hosted (e.g., https://your-github-username.github.io/screenerpro-certs)
-# NOTE: This URL is no longer used for email content, but may be used if you still host a public verification page.
-CERTIFICATE_HOSTING_URL = "https://manav-jain.github.io/screenerpro-certs" # <--- REPLACE THIS WITH YOUR CERTIFICATE HOSTING URL
+# --- Firebase REST Setup ---
+# IMPORTANT: Replace "YOUR_FIREBASE_WEB_API_KEY" with your actual Firebase Web API Key
+# You can find this in your Firebase project settings -> Project settings -> General -> Web API Key
+FIREBASE_WEB_API_KEY = os.environ.get('FIREBASE_WEB_API_KEY', 'AIzaSyDjC7tdmpEkpsipgf9r1c3HlTO7C7BZ6Mw') # Ensure this is your actual key
+# Use __app_id from the Canvas environment for the project ID if available, otherwise use a default
+FIREBASE_PROJECT_ID = globals().get('__app_id', 'screenerproapp')
+FIRESTORE_BASE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents"
 
 
-# This function needs to be called in each process.
-def _get_tesseract_cmd_for_process():
-    tesseract_path = shutil.which("tesseract")
-    if tesseract_path:
-        pytesseract.pytesseract.tesseract_cmd = tesseract_path
-        return tesseract_path
-    return None
+# File to store user credentials
+USER_DB_FILE = "users.json"
+ADMIN_USERNAME = ("admin@forscreenerpro", "admin@forscreenerpro2", "manav.nagpal2005@gmail.com")
 
-def preprocess_image_for_ocr(image):
-    img_cv = np.array(image)
-    img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
-    img_processed = cv2.adaptiveThreshold(img_cv, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                          cv2.THRESH_BINARY, 11, 2)
-    return Image.fromarray(img_processed)
+def load_users():
+    """Loads user data from the JSON file."""
+    if not os.path.exists(USER_DB_FILE):
+        with open(USER_DB_FILE, "w") as f:
+            json.dump({}, f)
+    with open(USER_DB_FILE, "r") as f:
+        users = json.load(f)
+        # Ensure each user has a 'status' key and 'company' key for backward compatibility
+        for username, data in users.items():
+            if isinstance(data, str): # Old format: "username": "hashed_password"
+                users[username] = {"password": data, "status": "active", "company": "N/A"}
+            # After ensuring it's a dict, check for missing keys
+            if "status" not in users[username]:
+                users[username]["status"] = "active"
+            if "company" not in users[username]: # Add company field if missing
+                users[username]["company"] = "N/A"
+        return users
 
-def clean_text(text):
-    text = re.sub(r'\n', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'[^\x00-\x7F]+', ' ', text)
-    return text.strip().lower()
+def save_users(users):
+    """Saves user data to the JSON file."""
+    with open(USER_DB_FILE, "w") as f:
+        json.dump(users, f, indent=4)
 
-def extract_relevant_keywords(text, filter_set):
-    cleaned_text = clean_text(text)
-    extracted_keywords = set()
-    categorized_keywords = collections.defaultdict(list)
+def hash_password(password):
+    """Hashes a password using bcrypt."""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-    if filter_set:
-        sorted_filter_skills = sorted(list(filter_set), key=len, reverse=True)
-        
-        temp_text = cleaned_text
+def check_password(password, hashed_password):
+    """Checks a password against its bcrypt hash."""
+    return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
 
-        for skill_phrase in sorted_filter_skills:
-            pattern = r'\b' + re.escape(skill_phrase.lower()) + r'\b'
-            
-            matches = re.findall(pattern, temp_text)
-            if matches:
-                extracted_keywords.add(skill_phrase.lower())
-                found_category = False
-                for category, skills_in_category in SKILL_CATEGORIES.items():
-                    if skill_phrase.lower() in [s.lower() for s in skills_in_category]:
-                        categorized_keywords[category].append(skill_phrase)
-                        found_category = True
-                        break
-                if not found_category:
-                    categorized_keywords["Uncategorized"].append(skill_phrase)
+def is_valid_email(email):
+    """Basic validation for email format."""
+    return re.match(r"[^@]+@[^@]+\.\w+", email)
 
-                temp_text = re.sub(pattern, " ", temp_text)
-        
-        individual_words_remaining = set(re.findall(r'\b\w+\b', temp_text))
-        for word in individual_words_remaining:
-            if word in filter_set:
-                extracted_keywords.add(word)
-                found_category = False
-                for category, skills_in_category in SKILL_CATEGORIES.items():
-                    if word.lower() in [s.lower() for s in skills_in_category]:
-                        categorized_keywords[category].append(word)
-                        found_category = True
-                        break
-                if not found_category:
-                    categorized_keywords["Uncategorized"].append(word)
+def register_section():
+    """Public self-registration form."""
+    st.subheader("📝 Create New Account")
+    with st.form("registration_form", clear_on_submit=True):
+        new_username = st.text_input("Choose Username (Email address required)", key="new_username_reg_public")
+        new_company_name = st.text_input("Company Name", key="new_company_name_reg_public") # New field
+        new_password = st.text_input("Choose Password", type="password", key="new_password_reg_public")
+        confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password_reg_public")
+        register_button = st.form_submit_button("Register New Account")
 
-    else:
-        all_words = set(re.findall(r'\b\w+\b', cleaned_text))
-        extracted_keywords = {word for word in all_words if word not in STOP_WORDS}
-        for word in extracted_keywords:
-            categorized_keywords["General Keywords"].append(word)
-
-    return extracted_keywords, dict(categorized_keywords)
-
-
-def extract_text_from_file(uploaded_file):
-    # Ensure uploaded_file is a BytesIO object with a name and type attribute
-    if isinstance(uploaded_file, BytesIO):
-        file_bytes = uploaded_file.getvalue()
-        file_name = uploaded_file.name
-        file_type = uploaded_file.type
-    else: # Assume it's a Streamlit UploadedFile object
-        file_bytes = uploaded_file.read()
-        file_name = uploaded_file.name
-        file_type = uploaded_file.type
-
-    full_text = ""
-
-    # Ensure tesseract command is set for this process
-    _get_tesseract_cmd_for_process()
-
-    if "pdf" in file_type:
-        try:
-            with pdfplumber.open(BytesIO(file_bytes)) as pdf:
-                pdf_text = ''.join(page.extract_text() or '' for page in pdf.pages)
-            
-            if len(pdf_text.strip()) < 50: # Heuristic for potentially scanned PDF
-                # st.warning(f"Low text extracted from PDF {file_name} using pdfplumber. Attempting OCR...") # Cannot use st.warning in child process
-                images = convert_from_bytes(file_bytes)
-                for img in images:
-                    processed_img = preprocess_image_for_ocr(img)
-                    full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
+        if register_button:
+            if not new_username or not new_password or not confirm_password or not new_company_name:
+                st.error("Please fill in all fields.")
+            elif not is_valid_email(new_username): # Email format validation
+                st.error("Please enter a valid email address for the username.")
+            elif new_password != confirm_password:
+                st.error("Passwords do not match.")
             else:
-                full_text = pdf_text
+                users = load_users()
+                if new_username in users:
+                    st.error("Username already exists. Please choose a different one.")
+                else:
+                    users[new_username] = {
+                        "password": hash_password(new_password),
+                        "status": "active",
+                        "company": new_company_name # Store company name
+                    }
+                    save_users(users)
+                    st.success("✅ Registration successful! You can now switch to the 'Login' option.")
+                    # Manually set the session state to switch to Login option
+                    st.session_state.active_login_tab_selection = "Login"
 
-        except Exception as e:
-            # Fallback to OCR directly if pdfplumber fails or for any other PDF error
-            # st.error(f"Error processing PDF {file_name} with pdfplumber: {e}. Trying OCR fallback directly.") # Cannot use st.error in child process
-            try:
-                images = convert_from_bytes(file_bytes)
-                for img in images:
-                    processed_img = preprocess_image_for_ocr(img)
-                    full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
-            except Exception as e_ocr:
-                return f"[ERROR] Failed to extract text from PDF via OCR: {str(e_ocr)}"
+def admin_registration_section():
+    """Admin-driven user creation form."""
+    st.subheader("➕ Create New User Account (Admin Only)")
+    with st.form("admin_registration_form", clear_on_submit=True):
+        new_username = st.text_input("New User's Username (Email)", key="new_username_admin_reg")
+        new_company_name = st.text_input("New User's Company Name", key="new_company_name_admin_reg") # New field
+        new_password = st.text_input("New User's Password", type="password", key="new_password_admin_reg")
+        admin_register_button = st.form_submit_button("Add New User")
 
-    elif "image" in file_type:
-        try:
-            img = Image.open(BytesIO(file_bytes)).convert("RGB")
-            processed_img = preprocess_image_for_ocr(img)
-            full_text = pytesseract.image_to_string(processed_img, lang='eng')
-        except Exception as e:
-            return f"[ERROR] Failed to extract text from image: {str(e)}"
-    else:
-        return f"[ERROR] Unsupported file type: {file_type}. Please upload a PDF or an image (JPG, PNG)."
+    if admin_register_button:
+        if not new_username or not new_password or not new_company_name:
+            st.error("Please fill in all fields.")
+        elif not is_valid_email(new_username): # Email format validation
+            st.error("Please enter a valid email address for the username.")
+        else:
+            users = load_users()
+            if new_username in users:
+                st.error(f"User '{new_username}' already exists.")
+            else:
+                users[new_username] = {
+                    "password": hash_password(new_password),
+                    "status": "active",
+                    "company": new_company_name
+                }
+                save_users(users)
+                st.success(f"✅ User '{new_username}' added successfully!")
 
-    if not full_text.strip():
-        return "[ERROR] No readable text extracted from the file. It might be a very low-quality scan or an empty document."
+def admin_password_reset_section():
+    """Admin-driven password reset form."""
+    st.subheader("🔑 Reset User Password (Admin Only)")
+    users = load_users()
+    # Exclude all admin usernames from the list of users whose passwords can be reset
+    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
+
+    if not user_options:
+        st.info("No other users to reset passwords for.")
+        return
+
+    with st.form("admin_reset_password_form", clear_on_submit=True):
+        selected_user = st.selectbox("Select User to Reset Password For", user_options, key="reset_user_select")
+        new_password = st.text_input("New Password", type="password", key="new_pwd_reset")
+        reset_button = st.form_submit_button("Reset Password")
+
+        if reset_button:
+            if not new_password:
+                st.error("Please enter a new password.")
+            else:
+                users[selected_user]["password"] = hash_password(new_password)
+                save_users(users)
+                st.success(f"✅ Password for '{selected_user}' has been reset.")
+
+def admin_disable_enable_user_section():
+    """Admin-driven user disable/enable form."""
+    st.subheader("⛔ Toggle User Status (Admin Only)")
+    users = load_users()
+    # Exclude all admin usernames from the list of users whose status can be toggled
+    user_options = [user for user in users.keys() if user not in ADMIN_USERNAME]
+
+    if not user_options:
+        st.info("No other users to manage status for.")
+        return
+
+    with st.form("admin_toggle_user_status_form", clear_on_submit=False): # Keep values after submit for easier toggling
+        selected_user = st.selectbox("Select User to Toggle Status", user_options, key="toggle_user_select")
+
+        current_status = users[selected_user]["status"]
+        st.info(f"Current status of '{selected_user}': **{current_status.upper()}**")
+
+        if st.form_submit_button(f"Toggle to {'Disable' if current_status == 'active' else 'Enable'} User"):
+            new_status = "disabled" if current_status == "active" else "active"
+            users[selected_user]["status"] = new_status
+            save_users(users)
+            st.success(f"✅ User '{selected_user}' status set to **{new_status.upper()}**.")
+            st.rerun() # Rerun to update the displayed status immediately
+
+
+# --- Firebase Data Persistence Functions (REST API) ---
+def to_firestore_format(data: dict) -> dict:
+    """Converts a Python dictionary to Firestore REST API 'fields' format."""
+    fields = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            fields[key] = {"stringValue": value}
+        elif isinstance(value, int):
+            fields[key] = {"integerValue": str(value)} # Firestore expects string for integerValue
+        elif isinstance(value, float):
+            fields[key] = {"doubleValue": value}
+        elif isinstance(value, bool):
+            fields[key] = {"booleanValue": value}
+        elif isinstance(value, datetime):
+            fields[key] = {"timestampValue": value.isoformat() + "Z"} # ISO 8601 with 'Z' for UTC
+        elif isinstance(value, list):
+            # For lists, convert each item and wrap in arrayValue
+            array_values = []
+            for item in value:
+                if isinstance(item, str):
+                    array_values.append({"stringValue": item})
+                elif isinstance(item, int):
+                    array_values.append({"integerValue": str(item)})
+                elif isinstance(item, float):
+                    array_values.append({"doubleValue": item})
+                elif isinstance(item, bool):
+                    array_values.append({"booleanValue": item})
+                elif isinstance(item, dict): # Handle nested dicts in lists
+                    array_values.append({"mapValue": {"fields": to_firestore_format(item)['fields']}})
+                # Add more types as needed for list elements
+            fields[key] = {"arrayValue": {"values": array_values}}
+        elif isinstance(value, dict):
+            # For nested dictionaries (maps), recursively convert
+            fields[key] = {"mapValue": {"fields": to_firestore_format(value)['fields']}}
+        elif value is None:
+            fields[key] = {"nullValue": None}
+        else:
+            # Fallback for other types, try to stringify
+            fields[key] = {"stringValue": str(value)}
+    return {"fields": fields}
+
+
+def save_session_data_to_firestore_rest(username):
+    """
+    Saves comprehensive session data (including comprehensive_df) to Firestore
+    using the REST API for the current user.
+    """
+    try:
+        if not username:
+            st.warning("No username found. Please log in.")
+            return
+
+        # Define the document path for user-specific session data
+        # This path aligns with private data rules: /artifacts/{appId}/users/{userId}/session_data_rest/current_session
+        doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{username}/session_data_rest/current_session"
+        url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
+
+        data_to_save = {}
+        if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+            # Create a copy to avoid modifying the original session state DataFrame directly
+            df_for_save = st.session_state['comprehensive_df'].copy()
+
+            # Ensure 'Shortlisted' column exists before accessing it
+            if 'Shortlisted' not in df_for_save.columns:
+                # Use a default cutoff if not already set in session state
+                shortlist_threshold = st.session_state.get('screening_cutoff_score', 75)
+                df_for_save['Shortlisted'] = df_for_save['Score (%)'].apply(
+                    lambda x: f"Yes (Score >= {shortlist_threshold}%)" if x >= shortlist_threshold else "No"
+                )
+                log_activity_main("Derived 'Shortlisted' column for saving as it was missing.")
+
+            # Filter out 'Resume Raw Text' as it can be very large and is not needed for analytics.
+            df_for_save = df_for_save.drop(columns=['Resume Raw Text'], errors='ignore')
+            data_to_save['comprehensive_df_json'] = df_for_save.to_json(orient='records')
+
+            # Extract shortlisted names and job locations for logging/summary
+            shortlisted_candidates = df_for_save[df_for_save['Shortlisted'].str.startswith('Yes')]['Candidate Name'].tolist()
+            job_locations = df_for_save['Location'].dropna().unique().tolist()
+
+            data_to_save['shortlisted_names'] = json.dumps(shortlisted_candidates) # Store as JSON string
+            data_to_save['job_locations_found'] = json.dumps(job_locations) # Store as JSON string
+            data_to_save['screened_count'] = len(df_for_save)
+            data_to_save['timestamp'] = str(datetime.now())
+            data_to_save['status'] = "saved from Streamlit Cloud"
+
+        else:
+            st.warning("No comprehensive data to save.")
+            return
+
+        # Convert Python dictionary to Firestore's REST API format (Fields object)
+        firestore_data = to_firestore_format(data_to_save)
+
+        # Use PATCH to update the document if it exists, or create it if it doesn't.
+        res = requests.patch(url, json=firestore_data)
+        if res.status_code in [200, 201]:
+            st.success("✅ Session data saved to Cloud (REST API)!")
+            log_activity_main(f"Session data saved for user '{username}' via REST API.")
+        else:
+            st.error(f"❌ REST Save failed: {res.status_code}, {res.text}")
+            log_activity_main(f"REST Save failed for user '{username}': {res.status_code}, {res.text}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"🔥 REST Firebase connection error: {e}")
+        log_activity_main(f"REST Firebase connection error for user '{username}': {e}")
+    except Exception as e:
+        st.error(f"🔥 An unexpected error occurred during REST save: {e}")
+        log_activity_main(f"Unexpected REST save error for user '{username}': {e}")
+
+def from_firestore_format(firestore_data: dict) -> dict:
+    """Converts Firestore REST API 'fields' format to a Python dictionary."""
+    data = {}
+    if "fields" not in firestore_data:
+        return data # Or raise an error if expected
     
-    return full_text
-
-
-def extract_years_of_experience(text):
-    text = text.lower()
-    total_months = 0
-    
-    date_patterns = [
-        r'(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})\s*(?:to|–|-)\s*(present|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})',
-        r'(\b\d{4})\s*(?:to|–|-)\s*(present|\b\d{4})'
-    ]
-
-    for pattern in date_patterns:
-        job_date_ranges = re.findall(pattern, text)
-        for start_str, end_str in job_date_ranges:
-            start_date = None
-            end_date = None
-
+    for key, value_obj in firestore_data["fields"].items():
+        if "stringValue" in value_obj:
+            data[key] = value_obj["stringValue"]
+        elif "integerValue" in value_obj:
+            data[key] = int(value_obj["integerValue"])
+        elif "doubleValue" in value_obj:
+            data[key] = float(value_obj["doubleValue"])
+        elif "booleanValue" in value_obj:
+            data[key] = value_obj["booleanValue"]
+        elif "timestampValue" in value_obj:
+            # Remove 'Z' and parse
             try:
-                start_date = datetime.strptime(start_str.strip(), '%B %Y')
+                data[key] = datetime.fromisoformat(value_obj["timestampValue"].replace('Z', ''))
             except ValueError:
+                data[key] = value_obj["timestampValue"] # Keep as string if parsing fails
+        elif "arrayValue" in value_obj and "values" in value_obj["arrayValue"]:
+            # Recursively convert array elements
+            data[key] = [from_firestore_format({"fields": {"_": item}})["_"] if "mapValue" not in item else from_firestore_format({"fields": item["mapValue"]["fields"]}) for item in value_obj["arrayValue"]["values"]]
+        elif "mapValue" in value_obj and "fields" in value_obj["mapValue"]:
+            # Recursively convert map values
+            data[key] = from_firestore_format({"fields": value_obj["mapValue"]["fields"]})
+        elif "nullValue" in value_obj:
+            data[key] = None
+        # Add more types as needed
+    return data
+
+
+def load_session_data_from_firestore_rest(username):
+    """
+    Loads comprehensive session data from Firestore using the REST API
+    for the current user.
+    """
+    try:
+        if not username:
+            st.warning("No username found. Please log in.")
+            return
+
+        doc_path = f"artifacts/{FIREBASE_PROJECT_ID}/users/{username}/session_data_rest/current_session"
+        url = f"{FIRESTORE_BASE_URL}/{doc_path}?key={FIREBASE_WEB_API_KEY}"
+
+        res = requests.get(url)
+        if res.status_code == 200:
+            data = res.json()
+            loaded_data = from_firestore_format(data) # Use the helper function
+
+            if 'comprehensive_df_json' in loaded_data:
+                df_json_content = loaded_data['comprehensive_df_json']
                 try:
-                    start_date = datetime.strptime(start_str.strip(), '%b %Y')
-                except ValueError:
-                    try:
-                        start_date = datetime(int(start_str.strip()), 1, 1)
-                    except ValueError:
-                        pass
+                    # pd.read_json can take a Python list/dict (result of json.loads) directly
+                    # or a JSON string. We ensure it's a string if it wasn't parsed by json.loads.
+                    if isinstance(df_json_content, str):
+                        st.session_state['comprehensive_df'] = pd.read_json(df_json_content, orient='records')
+                    else: # If json.loads already converted it to a list/dict
+                        st.session_state['comprehensive_df'] = pd.DataFrame.from_records(df_json_content)
 
-            if start_date is None:
-                continue
-
-            if end_str.strip() == 'present':
-                end_date = datetime.now()
+                    st.toast("Session data loaded from Cloud (REST API)!")
+                    log_activity_main(f"Session data loaded for user '{username}' via REST API.")
+                except Exception as e: # Catch any exception from pd.read_json or DataFrame reconstruction
+                    st.error(f"Error reconstructing DataFrame from loaded JSON: {e}. Data might be corrupted or incompatible. Raw JSON content (truncated): {str(df_json_content)[:200]}...")
+                    log_activity_main(f"Error reconstructing DataFrame for user '{username}': {e}")
+                    st.session_state['comprehensive_df'] = pd.DataFrame() # Reset to empty DF on error
             else:
-                try:
-                    end_date = datetime.strptime(end_str.strip(), '%B %Y')
-                except ValueError:
-                    try:
-                        end_date = datetime.strptime(end_str.strip(), '%b %Y')
-                    except ValueError:
-                        try:
-                            end_date = datetime(int(end_str.strip()), 12, 31)
-                        except ValueError:
-                            pass
-            
-            if end_date is None:
-                continue
-
-            delta_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
-            total_months += max(delta_months, 0)
-
-    if total_months > 0:
-        return round(total_months / 12, 1)
-    else:
-        match = re.search(r'(\d+(?:\.\d+)?)\s*(\+)?\s*(year|yrs|years)\b', text)
-        if not match:
-            match = re.search(r'experience[^\d]{0,10}(\d+(?:\.\d+)?)', text)
-        if match:
-            return float(match.group(1))
-
-    return 0.0
-
-def extract_email(text):
-    text = text.lower()
-
-    text = text.replace("gmaill.com", "gmail.com").replace("gmai.com", "gmail.com")
-    text = text.replace("yah00", "yahoo").replace("outiook", "outlook")
-    text = text.replace("coim", "com").replace("hotmai", "hotmail")
-
-    text = re.sub(r'[^\w\s@._+-]', ' ', text)
-
-    possible_emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.\w+', text)
-
-    if possible_emails:
-        for email in possible_emails:
-            if "gmail" in email or "manav" in email: # Specific filter, consider removing or making configurable
-                return email
-        return possible_emails[0]
-    
-    return None
-
-def extract_phone_number(text):
-    match = re.search(r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', text)
-    return match.group(0) if match else None
-
-def extract_location(text):
-    found_locations = set()
-    text_lower = text.lower()
-
-    sorted_cities = sorted(list(MASTER_CITIES), key=len, reverse=True)
-
-    for city in sorted_cities:
-        pattern = r'\b' + re.escape(city.lower()) + r'\b'
-        if re.search(pattern, text_lower):
-            found_locations.add(city)
-
-    if found_locations:
-        return ", ".join(sorted(list(found_locations)))
-    return "Not Found"
-
-def extract_name(text):
-    lines = text.strip().split('\n')
-    if not lines:
-        return None
-
-    EXCLUDE_NAME_TERMS = {"linkedin", "github", "portfolio", "resume", "cv", "profile", "contact", "email", "phone"}
-
-    potential_name_lines = []
-    for line in lines[:5]:
-        line = line.strip()
-        line_lower = line.lower()
-
-        if not re.search(r'[@\d\.\-]', line) and \
-           len(line.split()) <= 4 and \
-           not any(term in line_lower for term in EXCLUDE_NAME_TERMS):
-            if line.isupper() or (line and line[0].isupper() and all(word[0].isupper() or not word.isalpha() for word in line.split())):
-                potential_name_lines.append(line)
-
-    if potential_name_lines:
-        name = max(potential_name_lines, key=len)
-        name = re.sub(r'summary|education|experience|skills|projects|certifications|profile|contact', '', name, flags=re.IGNORECASE).strip()
-        name = re.sub(r'^[^\w\s]+|[^\w\s]+$', '', name).strip()
-        if name:
-            return name.title()
-    return None
-
-def extract_cgpa(text):
-    text = text.lower()
-    
-    matches = re.findall(r'(?:cgpa|gpa|grade point average)\s*[:\s]*(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?|(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(?:cgpa|gpa)', text)
-
-    for match in matches:
-        if match[0] and match[0].strip():
-            raw_cgpa = float(match[0])
-            scale = float(match[1]) if match[1] else None
-        elif match[2] and match[2].strip():
-            raw_cgpa = float(match[2])
-            scale = float(match[3]) if match[3] else None
+                st.info("No comprehensive data found in the loaded session data.")
+                st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's an empty DF if not found
+        elif res.status_code == 404:
+            st.info("No previous session data found in Cloud (REST API).")
+            st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty if no data
         else:
-            continue
+            st.error(f"❌ REST Load failed: {res.status_code}, {res.text}")
+            log_activity_main(f"REST Load failed for user '{username}': {res.status_code}, {res.text}")
+            st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on API error
+    except requests.exceptions.RequestException as e:
+        st.error(f"🔥 REST Firebase connection error: {e}")
+        log_activity_main(f"REST Firebase connection error for user '{username}': {e}")
+        st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on connection error
+    except Exception as e:
+        st.error(f"🔥 An unexpected error occurred during REST load: {e}")
+        log_activity_main(f"Unexpected REST load error for user '{username}': {e}")
+        st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure it's empty on unexpected error
 
-        if scale and scale not in [0, 1]:
-            normalized_cgpa = (raw_cgpa / scale) * 4.0
-            return round(normalized_cgpa, 2)
-        elif raw_cgpa <= 4.0:
-            return round(raw_cgpa, 2)
-        elif raw_cgpa <= 10.0:
-            return round((raw_cgpa / 10.0) * 4.0, 2)
-        
-    return None
 
-def extract_education_text(text):
-    """
-    Extracts a single-line education entry from resume text.
-    Returns a clean string like: "B.Tech in CSE, Alliance University, Bangalore – 2028"
-    Works with or without 'Expected' in the year.
-    """
+def login_section():
+    """Handles user login and public registration."""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    if "username" not in st.session_state:
+        st.session_state.username = None
 
-    text = text.replace('\r', '').replace('\t', ' ')
-    lines = text.split('\n')
-    lines = [line.strip() for line in lines if line.strip()]
+    # If already authenticated, just return True and don't render the form
+    if st.session_state.get("authenticated", False):
+        return True
 
-    education_section = ''
-    capture = False
+    # Initialize active_login_tab_selection if not present
+    if "active_login_tab_selection" not in st.session_state:
+        # Default to 'Register' if no users, otherwise 'Login'
+        if not os.path.exists(USER_DB_FILE) or len(load_users()) == 0:
+            st.session_state.active_login_tab_selection = "Register"
+        else:
+            st.session_state.active_login_tab_selection = "Login"
 
-    for line in lines:
-        line_lower = line.lower()
-        if any(h in line_lower for h in ['education', 'academic background', 'qualifications']):
-            capture = True
-            continue
-        if capture and any(h in line_lower for h in ['experience', 'skills', 'certifications', 'projects', 'languages']):
-            break
-        if capture:
-            education_section += line + ' '
 
-    education_section = education_section.strip()
+    tabs = st.tabs(["Login", "Register"]) # Use st.tabs for a cleaner UI
 
-    edu_match = re.search(
-        r'([A-Za-z0-9.,()&\-\s]+?(university|college|institute|school)[^–\n]{0,50}[–\-—]?\s*(expected\s*)?\d{4})',
-        education_section,
-        re.IGNORECASE
-    )
+    with tabs[0]: # Login tab
+        st.subheader("🔐 HR Login")
+        st.info("If you don't have an account, please go to the 'Register' option first.")
+        with st.form("login_form", clear_on_submit=False):
+            username = st.text_input("Username", key="username_login")
+            password = st.text_input("Password", type="password", key="password_login")
+            submitted = st.form_submit_button("Login")
 
-    if edu_match:
-        return edu_match.group(1).strip()
+            if submitted:
+                users = load_users()
+                if username not in users:
+                    st.error("❌ Invalid username or password. Please register if you don't have an account.")
+                else:
+                    user_data = users[username]
+                    if user_data["status"] == "disabled":
+                        st.error("❌ Your account has been disabled. Please contact an administrator.")
+                    elif check_password(password, user_data["password"]):
+                        st.session_state.authenticated = True
+                        st.session_state.username = username
+                        st.session_state.user_company = user_data.get("company", "N/A") # Store company name
+                        st.success("✅ Login successful! Redirecting...")
+                        # --- Load session data after successful login ---
+                        # Load data using the REST API function
+                        load_session_data_from_firestore_rest(st.session_state.username)
+                        st.rerun() # This will cause a re-run, and the next time login_section is called, it will return True immediately.
+                        return True # This line will technically not be reached due to rerun, but good for clarity.
+                    else:
+                        st.error("❌ Invalid username or password.")
+                        return False # Login failed
+    with tabs[1]: # Register tab
+        register_section()
 
-    fallback_match = re.search(
-        r'([A-Za-z0-9.,()&\-\s]+?(b\.tech|m\.tech|b\.sc|m\.sc|bca|bba|mba|ph\.d)[^–\n]{0,50}\d{4})',
-        education_section,
-        re.IGNORECASE
-    )
-    if fallback_match:
-        return fallback_match.group(1).strip()
+    return False # Form not submitted or initial load, user is not authenticated yet
 
-    fallback_line = education_section.split('.')[0].strip()
-    return fallback_line if fallback_line else None
+# Helper function to check if the current user is an admin
+def is_current_user_admin():
+    # Check if the current username is in the ADMIN_USERNAME tuple
+    return st.session_state.get("authenticated", False) and st.session_state.get("username") in ADMIN_USERNAME
 
-def extract_work_history(text):
-    work_history_section_matches = re.finditer(r'(?:experience|work history|employment history)\s*(\n|$)', text, re.IGNORECASE)
-    work_details = []
-    
-    start_index = -1
-    for match in work_history_section_matches:
-        start_index = match.end()
-        break
+# Helper for Activity Logging (for main.py's own activities)
+def log_activity_main(message):
+    """Logs an activity with a timestamp to the session state for main.py's activities."""
+    if 'activity_log' not in st.session_state:
+        st.session_state.activity_log = []
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state.activity_log.insert(0, f"[{timestamp}] {message}") # Add to the beginning for most recent first
+    st.session_state.activity_log = st.session_state.activity_log[:50]
 
-    if start_index != -1:
-        sections = ['education', 'skills', 'projects', 'certifications', 'awards', 'publications']
-        end_index = len(text)
-        for section in sections:
-            section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
-            if section_match:
-                end_index = start_index + section_match.start()
-                break
-        
-        work_text = text[start_index:end_index].strip()
-        
-        job_blocks = re.split(r'\n(?=[A-Z][a-zA-Z\s,&\.]+(?:\s(?:at|@))?\s*[A-Z][a-zA-Z\s,&\.]*\s*(?:-|\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}))', work_text, flags=re.IGNORECASE)
-        
-        for block in job_blocks:
-            block = block.strip()
-            if not block:
-                continue
-            
-            company = None
-            title = None
-            start_date = None
-            end_date = None
+# --- Page Config ---
+st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
 
-            date_range_match = re.search(
-                r'((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})\s*[-–]\s*(present|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})',
-                block, re.IGNORECASE
-            )
-            if date_range_match:
-                start_date = date_range_match.group(1)
-                end_date = date_range_match.group(2)
-                block = block.replace(date_range_match.group(0), '').strip()
+# Function to load external CSS
+def load_css(css_file_name):
+    """Loads CSS from a local file and injects it into the Streamlit app."""
+    try:
+        with open(css_file_name) as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    except FileNotFoundError:
+        st.warning(f"CSS file '{css_file_name}' not found. Please ensure it's in the same directory as main.py.")
 
-            lines = block.split('\n')
-            for line in lines:
-                line = line.strip()
-                if not line: continue
+# Load the external CSS file
+load_css("style.css")
 
-                title_company_match = re.search(r'([A-Z][a-zA-Z\s,\-&.]+)\s+(?:at|@)\s+([A-Z][a-zA-Z\s,\-&.]+)', line)
-                if title_company_match:
-                    title = title_company_match.group(1).strip()
-                    company = title_company_match.group(2).strip()
-                    break
-                
-                company_title_match = re.search(r'^([A-Z][a-zA-Z\s,\-&.]+),\s*([A-Z][a-zA-Z\s,\-&.]+)', line)
-                if company_title_match:
-                    company = company_title_match.group(1).strip()
-                    title = company_title_match.group(2).strip()
-                    break
-                
-                if not company and not title:
-                    potential_org_match = re.search(r'^[A-Z][a-zA-Z\s,\-&.]+', line)
-                    if potential_org_match and len(potential_org_match.group(0).split()) > 1:
-                        if not company: company = potential_org_match.group(0).strip()
-                        elif not title: title = potential_org_match.group(0).strip()
-                        break
+# --- Dark Mode Toggle ---
+dark_mode = st.sidebar.toggle("🌙 Dark Mode", key="dark_mode_main")
 
-            if company or title or start_date or end_date:
-                work_details.append({
-                    "Company": company,
-                    "Title": title,
-                    "Start Date": start_date,
-                    "End Date": end_date
-                })
-    return work_details
+# --- Global Fonts & UI Styling ---
+st.markdown(f"""
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* Hide GitHub fork button, Streamlit menu and footer */
+#MainMenu {{visibility: hidden;}}
+footer {{visibility: hidden;}}
+header {{visibility: hidden;}} /* Optional: hides the top bar */
+html, body, [class*="css"] {{
+    font-family: 'Inter', sans-serif;
+    background-color: {'#1E1E1E' if dark_mode else '#F0F2F6'}; /* Darker background for dark mode */
+    color: {'#E0E0E0' if dark_mode else '#333333'}; /* Lighter text for dark mode */
+}}
+.main .block-container {{
+    padding: 2rem;
+    border-radius: 20px;
+    background: {'#2D2D2D' if dark_mode else 'rgba(255, 255, 255, 0.96)'};
+    box-shadow: 0 12px 30px rgba(0,0,0,{'0.3' if dark_mode else '0.1'});
+    animation: fadeIn 0.8s ease-in-out;
+}}
+@keyframes fadeIn {{
+    0% {{ opacity: 0; transform: translateY(20px); }}
+    100% {{ opacity: 1; transform: translateY(0); }}
+}}
+h1, h2, h3, h4, h5, h6 {{
+    color: {'#00cec9' if dark_mode else '#00cec9'}; /* Consistent teal for headers */
+    font-weight: 700;
+}}
+.dashboard-header {{
+    font-size: 2.2rem;
+    font-weight: 700;
+    color: {'#E0E0E0' if dark_mode else '#222'};
+    padding-bottom: 0.5rem;
+    border-bottom: 3px solid #00cec9;
+    display: inline-block;
+    margin-bottom: 2rem;
+    animation: slideInLeft 0.8s ease-out;
+}}
+@keyframes slideInLeft {{
+    0% {{ transform: translateX(-40px); opacity: 0; }}
+    100% {{ transform: translateX(0); opacity: 1; }}
+}}
+/* New animation for greeting */
+@keyframes slideInDownFadeIn {{
+    0% {{ opacity: 0; transform: translateY(-20px); }}
+    100% {{ opacity: 1; transform: translateY(0); }}
+}}
+.greeting-message {{
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: {'#00cec9' if dark_mode else '#00cec9'};
+    margin-bottom: 1.5rem;
+    animation: slideInDownFadeIn 0.7s ease-out;
+}}
+.stMetric {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,{'0.2' if dark_mode else '0.05'});
+    transition: transform 0.2s ease;
+}}
+.stMetric:hover {{
+    transform: translateY(-3px);
+}}
+.stMetric > div[data-testid="stMetricValue"] {{
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: {'#00cec9' if dark_mode else '#00cec9'};
+}}
+.stMetric > div[data-testid="stMetricLabel"] {{
+    font-size: 1rem;
+    color: {'#BBBBBB' if dark_mode else '#555555'};
+}}
+.stButton>button {{
+    background-color: #00cec9;
+    color: white;
+    border-radius: 8px;
+    padding: 0.6rem 1.2rem;
+    font-weight: 600;
+    border: none;
+    transition: all 0.3s ease;
+    box_shadow: 0 4px 12px rgba(0,0,0,0.1);
+}}
+.stButton>button:hover {{
+    background-color: #00b0a8;
+    transform: translateY(-2px);
+    box_shadow: 0 6px 16px rgba(0,0,0,0.15);
+}}
+.stExpander {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,{'0.2' if dark_mode else '0.05'});
+}}
+.stExpander > div > div > div > p {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stExpander > div[data-testid="stExpanderToggle"] {{
+    color: {'#00cec9' if dark_mode else '#00cec9'};
+}}
+.stExpander > div[data-testid="stExpanderToggle"] svg {{
+    fill: {'#00cec9' if dark_mode else '#00cec9'};
+}}
+.stSelectbox > div > div {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+    border-radius: 8px;
+}}
+.stSelectbox > label {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stTextInput > div > div > input {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+    border-radius: 8px;
+}}
+.stTextInput > label {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stTextArea > div > div {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+    border-radius: 8px;
+}}
+.stTextArea > label {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stRadio > label {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stRadio div[role="radiogroup"] label {{
+    background-color: {'#3A3A3A' if dark_mode else '#f0f2f6'};
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    margin: 0.2rem;
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stRadio div[role="radiogroup"] label:hover {{
+    background-color: {'#4A4A4A' if dark_mode else '#e0e2e6'};
+}}
+.stRadio div[role="radiogroup"] label[data-baseweb="radio"] span:first-child {{
+    background-color: {'#00cec9' if dark_mode else '#00cec9'} !important;
+}}
+.stCheckbox span {{
+    color: {'#E0E0E0' if dark_mode else '#333333'};
+}}
+.stCheckbox div[data-testid="stCheckbox"] svg {{
+    fill: {'#00cec9' if dark_mode else '#00cec9'};
+}}
+</style>
+""", unsafe_allow_html=True)
 
-def extract_project_details(text, MASTER_SKILLS):
-    """
-    Extracts real project entries from resume text.
-    Returns a list of dicts: Title, Description, Technologies Used
-    """
+# Set Matplotlib style for dark mode if active
+if dark_mode:
+    plt.style.use('dark_background')
+    sns.set_palette("viridis") # A good palette for dark backgrounds
+else:
+    plt.style.use('default')
+    sns.set_palette("coolwarm") # A good palette for light backgrounds
 
-    project_details = []
 
-    text = text.replace('\r', '').replace('\t', ' ')
-    lines = text.split('\n')
-    lines = [line.strip() for line in lines if line.strip()]
+# --- Branding ---
+st.sidebar.image("logo.png", width=200) # Placeholder logo
+st.sidebar.title("🧠 ScreenerPro")
 
-    # Step 1: Isolate project section
-    project_section_keywords = r'(projects|personal projects|key projects|portfolio|selected projects|major projects|academic projects|relevant projects)'
-    project_section_match = re.search(project_section_keywords + r'\s*(\n|$)', text, re.IGNORECASE)
+# --- Auth ---
+# Call login_section, which will handle displaying the form and setting st.session_state.authenticated
+# It will also return True if authentication is successful, or False otherwise (or stop execution).
+authenticated = login_section()
 
-    if not project_section_match:
-        project_text = text[:1000]  # fallback to first 1000 chars
-        start_index = 0
-    else:
-        start_index = project_section_match.end()
-        sections = ['education', 'experience', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
-        end_index = len(text)
-        for section in sections:
-            match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
-            if match:
-                end_index = start_index + match.start()
-                break
-        project_text = text[start_index:end_index].strip()
+if not authenticated:
+    st.stop() # Stop if not authenticated
 
-    if not project_text:
-        return []
+# If authenticated is True, proceed with the rest of the application
+else:
+    # Log successful login
+    if st.session_state.get('last_login_logged_for_user') != st.session_state.username:
+        log_activity_main(f"User '{st.session_state.username}' logged in.")
+        st.session_state.last_login_logged_for_user = st.session_state.username
 
-    lines = [line.strip() for line in project_text.split('\n') if line.strip()]
-    current_project = {"Project Title": None, "Description": [], "Technologies Used": set()}
+    # Determine if the logged-in user is an admin
+    is_admin = is_current_user_admin()
 
-    forbidden_title_keywords = [
-        'skills gained', 'responsibilities', 'reflection', 'summary',
-        'achievements', 'capabilities', 'what i learned', 'tools used'
+    # Initialize comprehensive_df globally if it doesn't exist
+    # This ensures it's always a DataFrame, even if empty, preventing potential KeyErrors
+    if 'comprehensive_df' not in st.session_state:
+        st.session_state['comprehensive_df'] = pd.DataFrame()
+
+    # --- Navigation Control ---
+    navigation_options = [
+        "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
+        "📦 Bulk Resume Import", 
+        "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes",
+        "📈 Advanced Tools", # New page
+        "🤝 Collaboration Hub", # New page
+        "🏢 About Us", # New: About Us page
+        "⚖️ Privacy Policy & Terms", # New: Legal pages
+        "❓ Feedback & Help"
     ]
 
-    for i, line in enumerate(lines):
-        line_lower = line.lower()
+    if is_admin: # Only add Admin Tools if the user is an admin
+        navigation_options.append("⚙️ Admin Tools")
 
-        # Skip all-uppercase names or headers
-        if re.match(r'^[A-Z\s]{5,}$', line) and len(line.split()) <= 4:
-            continue
+    navigation_options.append("🚪 Logout") # Always add Logout last
 
-        # Previous line was a bullet?
-        prev_line_is_bullet = False
-        if i > 0 and re.match(r'^[•*-]', lines[i - 1]):
-            prev_line_is_bullet = True
+    default_tab = st.session_state.get("tab_override", "🏠 Dashboard")
 
-        # Strong new project title if:
-        # - starts with number or bullet
-        # - not just a soft skill block
-        # - contains 3–15 words
-        # - not all caps
-        is_title = (
-            (re.match(r'^[•*-]?\s*\d+[\).:-]?\s', line) or line.lower().startswith("project")) and
-            3 <= len(line.split()) <= 15 and
-            not any(kw in line_lower for kw in forbidden_title_keywords) and
-            not prev_line_is_bullet and
-            not line.isupper()
-        )
+    if default_tab not in navigation_options: # Handle cases where default_tab might be Admin Tools for non-admins
+        default_tab = "🏠 Dashboard"
 
-        is_url = re.match(r'https?://', line_lower)
+    tab = st.sidebar.radio("📍 Navigate", navigation_options, index=navigation_options.index(default_tab))
 
-        # New Project Begins
-        if is_title or is_url:
-            if current_project["Project Title"] or current_project["Description"]:
-                full_desc = "\n".join(current_project["Description"])
-                techs, _ = extract_relevant_keywords(full_desc, MASTER_SKILLS)
-                current_project["Technologies Used"].update(techs)
+    if "tab_override" in st.session_state:
+        del st.session_state.tab_override
 
-                project_details.append({
-                    "Project Title": current_project["Project Title"],
-                    "Description": full_desc.strip(),
-                    "Technologies Used": ", ".join(sorted(current_project["Technologies Used"]))
-                })
-
-            current_project = {"Project Title": line, "Description": [], "Technologies Used": set()}
-        else:
-            current_project["Description"].append(line)
-
-    # Add last project
-    if current_project["Project Title"] or current_project["Description"]:
-        full_desc = "\n".join(current_project["Description"])
-        techs, _ = extract_relevant_keywords(full_desc, MASTER_SKILLS)
-        current_project["Technologies Used"].update(techs)
-
-        project_details.append({
-            "Project Title": current_project["Project Title"],
-            "Description": full_desc.strip(),
-            "Technologies Used": ", ".join(sorted(current_project["Technologies Used"]))
-        })
-
-    return project_details
+    # --- Display "Hello, Username!" on all pages after login ---
+    if st.session_state.get("authenticated") and st.session_state.get("username"):
+        st.markdown(f'<div class="greeting-message">Hello, {st.session_state.username}! 👋</div>', unsafe_allow_html=True)
 
 
-def extract_languages(text):
-    """
-    Extracts known languages from resume text.
-    Returns a comma-separated string of detected languages or 'Not Found'.
-    """
-    languages_list = set()
-    cleaned_full_text = clean_text(text)
+    # ======================
+    # Analytics Dashboard Page Function
+    # ======================
+    def analytics_dashboard_page():
+        st.markdown("""
+        <style>
+        .analytics-box {
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.96);
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+            animation: fadeInSlide 0.7s ease-in-out;
+            margin-bottom: 2rem;
+        }
+        @keyframes fadeInSlide {
+            0% {{ opacity: 0; transform: translateY(20px); }}
+            100% {{ opacity: 1; transform: translateY(0); }}
+        }
+        h3 {
+            color: #00cec9;
+            font-weight: 700;
+        }
+        .stMetric {
+            background-color: #f0f2f6;
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
-    # De-duplicated, lowercase language set
-    all_languages = list(set([
-        "english", "hindi", "spanish", "french", "german", "mandarin", "japanese", "arabic",
-        "russian", "portuguese", "italian", "korean", "bengali", "marathi", "telugu", "tamil",
-        "gujarati", "urdu", "kannada", "odia", "malayalam", "punjabi", "assamese", "kashmiri",
-        "sindhi", "sanskrit", "dutch", "swedish", "norwegian", "danish", "finnish", "greek",
-        "turkish", "hebrew", "thai", "vietnamese", "indonesian", "malay", "filipino", "swahili",
-        "farsi", "persian", "polish", "ukrainian", "romanian", "czech", "slovak", "hungarian",
-        "chinese", "tagalog", "nepali", "sinhala", "burmese", "khmer", "lao", "pashto", "dari",
-        "uzbek", "kazakh", "azerbaijani", "georgian", "armenian", "albanian", "serbian",
-        "croatian", "bosnian", "bulgarian", "macedonian", "slovenian", "estonian", "latvian",
-        "lithuanian", "icelandic", "irish", "welsh", "gaelic", "maltese", "esperanto", "latin",
-        "ancient greek", "modern greek", "yiddish", "romani", "catalan", "galician", "basque",
-        "breton", "cornish", "manx", "frisian", "luxembourgish", "sami", "romansh", "sardinian",
-        "corsican", "occitan", "provencal", "walloon", "flemish", "afrikaans", "zulu", "xhosa",
-        "sesotho", "setswana", "shona", "ndebele", "venda", "tsonga", "swati", "kikuyu",
-        "luganda", "kinyarwanda", "kirundi", "lingala", "kongo", "yoruba", "igbo", "hausa",
-        "fulani", "twi", "ewe", "ga", "dagbani", "gur", "mossi", "bambara", "senufo", "wolof",
-        "mandinka", "susu", "krio", "temne", "limba", "mende", "gola", "vai", "kpelle", "loma",
-        "bandi", "bassa", "grebo", "krahn", "dan", "mano", "guerze", "kono", "kisi"
-    ]))
+        st.markdown('<div class="analytics-box">', unsafe_allow_html=True)
+        st.markdown("## 📊 Screening Analytics Dashboard")
 
-    sorted_all_languages = sorted(all_languages, key=len, reverse=True)
-
-    # Step 1: Try to locate a language-specific section
-    section_match = re.search(
-        r'\b(languages|language skills|linguistic abilities|known languages)\s*[:\-]?\s*\n?',
-        cleaned_full_text, re.IGNORECASE
-    )
-
-    if section_match:
-        start_index = section_match.end()
-        # Optional: stop at next known section
-        end_index = len(cleaned_full_text)
-        stop_words = ['education', 'experience', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
-        for stop in stop_words:
-            m = re.search(r'\b' + stop + r'\b', cleaned_full_text[start_index:], re.IGNORECASE)
-            if m:
-                end_index = start_index + m.start()
-                break
-
-        language_chunk = cleaned_full_text[start_index:end_index]
-    else:
-        language_chunk = cleaned_full_text
-
-    # Step 2: Match known languages
-    for lang in sorted_all_languages:
-        # Use word boundaries for exact matches and allow for common suffixes like " (fluent)"
-        pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
-        if re.search(pattern, language_chunk, re.IGNORECASE):
-            if lang == "de":
-                languages_list.add("German")
+        def load_screening_data():
+            """Loads screening results only from session state."""
+            if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+                try:
+                    st.info("✅ Loaded screening results from current session.")
+                    return st.session_state['comprehensive_df'].copy()
+                except Exception as e:
+                    st.error(f"Error loading results from session state: {e}")
+                    return pd.DataFrame()
             else:
-                languages_list.add(lang.title())
+                st.warning("⚠️ No screening data found in current session. Please run the screener first.")
+                return pd.DataFrame()
 
-    return ", ".join(sorted(languages_list)) if languages_list else "Not Found"
+        df = load_screening_data()
 
+        if df.empty:
+            st.info("No data available for analytics. Please screen some resumes first.")
+            st.stop()
 
-def format_work_history(work_list):
-    if not work_list:
-        return "Not Found"
-    formatted_entries = []
-    for entry in work_list:
-        parts = []
-        if entry.get("Title"):
-            parts.append(entry["Title"])
-        if entry.get("Company"):
-            parts.append(f"at {entry['Company']}")
-        if entry.get("Start Date") and entry.get("End Date"):
-            parts.append(f"({entry['Start Date']} - {entry['End Date']})")
-        elif entry.get("Start Date"):
-            parts.append(f"(Since {entry['Start Date']})")
-        formatted_entries.append(" ".join(parts).strip())
-    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
+        essential_core_columns = ['Score (%)', 'Years Experience', 'File Name', 'Candidate Name']
+        missing_essential_columns = [col for col in essential_core_columns if col not in df.columns]
 
-def format_project_details(proj_list):
-    if not proj_list:
-        return "Not Found"
-    formatted_entries = []
-    for entry in proj_list:
-        parts = []
-        if entry.get("Project Title"):
-            parts.append(f"**{entry['Project Title']}**")
-        if entry.get("Technologies Used"):
-            parts.append(f"({entry['Technologies Used']})")
-        if entry.get("Description") and entry["Description"].strip():
-            desc_snippet = entry["Description"].split('\n')[0][:50] + "..." if len(entry["Description"]) > 50 else entry["Description"]
-            parts.append(f'"{desc_snippet}"')
-        formatted_entries.append(" ".join(parts).strip())
-    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
+        if missing_essential_columns:
+            st.error(f"Error: The loaded data is missing essential core columns: {', '.join(missing_essential_columns)}."
+                     " Please ensure your screening process generates at least these required data fields.")
+            st.stop()
 
-# Removed @st.cache_data as this function will be called in child processes
-def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_similarity, cgpa):
-    overall_fit_description = ""
-    review_focus_text = ""
-    key_strength_hint = ""
+        # --- Data Cleaning and Preparation for Analytics ---
+        # Ensure CGPA is numeric, coercing errors to NaN, then explicitly cast to float
+        df['CGPA (4.0 Scale)'] = pd.to_numeric(df['CGPA (4.0 Scale)'], errors='coerce')
+        df['CGPA (4.0 Scale)'] = df['CGPA (4.0 Scale)'].astype(float) # Explicitly cast to float
 
-    high_score = 85
-    moderate_score = 65
-    high_exp = 4
-    moderate_exp = 2
-    high_sem_sim = 0.75
-    moderate_sem_sim = 0.4
-    high_cgpa = 3.5
-    moderate_cgpa = 3.0
-
-    if score >= high_score and years_exp >= high_exp and semantic_similarity >= high_sem_sim:
-        overall_fit_description = "High alignment."
-        key_strength_hint = "Strong technical and experience match, quick integration expected."
-        review_focus_text = "Cultural fit, project contributions."
-    elif score >= moderate_score and years_exp >= moderate_exp and semantic_similarity >= moderate_sem_sim:
-        overall_fit_description = "Moderate fit."
-        key_strength_hint = "Good foundational skills, potential for growth."
-        review_focus_text = "Depth of experience, skill application, learning agility."
-    else:
-        overall_fit_description = "Limited alignment."
-        key_strength_hint = "May require significant development or a different role."
-        review_focus_text = "Foundational skills, transferable experience, long-term potential."
-
-    cgpa_note = ""
-    if cgpa is not None:
-        if cgpa >= high_cgpa:
-            cgpa_note = "Excellent academic record. "
-        elif cgpa >= moderate_cgpa:
-            cgpa_note = "Solid academic background. "
-        else:
-            cgpa_note = "Academic record may need review. "
-    else:
-        cgpa_note = "CGPA not found. "
-
-    summary_text = f"**Fit:** {overall_fit_description} **Strengths:** {cgpa_note}{key_strength_hint} **Focus:** {review_focus_text}"
-    return summary_text
-
-# Removed @st.cache_data as this function will be called in child processes
-def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_similarity, cgpa, jd_text, resume_text, matched_keywords, missing_skills, max_exp_cutoff):
-    assessment_parts = []
-    overall_assessment_title = ""
-    next_steps_focus = ""
-
-    matched_kws_str = ", ".join(matched_keywords) if isinstance(matched_keywords, list) else matched_keywords
-    missing_skills_str = ", ".join(missing_skills) if isinstance(missing_skills, list) else missing_skills
-
-    high_score = 90
-    strong_score = 80
-    promising_score = 60
-    high_exp = 5
-    strong_exp = 3
-    promising_exp = 1
-    high_sem_sim = 0.85
-    strong_sem_sim = 0.7
-    promising_sem_sim = 0.35
-    high_cgpa = 3.5
-    strong_cgpa = 3.0
-    promising_cgpa = 2.5
-
-    if score >= high_score and years_exp >= high_exp and years_exp <= max_exp_cutoff and semantic_similarity >= high_sem_sim and (cgpa is None or cgpa >= high_cgpa):
-        overall_assessment_title = "Exceptional Candidate: Highly Aligned with Strategic Needs"
-        assessment_parts.append(f"**{candidate_name}** presents an **exceptional profile** with a high score of {score:.2f}% and {years_exp:.1f} years of experience. This demonstrates a profound alignment with the job description's core requirements, further evidenced by a strong semantic similarity of {semantic_similarity:.2f}.")
-        if cgpa is not None:
-            assessment_parts.append(f"Their academic record, with a CGPA of {cgpa:.2f} (normalized to 4.0 scale), further solidifies their strong foundational knowledge.")
-        assessment_parts.append(f"**Key Strengths:** This candidate possesses a robust skill set directly matching critical keywords in the JD, including: *{matched_kws_str if matched_kws_str else 'No specific keywords listed, but overall strong match'}*. Their extensive experience indicates a capacity for leadership and handling complex challenges, suggesting immediate productivity and minimal ramp-up time. They are poised to make significant contributions from day one.")
-        assessment_parts.append("The resume highlights a clear career progression and a history of successful project delivery, often exceeding expectations. Their qualifications exceed expectations, making them a top-tier applicant for this role.")
-        assessment_parts.append("This individual's profile suggests they are not only capable of fulfilling the role's duties but also have the potential to mentor others, drive innovation, and take on strategic initiatives within the team. Their background indicates a strong fit for a high-impact position.")
-        next_steps_focus = "The next steps should focus on assessing cultural integration, exploring leadership potential, and delving into strategic contributions during the interview. Prepare for a deep dive into their most challenging projects, how they navigated complex scenarios, and their long-term vision. Consider fast-tracking this candidate through the interview process and potentially involving senior leadership early on."
-        assessment_parts.append(f"**Action:** Strongly recommend for immediate interview. Prioritize for hiring and consider for advanced roles if applicable.")
-
-    elif score >= strong_score and years_exp >= strong_exp and years_exp <= max_exp_cutoff and semantic_similarity >= strong_sem_sim and (cgpa is None or cgpa >= strong_cgpa):
-        overall_assessment_title = "Strong Candidate: Excellent Potential for Key Contributions"
-        assessment_parts.append(f"**{candidate_name}** is a **strong candidate** with a score of {score:.2f}% and {years_exp:.1f} years of experience. They show excellent alignment with the job description, supported by a solid semantic similarity of {semantic_similarity:.2f}.")
-        if cgpa is not None:
-            assessment_parts.append(f"Their academic performance, with a CGPA of {cgpa:.2f}, indicates a solid theoretical grounding.")
-        assessment_parts.append(f"**Key Strengths:** Significant overlap in required skills and practical experience that directly addresses the job's demands. Matched keywords include: *{matched_kws_str if matched_kws_str else 'No specific keywords listed, but overall strong match'}*. This individual is likely to integrate well and contribute effectively from an early stage, bringing valuable expertise to the team.")
-        assessment_parts.append("Their resume indicates a consistent track record of achieving results and adapting to new challenges. They demonstrate a solid understanding of the domain and could quickly become a valuable asset, requiring moderate onboarding.")
-        assessment_parts.append("This candidate is well-suited for the role and demonstrates the core competencies required. Their experience suggests they can handle typical challenges and contribute positively to team dynamics.")
-        next_steps_focus = "During the interview, explore specific project methodologies, problem-solving approaches, and long-term career aspirations to confirm alignment with team dynamics and growth opportunities within the company. Focus on behavioral questions to understand their collaboration style, initiative, and how they handle feedback. A technical assessment might be beneficial to confirm depth of skills."
-        assessment_parts.append(f"**Action:** Recommend for interview. Good fit for the role, with potential for growth.")
-
-    elif score >= promising_score and years_exp >= promising_exp and years_exp <= max_exp_cutoff and semantic_similarity >= promising_sem_sim and (cgpa is None or cgpa >= promising_cgpa):
-        overall_assessment_title = "Promising Candidate: Requires Focused Review on Specific Gaps"
-        assessment_parts.append(f"**{candidate_name}** is a **promising candidate** with a score of {score:.2f}% and {years_exp:.1f} years of experience. While demonstrating a foundational understanding (semantic similarity: {semantic_similarity:.2f}), there are areas that warrant deeper investigation to ensure a complete fit.")
+        # Convert 'Years Experience' to numeric, coercing errors
+        df['Years Experience'] = pd.to_numeric(df['Years Experience'], errors='coerce')
         
-        gaps_identified = []
-        if score < 70:
-            gaps_identified.append("The overall score suggests some core skill areas may need development or further clarification.")
-        if years_exp < promising_exp:
-            gaps_identified.append(f"Experience ({years_exp:.1f} yrs) is on the lower side; assess their ability to scale up quickly and take on more responsibility.")
-        if semantic_similarity < 0.5:
-            gaps_identified.append("Semantic understanding of the JD's nuances might be limited; probe their theoretical knowledge versus practical application in real-world scenarios.")
-        if cgpa is not None and cgpa < promising_cgpa:
-            gaps_identified.append(f"Academic record (CGPA: {cgpa:.2f}) is below preferred, consider its relevance to role demands.")
-        if missing_skills_str:
-            gaps_identified.append(f"**Potential Missing Skills:** *{missing_skills_str}*. Focus interview questions on these areas to assess their current proficiency or learning agility.")
+        # Convert 'Score (%)' to numeric
+        df['Score (%)'] = pd.to_numeric(df['Score (%)'], errors='coerce')
         
-        if years_exp > max_exp_cutoff:
-            gaps_identified.append(f"Experience ({years_exp:.1f} yrs) exceeds the maximum desired ({max_exp_cutoff} yrs). Evaluate if this indicates overqualification or a potential mismatch in role expectations.")
+        # Fill 'Not Found' or empty strings with NaN for easier filtering/plotting
+        df.replace('Not Found', pd.NA, inplace=True)
+        df.replace('', pd.NA, inplace=True)
 
-        if gaps_identified:
-            assessment_parts.append("Areas for further exploration include: " + " ".join(gaps_identified))
+        # --- Filters for Analytics Dashboard ---
+        st.markdown("### 🔍 Filter Analytics Data")
+        col_filter1, col_filter2 = st.columns(2)
+
+        with col_filter1:
+            min_score, max_score = float(df['Score (%)'].min()), float(df['Score (%)'].max())
+            score_range = st.slider(
+                "Filter by Score (%)",
+                min_value=min_score,
+                max_value=max_score,
+                value=(min_score, max_score),
+                step=1.0,
+                key="ana_score_filter"
+            )
+
+        with col_filter2:
+            min_exp, max_exp = float(df['Years Experience'].min()), float(df['Years Experience'].max())
+            exp_range = st.slider(
+                "Filter by Years Experience",
+                min_value=min_exp,
+                max_value=max_exp,
+                value=(min_exp, max_exp),
+                step=0.5,
+                key="ana_exp_filter"
+            )
         
-        assessment_parts.append("The candidate shows potential, especially if they can demonstrate quick learning or relevant transferable skills. Their resume indicates a willingness to grow and take on new challenges, which is a positive sign for development opportunities.")
-        next_steps_focus = "The interview should focus on validating foundational skills, understanding their learning agility, and assessing their potential for growth within the role. Be prepared to discuss specific examples of how they've applied relevant skills and how they handle challenges, particularly in areas where skills are missing. Consider a skills assessment or a structured case study to gauge problem-solving abilities. Discuss their motivation for this role and long-term career goals."
-        assessment_parts.append(f"**Action:** Consider for initial phone screen or junior role. Requires careful evaluation and potentially a development plan.")
+        col_filter3, col_filter4 = st.columns(2)
+        with col_filter3:
+            # Get unique locations from the dataframe, handle potential list/string formats
+            all_locations = sorted(list(df['Location'].dropna().unique()))
+            selected_locations_ana = st.multiselect(
+                "Filter by Location:",
+                options=all_locations,
+                key="ana_location_filter"
+            )
+        with col_filter4:
+            # Get unique languages from the dataframe, handle potential list/string formats
+            all_languages_from_df = sorted(list(set(
+                lang.strip() for langs_str in df['Languages'].dropna() if langs_str != "Not Found" for lang in langs_str.split(',')
+            )))
+            selected_languages_ana = st.multiselect(
+                "Filter by Language:",
+                options=all_languages_from_df,
+                key="ana_language_filter"
+            )
 
-    else:
-        overall_assessment_title = "Limited Match: Consider Only for Niche Needs or Pipeline Building"
-        assessment_parts.append(f"**{candidate_name}** shows a **limited match** with a score = {score:.2f}% and {years_exp:.1f} years of experience (semantic similarity: {semantic_similarity:.2f}). This profile indicates a significant deviation from the core requirements of the job description.")
-        if cgpa is not None:
-            assessment_parts.append(f"Their academic record (CGPA: {cgpa:.2f}) also indicates a potential mismatch.")
-        assessment_parts.append(f"**Key Concerns:** A low overlap in essential skills and potentially insufficient experience for the role's demands. Many key skills appear to be missing: *{missing_skills_str if missing_skills_str else 'No specific missing skills listed, but overall low match'}*. While some transferable skills may exist, a substantial investment in training or a re-evaluation of role fit would likely be required for this candidate to succeed.")
+        # Apply filters
+        filtered_df = df[
+            (df['Score (%)'] >= score_range[0]) & (df['Score (%)'] <= score_range[1]) &
+            (df['Years Experience'] >= exp_range[0]) & (df['Years Experience'] <= exp_range[1])
+        ].copy() # Use .copy() to avoid SettingWithCopyWarning
+
+        if selected_locations_ana:
+            location_pattern = '|'.join([re.escape(loc) for loc in selected_locations_ana])
+            filtered_df = filtered_df[
+                filtered_df['Location'].fillna('').str.contains(location_pattern, case=False, na=False)
+            ]
         
-        if years_exp > max_exp_cutoff:
-            assessment_parts.append(f"Additionally, their experience ({years_exp:.1f} yrs) significantly exceeds the maximum desired ({max_exp_cutoff} yrs), which might indicate overqualification or a mismatch in career trajectory for this specific opening.")
+        if selected_languages_ana:
+            language_pattern = '|'.join([re.escape(lang) for lang in selected_languages_ana])
+            filtered_df = filtered_df[
+                filtered_df['Languages'].fillna('').str.contains(language_pattern, case=False, na=False)
+            ]
 
-        assessment_parts.append("The resume does not strongly align with the technical or experience demands of this specific position. Their background may be more suited for a different type of role or industry, or an entry-level position if their core skills are strong but experience is lacking.")
-        assessment_parts.append("This candidate might not be able to meet immediate role requirements without extensive support. Their current profile suggests a mismatch with the current opening.")
-        next_steps_focus = "This candidate is generally not recommended for the current role unless there are specific, unforeseen niche requirements or a strategic need to broaden the candidate pool significantly. If proceeding, focus on understanding their fundamental capabilities, their motivation for this specific role despite the mismatch, and long-term career aspirations. It might be more beneficial to suggest other roles within the organization or provide feedback for future applications."
-        assessment_parts.append(f"**Action:** Not recommended for this role. Consider for other open positions or future pipeline, or politely decline.")
+        if filtered_df.empty:
+            st.warning("No data matches the current filter criteria. Adjust filters or upload more resumes.")
+            st.stop()
 
-    final_assessment = f"**Overall HR Assessment: {overall_assessment_title}**\n\n"
-    final_assessment += "\n".join(assessment_parts)
+        # Get the latest shortlist_threshold from the slider
+        shortlist_threshold = st.session_state.get("shortlist_filter", 80) # Default to 80 if not set
 
-    return final_assessment
+        filtered_df['Shortlisted'] = filtered_df['Score (%)'].apply(lambda x: f"Yes (Score >= {shortlist_threshold}%)" if x >= shortlist_threshold else "No")
 
-# This function will now load models within each process
-def _load_ml_models_for_process():
-    try:
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-        ml_model = joblib.load("ml_screening_model.pkl")
-        return model, ml_model
-    except Exception as e:
-        # In a child process, cannot use st.error directly
-        print(f"Error loading ML models in child process: {e}")
-        return None, None
+        st.markdown("### 📈 Key Metrics")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Avg. Score", f"{filtered_df['Score (%)'].mean():.2f}%")
+        col2.metric("Avg. Experience", f"{filtered_df['Years Experience'].mean():.1f} yrs")
+        col3.metric("Total Candidates", f"{len(filtered_df)}")
+        shortlisted_count_filtered = (filtered_df['Score (%)'] >= shortlist_threshold).sum()
+        col4.metric("Shortlisted", f"{shortlisted_count_filtered}")
 
-def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills, model, ml_model):
-    jd_clean = clean_text(jd_text)
-    resume_clean = clean_text(resume_text)
+        st.divider()
 
-    score = 0.0
-    semantic_similarity = 0.0
+        st.markdown("### 📋 Filtered Candidates List")
+        display_cols_for_table = ['File Name', 'Candidate Name', 'Score (%)', 'Years Experience', 'Shortlisted']
 
-    resume_raw_skills, _ = extract_relevant_keywords(resume_clean, MASTER_SKILLS)
-    jd_raw_skills, _ = extract_relevant_keywords(jd_clean, MASTER_SKILLS)
+        if 'Matched Keywords' in filtered_df.columns:
+            display_cols_for_table.append('Matched Keywords')
+        if 'Missing Skills' in filtered_df.columns:
+            display_cols_for_table.append('Missing Skills')
+        if 'AI Suggestion' in filtered_df.columns:
+            display_cols_for_table.append('AI Suggestion')
+        if 'Email' in filtered_df.columns:
+            display_cols_for_table.append('Email')
+        if 'Phone Number' in filtered_df.columns:
+            display_cols_for_table.append('Phone Number')
+        if 'Location' in filtered_df.columns:
+            display_cols_for_table.append('Location')
+        if 'Languages' in filtered_df.columns:
+            display_cols_for_table.append('Languages')
+        if 'Education Details' in filtered_df.columns:
+            display_cols_for_table.append('Education Details')
+        if 'Work History' in filtered_df.columns:
+            display_cols_for_table.append('Work History')
+        if 'Project Details' in filtered_df.columns:
+            display_cols_for_table.append('Project Details')
+        if 'CGPA (4.0 Scale)' in filtered_df.columns:
+            display_cols_for_table.append('CGPA (4.0 Scale)')
+        if 'Semantic Similarity' in filtered_df.columns:
+            display_cols_for_table.append('Semantic Similarity')
+        if 'Tag' in filtered_df.columns:
+            display_cols_for_table.append('Tag')
+        if 'JD Used' in filtered_df.columns:
+            display_cols_for_table.append('JD Used')
 
-    weighted_keyword_overlap_score = 0
-    total_jd_skill_weight = 0
-
-    WEIGHT_HIGH = 3
-    WEIGHT_MEDIUM = 2
-    WEIGHT_BASE = 1
-
-    for jd_skill in jd_raw_skills:
-        current_weight = WEIGHT_BASE
-        if jd_skill in [s.lower() for s in high_priority_skills]:
-            current_weight = WEIGHT_HIGH
-        elif jd_skill in [s.lower() for s in medium_priority_skills]:
-            current_weight = WEIGHT_MEDIUM
-        
-        total_jd_skill_weight += current_weight
-        
-        if jd_skill in resume_raw_skills:
-            weighted_keyword_overlap_score += current_weight
-
-    if total_jd_skill_weight > 0:
-        weighted_jd_coverage_percentage = (weighted_keyword_overlap_score / total_jd_skill_weight) * 100
-    else:
-        weighted_jd_coverage_percentage = 0.0
-
-    if ml_model is None or model is None:
-        # print("ML models not loaded in semantic_score. Providing basic score and generic feedback.") # For debugging child process
-        basic_score = (weighted_jd_coverage_percentage * 0.7)
-        basic_score += min(years_exp * 5, 30)
-        
-        if cgpa is not None:
-            if cgpa >= 3.5:
-                basic_score += 5
-            elif cgpa < 2.5:
-                basic_score -= 5
-        
-        score = round(min(basic_score, 100), 2)
-        
-        return score, round(semantic_similarity, 2)
-
-    try:
-        jd_embed = model.encode(jd_clean)
-        resume_embed = model.encode(resume_clean)
-
-        semantic_similarity = cosine_similarity(jd_embed.reshape(1, -1), resume_embed.reshape(1, -1))[0][0]
-        semantic_similarity = float(np.clip(semantic_similarity, 0, 1))
-
-        years_exp_for_model = float(years_exp) if years_exp is not None else 0.0
-
-        features = np.concatenate([jd_embed, resume_embed, [years_exp_for_model], [weighted_keyword_overlap_score]])
-
-        predicted_score = ml_model.predict([features])[0]
-
-        blended_score = (predicted_score * 0.6) + \
-                        (weighted_jd_coverage_percentage * 0.1) + \
-                        (semantic_similarity * 100 * 0.3)
-
-        if semantic_similarity > 0.7 and years_exp >= 3:
-            blended_score += 5
-        
-        if cgpa is not None:
-            if cgpa >= 3.5:
-                blended_score += 3
-            elif cgpa >= 3.0:
-                blended_score += 1
-            elif cgpa < 2.5:
-                blended_score -= 2
-
-        score = float(np.clip(blended_score, 0, 100))
-        
-        return round(score, 2), round(semantic_similarity, 2)
-
-    except Exception as e:
-        # print(f"Error during semantic scoring in child process, falling back to basic: {e}") # For debugging child process
-        basic_score = (weighted_jd_coverage_percentage * 0.7)
-        basic_score += min(years_exp * 5, 30)
-        
-        if cgpa is not None:
-            if cgpa >= 3.5:
-                basic_score += 5
-            elif cgpa < 2.5:
-                basic_score -= 5
-
-        score = round(min(basic_score, 100), 2)
-
-        return score, 0.0
-
-def create_mailto_link(recipient_email, candidate_name, job_title="Job Opportunity", sender_name="Recruiting Team"):
-    subject = urllib.parse.quote(f"Invitation for Interview - {job_title} - {candidate_name}")
-    body = urllib.parse.quote(f"""Dear {candidate_name},
-
-We were very impressed with your profile and would like to invite you for an interview for the {job_title} position.
-
-Best regards,
-
-The {sender_name}""")
-    return f"mailto:{recipient_email}?subject={subject}&body={body}"
-
-def generate_certificate_pdf(html_content):
-    """Converts HTML content to PDF bytes."""
-    try:
-        pdf_bytes = HTML(string=html_content).write_pdf()
-        return pdf_bytes
-    except Exception as e:
-        st.error(f"❌ Failed to generate PDF certificate: {e}")
-        return None
-
-def send_certificate_email(recipient_email, candidate_name, score, certificate_pdf_content, gmail_address, gmail_app_password):
-    # Retrieve Gmail credentials from Streamlit secrets - these are passed now
-    # gmail_address = st.secrets.get("GMAIL_ADDRESS")
-    # gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD")
-
-    if not gmail_address or not gmail_app_password:
-        st.error("❌ Email sending is not configured. Please ensure your Gmail address and App Password secrets are set in Streamlit.")
-        return False
-
-    # Create the main message container
-    msg = MIMEMultipart('mixed')
-    msg['Subject'] = f"🎉 You've Earned It! Here's Your Certification from ScreenerPro"
-    msg['From'] = gmail_address
-    msg['To'] = recipient_email
-
-    # Create the plain text body
-    plain_text_body = f"""Hi {candidate_name},
-
-Congratulations on successfully clearing the ScreenerPro resume screening process with a score of {score:.1f}%!
-
-We’re proud to award you an official certificate recognizing your skills and employability.
-
-You can add this to your resume, LinkedIn, or share it with employers to stand out.
-
-Have questions? Contact us at support@screenerpro.in
-
-🚀 Keep striving. Keep growing.
-
-– Team ScreenerPro
-"""
-
-    # Create the HTML body
-    html_body = f"""
-    <html>
-        <body>
-            <p>Hi {candidate_name},</p>
-            <p>Congratulations on successfully clearing the ScreenerPro resume screening process with a score of <strong>{score:.1f}%</strong>!</p>
-            <p>We’re proud to award you an official certificate recognizing your skills and employability.</p>
-            <p>You can add this to your resume, LinkedIn, or share it with employers to stand out.</p>
-            <p>Have questions? Contact us at support@screenerpro.in</p>
-            <p>🚀 Keep striving. Keep growing.</p>
-            <p>– Team ScreenerPro</p>
-        </body>
-    </html>
-    """
-
-    # Create an 'alternative' part for the plain text and HTML body
-    # This tells email clients to display the best available version (HTML preferred)
-    msg_alternative = MIMEMultipart('alternative')
-    msg_alternative.attach(MIMEText(plain_text_body, 'plain'))
-    msg_alternative.attach(MIMEText(html_body, 'html'))
-    
-    # Attach the 'alternative' part to the main message
-    msg.attach(msg_alternative)
-
-    # Attach the certificate PDF file
-    if certificate_pdf_content:
-        try:
-            attachment = MIMEBase('application', 'pdf')
-            attachment.set_payload(certificate_pdf_content)
-            encoders.encode_base64(attachment)
-            attachment.add_header('Content-Disposition', 'attachment', filename=f'ScreenerPro_Certificate_{candidate_name.replace(" ", "_")}.pdf')
-            msg.attach(attachment)
-            st.info(f"Attached certificate PDF to email for {candidate_name}.")
-        except Exception as e:
-            st.error(f"Failed to attach certificate PDF: {e}")
-    else:
-        st.warning("No PDF content generated to attach to email.")
-
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(gmail_address, gmail_app_password)
-            smtp.send_message(msg)
-        st.success(f"✅ Certificate email sent to {recipient_email}!")
-        return True
-    except smtplib.SMTPAuthenticationError:
-        st.error("❌ Failed to send email: Authentication error. Please check your Gmail address and App Password.")
-        st.info("Ensure you have generated an App Password for your Gmail account and used it instead of your regular password.")
-    except Exception as e:
-        st.error(f"❌ Failed to send email: {e}")
-    return False
-
-# Helper function to process a single resume for the main screener page
-def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_type, jd_text, jd_name_for_results,
-                                             high_priority_skills, medium_priority_skills, max_experience):
-    """
-    Processes a single resume file (bytes content) for the main screener page
-    and returns a dictionary of results.
-    This function is designed to be run in a ProcessPoolExecutor.
-    """
-    # Load models within the child process to ensure picklability and isolation
-    model, ml_model = _load_ml_models_for_process()
-    if model is None or ml_model is None:
-        return {
-            "File Name": file_name,
-            "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
-            "Score (%)": 0, "Years Experience": 0, "CGPA (4.0 Scale)": None,
-            "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
-            "Languages": "Not Found", "Education Details": "Not Found",
-            "Work History": "Not Found", "Project Details": "Not Found",
-            "AI Suggestion": "Error: ML models could not be loaded.",
-            "Detailed HR Assessment": "Error: ML models could not be loaded.",
-            "Matched Keywords": "", "Missing Skills": "",
-            "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
-            "Semantic Similarity": 0.0, "Resume Raw Text": "",
-            "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
-            "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
-            "Tag": "❌ Processing Error"
-        }
-
-    try:
-        # Create a BytesIO object to simulate an uploaded file for extract_text_from_file
-        uploaded_file_mock = BytesIO(file_data_bytes)
-        uploaded_file_mock.name = file_name
-        uploaded_file_mock.type = file_type
-        
-        text = extract_text_from_file(uploaded_file_mock)
-        
-        if text.startswith("[ERROR]"):
-            return {
-                "File Name": file_name,
-                "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
-                "Score (%)": 0, "Years Experience": 0, "CGPA (4.0 Scale)": None,
-                "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
-                "Languages": "Not Found", "Education Details": "Not Found",
-                "Work History": "Not Found", "Project Details": "Not Found",
-                "AI Suggestion": f"Error: {text.replace('[ERROR] ', '')}",
-                "Detailed HR Assessment": f"Error processing resume: {text.replace('[ERROR] ', '')}",
-                "Matched Keywords": "", "Missing Skills": "",
-                "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
-                "Semantic Similarity": 0.0, "Resume Raw Text": "",
-                "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
-                "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
-                "Tag": "❌ Processing Error"
-            }
-
-        exp = extract_years_of_experience(text)
-        email = extract_email(text)
-        phone = extract_phone_number(text)
-        location = extract_location(text)
-        languages = extract_languages(text) 
-        
-        education_details_text = extract_education_text(text)
-        work_history_raw = extract_work_history(text)
-        project_details_raw = extract_project_details(text, MASTER_SKILLS)
-        
-        education_details_formatted = education_details_text
-        work_history_formatted = format_work_history(work_history_raw)
-        project_details_formatted = format_project_details(project_details_raw)
-
-        candidate_name = extract_name(text) or file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title()
-        cgpa = extract_cgpa(text)
-
-        resume_raw_skills_set, resume_categorized_skills = extract_relevant_keywords(text, MASTER_SKILLS)
-        jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, MASTER_SKILLS)
-
-        matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
-        missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
-
-        score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills, model, ml_model)
-        
-        concise_ai_suggestion = generate_concise_ai_suggestion(
-            candidate_name=candidate_name,
-            score=score,
-            years_exp=exp,
-            semantic_similarity=semantic_similarity,
-            cgpa=cgpa
+        st.dataframe(
+            filtered_df[display_cols_for_table].sort_values(by="Score (%)", ascending=False),
+            use_container_width=True
         )
 
-        detailed_hr_assessment = generate_detailed_hr_assessment(
-            candidate_name=candidate_name,
-            score=score,
-            years_exp=exp,
-            semantic_similarity=semantic_similarity,
-            cgpa=cgpa,
-            jd_text=jd_text,
-            resume_text=text,
-            matched_keywords=matched_keywords,
-            missing_skills=missing_skills,
-            max_exp_cutoff=max_experience
+        @st.cache_data
+        def convert_df_to_csv(df_to_convert):
+            return df_to_convert.to_csv(index=False).encode('utf-8')
+
+        csv = convert_df_to_csv(filtered_df)
+        st.download_button(
+            label="Download Filtered Data as CSV",
+            data=csv,
+            file_name="filtered_screening_results.csv",
+            mime="text/csv",
+            help="Download the data currently displayed in the table above."
         )
 
-        certificate_id = str(uuid.uuid4())
-        certificate_rank = "Not Applicable"
+        st.divider()
 
-        if score >= 90:
-            certificate_rank = "🏅 Elite Match"
-        elif score >= 80:
-            certificate_rank = "⭐ Strong Match"
-        elif score >= 75:
-            certificate_rank = "✅ Good Fit"
-        
-        # Determine Tag
-        tag = "❌ Limited Match"
-        if score >= 90 and exp >= 5 and exp <= max_experience and semantic_similarity >= 0.85 and (cgpa is None or cgpa >= 3.5):
-            tag = "👑 Exceptional Match"
-        elif score >= 80 and exp >= 3 and exp <= max_experience and semantic_similarity >= 0.7 and (cgpa is None or cgpa >= 3.0):
-            tag = "🔥 Strong Candidate"
-        elif score >= 60 and exp >= 1 and exp <= max_experience and (cgpa is None or cgpa >= 2.5):
-            tag = "✨ Promising Fit"
-        elif score >= 40:
-            tag = "⚠️ Needs Review"
-
-        return {
-            "File Name": file_name,
-            "Candidate Name": candidate_name,
-            "Score (%)": score,
-            "Years Experience": exp,
-            "CGPA (4.0 Scale)": cgpa,
-            "Email": email or "Not Found",
-            "Phone Number": phone or "Not Found",
-            "Location": location or "Not Found",
-            "Languages": languages,
-            "Education Details": education_details_formatted,
-            "Work History": work_history_formatted,
-            "Project Details": project_details_formatted,
-            "AI Suggestion": concise_ai_suggestion,
-            "Detailed HR Assessment": detailed_hr_assessment,
-            "Matched Keywords": ", ".join(matched_keywords),
-            "Missing Skills": ", ".join(missing_skills),
-            "Matched Keywords (Categorized)": dict(resume_categorized_skills),
-            "Missing Skills (Categorized)": dict(jd_categorized_skills),
-            "Semantic Similarity": semantic_similarity,
-            "Resume Raw Text": text,
-            "JD Used": jd_name_for_results,
-            "Date Screened": datetime.now().date(),
-            "Certificate ID": str(uuid.uuid4()),
-            "Certificate Rank": certificate_rank,
-            "Tag": tag
-        }
-    except Exception as e:
-        # print(f"Error processing {file_name} in child process: {e}") # For debugging child process
-        return {
-            "File Name": file_name,
-            "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
-            "Score (%)": 0, "Years Experience": 0, "CGPA (4.0 Scale)": None,
-            "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
-            "Languages": "Not Found", "Education Details": "Not Found",
-            "Work History": "Not Found", "Project Details": "Not Found",
-            "AI Suggestion": f"Error: {e}",
-            "Detailed HR Assessment": f"Error processing resume: {e}",
-            "Matched Keywords": "", "Missing Skills": "",
-            "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
-            "Semantic Similarity": 0.0, "Resume Raw Text": "",
-            "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
-            "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
-            "Tag": "❌ Processing Error"
-        }
-
-
-def resume_screener_page():
-    st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
-
-    if 'screening_cutoff_score' not in st.session_state:
-        st.session_state['screening_cutoff_score'] = 75
-    if 'screening_min_experience' not in st.session_state:
-        st.session_state['screening_min_experience'] = 2
-    if 'screening_max_experience' not in st.session_state:
-        st.session_state['screening_max_experience'] = 10
-    if 'screening_min_cgpa' not in st.session_state:
-        st.session_state['screening_min_cgpa'] = 2.5
-    
-    if 'comprehensive_df' not in st.session_state:
-        st.session_state['comprehensive_df'] = pd.DataFrame(columns=[
-            "File Name", "Candidate Name", "Score (%)", "Years Experience", "CGPA (4.0 Scale)",
-            "Email", "Phone Number", "Location", "Languages", "Education Details",
-            "Work History", "Project Details", "AI Suggestion", "Detailed HR Assessment",
-            "Matched Keywords", "Missing Skills", "Matched Keywords (Categorized)",
-            "Missing Skills (Categorized)", "Semantic Similarity", "Resume Raw Text",
-            "JD Used", "Date Screened", "Certificate ID", "Certificate Rank", "Tag"
+        st.markdown("### 📊 Visualizations")
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+            "Score Distribution", "Experience Distribution", "Shortlist Breakdown",
+            "Score vs. Experience", "Skill Clouds", "CGPA Distribution",
+            "Score vs. CGPA", "Experience vs. CGPA", "Skills by Category",
+            "Location Distribution"
         ])
-    if 'resume_raw_texts' not in st.session_state:
-        st.session_state['resume_raw_texts'] = {}
-    if 'certificate_html_content' not in st.session_state:
-        st.session_state['certificate_html_content'] = ""
 
-    # Initial check for Tesseract (main process only)
-    tesseract_cmd_path = _get_tesseract_cmd_for_process()
-    if not tesseract_cmd_path:
-        st.error("Tesseract OCR engine not found. Please ensure it's installed and in your system's PATH.")
-        st.info("On Streamlit Community Cloud, ensure you have a `packages.txt` file in your repository's root with `tesseract-ocr` and `tesseract-ocr-eng` listed.")
-        st.stop()
+        with tab1:
+            st.markdown("#### Score Distribution")
+            fig_hist, ax_hist = plt.subplots(figsize=(10, 5))
+            sns.histplot(filtered_df['Score (%)'], bins=10, kde=True, color="#00cec9", ax=ax_hist)
+            ax_hist.set_xlabel("Score (%)")
+            ax_hist.set_ylabel("Number of Candidates")
+            st.pyplot(fig_hist)
+            plt.close(fig_hist)
 
-    st.markdown("## ⚙️ Define Job Requirements & Screening Criteria")
-    col1, col2 = st.columns([2, 1])
+        with tab2:
+            st.markdown("#### Experience Distribution")
+            fig_exp, ax_exp = plt.subplots(figsize=(10, 5))
+            sns.histplot(filtered_df['Years Experience'], bins=5, kde=True, color="#fab1a0", ax=ax_exp)
+            ax_exp.set_xlabel("Years of Experience")
+            ax_exp.set_ylabel("Number of Candidates")
+            st.pyplot(fig_exp)
+            plt.close(fig_exp)
 
-    with col1:
-        jd_text = ""
-        job_roles = {"Upload my own": None}
+        with tab3:
+            st.markdown("#### Shortlist Breakdown")
+            shortlist_counts = filtered_df['Shortlisted'].value_counts()
+            if not shortlist_counts.empty:
+                fig_pie = px.pie(
+                    names=shortlist_counts.index,
+                    values=shortlist_counts.values,
+                    title=f"Candidates Shortlisted vs. Not Shortlisted (Cutoff: {shortlist_threshold}%)",
+                    color_discrete_sequence=px.colors.qualitative.Pastel
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+            else:
+                st.info("Not enough data to generate Shortlist Breakdown.")
+
+        with tab4:
+            st.markdown("#### Score vs. Years Experience")
+            fig_scatter = px.scatter(
+                filtered_df,
+                x="Years Experience",
+                y="Score (%)",
+                hover_name="Candidate Name",
+                color="Shortlisted",
+                title="Candidate Score vs. Years Experience",
+                labels={"Years Experience": "Years of Experience", "Score (%)": "Matching Score (%)"},
+                trendline="ols",
+                color_discrete_map={f"Yes (Score >= {shortlist_threshold}%)": "green", "No": "red"}
+            )
+            st.plotly_chart(fig_scatter, use_container_width=True)
+
+        with tab5:
+            col_wc1, col_wc2 = st.columns(2)
+            with col_wc1:
+                st.markdown("#### ☁️ Common Skills WordCloud")
+                if 'Matched Keywords' in filtered_df.columns and not filtered_df['Matched Keywords'].empty:
+                    all_keywords = [
+                        kw.strip() for kws in filtered_df['Matched Keywords'].dropna()
+                        for kw in str(kws).split(',') if kw.strip()
+                    ]
+                    if all_keywords:
+                        wc = WordCloud(width=800, height=400, background_color="white", collocations=False).generate(" ".join(all_keywords))
+                        fig_wc, ax_wc = plt.subplots(figsize=(10, 4))
+                        ax_wc.imshow(wc, interpolation='bilinear')
+                        ax_wc.axis('off')
+                        st.pyplot(fig_wc)
+                        plt.close(fig_wc)
+                    else:
+                        st.info("No common skills to display in the WordCloud for filtered data.")
+                else:
+                    st.info("No 'Matched Keywords' data available or column not found for WordCloud.")
+
+            with col_wc2:
+                st.markdown("#### ❌ Top Missing Skills")
+                if 'Missing Skills' in filtered_df.columns and not filtered_df['Missing Skills'].empty:
+                    all_missing = pd.Series([
+                        s.strip() for row in filtered_df['Missing Skills'].dropna()
+                        for s in str(row).split(',') if s.strip()
+                    ])
+                    if not all_missing.empty:
+                        sns.set_style("whitegrid")
+                        fig_ms, ax_ms = plt.subplots(figsize=(8, 4))
+                        top_missing = all_missing.value_counts().head(10)
+                        sns.barplot(x=top_missing.values, y=top_missing.index, ax=ax_ms, palette="coolwarm")
+                        ax_ms.set_xlabel("Count")
+                        ax_ms.set_ylabel("Missing Skill")
+                        st.pyplot(fig_ms)
+                        plt.close(fig_ms)
+                    else:
+                        st.info("No top missing skills to display for filtered data.")
+                else:
+                    st.info("No 'Missing Skills' data available or column not found.")
+
+        with tab6:
+            st.markdown("#### 🎓 CGPA Distribution")
+            # Ensure CGPA column is numeric and drop NaNs before plotting
+            cgpa_df = filtered_df.dropna(subset=['CGPA (4.0 Scale)'])
+            if not cgpa_df.empty:
+                fig_cgpa_hist = px.histogram(
+                    cgpa_df,
+                    x='CGPA (4.0 Scale)',
+                    nbins=10,
+                    title='Distribution of CGPA (Normalized to 4.0 Scale)',
+                    labels={'CGPA (4.0 Scale)': 'CGPA'},
+                    color_discrete_sequence=px.colors.qualitative.Plotly if not dark_mode else px.colors.qualitative.Dark2
+                )
+                st.plotly_chart(fig_cgpa_hist, use_container_width=True)
+            else:
+                st.info("No CGPA data available for this visualization after filtering.")
+
+
+        with tab7:
+            st.markdown("#### 📈 Score vs. CGPA")
+            # Ensure CGPA column is numeric and drop NaNs before plotting
+            cgpa_df_scatter = filtered_df.dropna(subset=['CGPA (4.0 Scale)'])
+            if not cgpa_df_scatter.empty:
+                fig_score_cgpa = px.scatter(
+                    cgpa_df_scatter,
+                    x='CGPA (4.0 Scale)',
+                    y='Score (%)',
+                    hover_name='Candidate Name',
+                    color='Shortlisted',
+                    title='Candidate Score vs. CGPA',
+                    labels={'CGPA (4.0 Scale)': 'CGPA (4.0 Scale)', 'Score (%)': 'Matching Score (%)'},
+                    trendline="ols",
+                    color_discrete_map={f"Yes (Score >= {shortlist_threshold}%)": "green", "No": "red"}
+                )
+                st.plotly_chart(fig_score_cgpa, use_container_width=True)
+            else:
+                st.info("No CGPA data available for this visualization after filtering.")
+
+        with tab8:
+            st.markdown("#### 📊 Experience vs. CGPA")
+            # Ensure CGPA column is numeric and drop NaNs before plotting
+            cgpa_df_exp_scatter = filtered_df.dropna(subset=['CGPA (4.0 Scale)'])
+            if not cgpa_df_exp_scatter.empty:
+                fig_exp_cgpa = px.scatter(
+                    cgpa_df_exp_scatter,
+                    x='Years Experience',
+                    y='CGPA (4.0 Scale)',
+                    hover_name='Candidate Name',
+                    color='Shortlisted',
+                    title='Years Experience vs. CGPA',
+                    labels={'Years Experience': 'Years of Experience', 'CGPA (4.0 Scale)': 'CGPA (4.0 Scale)'},
+                    trendline="ols",
+                    color_discrete_map={f"Yes (Score >= {shortlist_threshold}%)": "green", "No": "red"}
+                )
+                st.plotly_chart(fig_exp_cgpa, use_container_width=True)
+            else:
+                st.info("No CGPA data available for this visualization after filtering.")
+
+        with tab9:
+            st.markdown("#### 🧠 Skills by Category")
+            if 'Matched Keywords (Categorized)' in filtered_df.columns and not filtered_df['Matched Keywords (Categorized)'].empty:
+                all_categorized_skills_counts = collections.defaultdict(int)
+                for categorized_dict in filtered_df['Matched Keywords (Categorized)'].dropna():
+                    if isinstance(categorized_dict, dict):
+                        for category, skills_list in categorized_dict.items():
+                            all_categorized_skills_counts[category] += len(skills_list)
+
+                if all_categorized_skills_counts:
+                    skills_cat_df = pd.DataFrame(all_categorized_skills_counts.items(), columns=['Category', 'Count']).sort_values('Count', ascending=False)
+                    fig_skills_cat = px.bar(
+                        skills_cat_df,
+                        x='Count',
+                        y='Category',
+                        orientation='h',
+                        title='Total Matched Skills by Category',
+                        labels={'Count': 'Number of Matched Skills', 'Category': 'Skill Category'},
+                        color='Count',
+                        color_continuous_scale=px.colors.sequential.Teal if not dark_mode else px.colors.sequential.Plasma
+                    )
+                    st.plotly_chart(fig_skills_cat, use_container_width=True)
+                else:
+                    st.info("No categorized skill data available for this visualization.")
+            else:
+                st.info("No 'Matched Keywords (Categorized)' data available or column not found.")
+
+        with tab10:
+            st.markdown("#### 📍 Candidate Location Distribution")
+            if 'Location' in filtered_df.columns and not filtered_df['Location'].empty:
+                all_locations = []
+                for loc_str in filtered_df['Location'].dropna():
+                    all_locations.extend([loc.strip() for loc in loc_str.split(',') if loc.strip() and loc.strip().lower() != 'not found'])
+
+                if all_locations:
+                    location_counts = pd.Series(all_locations).value_counts().reset_index()
+                    location_counts.columns = ['Location', 'Count']
+                    fig_location = px.bar(
+                        location_counts,
+                        x='Count',
+                        y='Location',
+                        orientation='h',
+                        title='Candidate Distribution by Location',
+                        labels={'Count': 'Number of Candidates', 'Location': 'Location'},
+                        color='Count',
+                        color_continuous_scale=px.colors.sequential.Viridis if not dark_mode else px.colors.sequential.Cividis
+                    )
+                    st.plotly_chart(fig_location, use_container_width=True)
+                else:
+                    st.info("No valid location data available for this visualization.")
+            else:
+                st.info("No 'Location' data available or column not found.")
+
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+    # ======================
+    # 🏠 Dashboard Section
+    # ======================
+    if tab == "🏠 Dashboard":
+        st.markdown('<div class="dashboard-header">📊 Overview Dashboard</div>', unsafe_allow_html=True)
+
+        # Initialize metrics
+        resume_count = 0
+        if not os.path.exists("data"):
+            os.makedirs("data")
+        jd_count = len([f for f in os.listdir("data") if f.endswith(".txt")])
+        shortlisted = 0
+        avg_score = 0.0
+        df_results = pd.DataFrame()
+
+        cutoff_score = st.session_state.get('screening_cutoff_score', 75)
+        min_exp_required = st.session_state.get('screening_min_experience', 2)
+        max_exp_allowed = st.session_state.get('screening_max_experience', 10)
+        min_cgpa_required = st.session_state.get('screening_min_cgpa', 2.5)
+
+        if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+            try:
+                df_results = st.session_state['comprehensive_df'].copy()
+                resume_count = df_results["File Name"].nunique()
+
+                # Ensure CGPA is numeric before filtering
+                df_results['CGPA (4.0 Scale)'] = pd.to_numeric(df_results['CGPA (4.0 Scale)'], errors='coerce')
+                df_results['CGPA (4.0 Scale)'] = df_results['CGPA (4.0 Scale)'].astype(float)
+
+
+                shortlisted_df = df_results[
+                    (df_results["Score (%)"] >= cutoff_score) &
+                    (df_results["Years Experience"] >= min_exp_required) &
+                    (df_results["Years Experience"] <= max_exp_allowed) &
+                    ((df_results['CGPA (4.0 Scale)'].isnull()) | (df_results['CGPA (4.0 Scale)'] >= min_cgpa_required))
+                ].copy()
+                shortlisted = shortlisted_df.shape[0]
+                avg_score = df_results["Score (%)"].mean()
+            except Exception as e:
+                st.error(f"Error processing screening results from session state: {e}")
+                df_results = pd.DataFrame()
+                shortlisted_df = pd.DataFrame()
+        else:
+            st.info("No screening results available in this session yet. Please run the Resume Screener.")
+            shortlisted_df = pd.DataFrame()
+
+        st.subheader("Key Performance Indicators")
+        metric_cols = st.columns(4)
+
+        metric_cols[0].metric("Resumes Screened", resume_count, help="Total unique resumes processed in this session.")
+        metric_cols[1].metric("Job Descriptions", jd_count, help="Number of job descriptions available.")
+        metric_cols[2].metric("Shortlisted Candidates", shortlisted, help=f"Candidates meeting Score ≥ {cutoff_score}%, Exp {min_exp_required}-{max_exp_allowed} yrs, CGPA ≥ {min_cgpa_required} or N/A.")
+        metric_cols[3].metric("Average Score", f"{avg_score:.1f}%", help="Average matching score of all screened resumes.")
+
+        st.markdown("---")
+
+        st.subheader("Quick Actions")
+        action_cols = st.columns(3)
+        with action_cols[0]:
+            if st.button("🚀 Start New Screening", key="dashboard_screener_button_large"):
+                st.session_state.tab_override = '🧠 Resume Screener'
+                st.rerun()
+        with action_cols[1]:
+            if st.button("📈 View Full Analytics", key="dashboard_analytics_button_large"):
+                st.session_state.tab_override = '📊 Screening Analytics'
+                st.rerun()
+        with action_cols[2]:
+            if st.button("📧 Email Shortlisted", key="dashboard_email_button_large"):
+                st.session_state.tab_override = '📤 Email Candidates'
+                st.rerun()
+
+        # --- Add Save/Load Buttons for Session Data ---
+        st.markdown("---")
+        st.subheader("Cloud Session Data Management")
+        cloud_data_cols = st.columns(2) # Changed to 2 columns as Admin SDK functions are removed
+        with cloud_data_cols[0]:
+            if st.button("💾 Save Session Data to Cloud (REST API)", key="save_session_data_button"):
+                save_session_data_to_firestore_rest(st.session_state.get('username', 'anonymous'))
+        with cloud_data_cols[1]:
+            if st.button("🔄 Load Session Data from Cloud (REST API)", key="load_session_data_button"):
+                load_session_data_from_firestore_rest(st.session_state.get('username', 'anonymous'))
+                st.rerun() # Rerun to apply loaded data to the UI
+
+        st.markdown("---")
+
+        st.subheader("⚙️ Customize Your Dashboard")
+        with st.expander("Select Widgets to Display"):
+            if 'dashboard_widgets' not in st.session_state:
+                st.session_state.dashboard_widgets = {
+                    'Candidate Distribution': True,
+                    'Experience Distribution': True,
+                    'Top 5 Most Common Skills': True,
+                    'My Recent Screenings': True,
+                    'Top Performing JDs': True,
+                    'Pending Approvals': True,
+                }
+
+            st.session_state.dashboard_widgets['Candidate Distribution'] = st.checkbox("Candidate Quality Distribution", value=st.session_state.dashboard_widgets['Candidate Distribution'], key="widget_cand_dist")
+            st.session_state.dashboard_widgets['Experience Distribution'] = st.checkbox("Experience Level Breakdown", value=st.session_state.dashboard_widgets['Experience Distribution'], key="widget_exp_dist")
+            st.session_state.dashboard_widgets['Top 5 Most Common Skills'] = st.checkbox("Top 5 Matched Skills", value=st.session_state.dashboard_widgets['Top 5 Most Common Skills'], key="widget_top_skills")
+            st.session_state.dashboard_widgets['My Recent Screenings'] = st.checkbox("My Recent Screenings Table", value=st.session_state.dashboard_widgets['My Recent Screenings'], key="widget_recent_screenings")
+            st.session_state.dashboard_widgets['Top Performing JDs'] = st.checkbox("Top Performing Job Descriptions", value=st.session_state.dashboard_widgets['Top Performing JDs'], key="widget_top_jds")
+            st.session_state.dashboard_widgets['Pending Approvals'] = st.checkbox("Pending Approvals", value=st.session_state.dashboard_widgets['Pending Approvals'], key="widget_pending_approvals")
+
+        st.markdown("### 📊 Dashboard Insights")
+
+        if not df_results.empty:
+            try:
+                # Ensure 'Tag' column is present before trying to use it for charts
+                if 'Tag' not in df_results.columns:
+                    df_results['Tag'] = df_results.apply(lambda row:
+                        "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row.get('Semantic Similarity', 0) >= 0.85 else (
+                        "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row.get('Semantic Similarity', 0) >= 0.7 else (
+                        "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 else (
+                        "⚠️ Needs Review" if row['Score (%)'] >= 40 else
+                        "❌ Limited Match"))), axis=1)
+
+                col_g1, col_g2 = st.columns(2)
+
+                if st.session_state.dashboard_widgets['Candidate Distribution']:
+                    with col_g1:
+                        st.markdown("##### 🔥 Candidate Quality Distribution")
+                        pie_data = df_results['Tag'].value_counts().reset_index()
+                        pie_data.columns = ['Tag', 'Count']
+                        # Use Plotly for better interactivity and dark mode handling
+                        fig_plotly_pie = px.pie(pie_data, values='Count', names='Tag', title='Candidate Quality Breakdown',
+                                                color_discrete_sequence=px.colors.qualitative.Pastel if not dark_mode else px.colors.qualitative.Dark2)
+                        st.plotly_chart(fig_plotly_pie, use_container_width=True)
+
+                if st.session_state.dashboard_widgets['Experience Distribution']:
+                    with col_g2:
+                        st.markdown("##### 📊 Experience Level Breakdown")
+                        bins = [0, 2, 5, 10, 20, 50] # Added 50 as upper bound for clarity
+                        labels = ['0-2 yrs', '3-5 yrs', '6-10 yrs', '10-20 yrs', '20+ yrs'] # Adjusted labels
+                        df_results['Experience Group'] = pd.cut(df_results['Years Experience'], bins=bins, labels=labels, right=False)
+                        exp_counts = df_results['Experience Group'].value_counts().sort_index()
+
+                        # Use Plotly for better interactivity and dark mode handling
+                        fig_plotly_bar = px.bar(exp_counts, x=exp_counts.index, y=exp_counts.values, title='Experience Distribution',
+                                                labels={'x': 'Experience Range', 'y': 'Number of Candidates'},
+                                                color_discrete_sequence=px.colors.sequential.Plasma if dark_mode else px.colors.sequential.Viridis)
+                        st.plotly_chart(fig_plotly_bar, use_container_width=True)
+
+                # This table is always useful, so it's not tied to a widget checkbox
+                st.markdown("##### 📋 Candidate Quality Summary")
+                tag_summary = df_results['Tag'].value_counts().reset_index()
+                tag_summary.columns = ['Candidate Tag', 'Count']
+                st.dataframe(tag_summary, use_container_width=True, hide_index=True)
+
+                if st.session_state.dashboard_widgets['Top 5 Most Common Skills']:
+                    st.markdown("##### 🧠 Top 5 Matched Skills")
+                    if 'Matched Keywords' in df_results.columns:
+                        all_skills = []
+                        for skills in df_results['Matched Keywords'].dropna():
+                            all_skills.extend([s.strip().lower() for s in skills.split(",") if s.strip()])
+                        skill_counts = pd.Series(all_skills).value_counts().head(5)
+                        if not skill_counts.empty:
+                            fig_skills, ax3 = plt.subplots(figsize=(5.8, 3))
+
+                            if dark_mode:
+                                palette = sns.color_palette("magma", len(skill_counts))
+                            else:
+                                palette = sns.color_palette("cool", len(skill_counts))
+                            sns.barplot(
+                                x=skill_counts.values,
+                                y=skill_counts.index,
+                                palette=palette,
+                                ax=ax3
+                            )
+                            ax3.set_title("Top 5 Skills", fontsize=13, fontweight='bold', color='white' if dark_mode else 'black')
+                            ax3.set_xlabel("Frequency", fontsize=11, color='white' if dark_mode else 'black')
+                            ax3.set_ylabel("Skill", fontsize=11, color='white' if dark_mode else 'black')
+                            ax3.tick_params(labelsize=10, colors='white' if dark_mode else 'black')
+
+                            for i, v in enumerate(skill_counts.values):
+                                ax3.text(v + 0.3, i, str(v), color='white' if dark_mode else 'black', va='center', fontweight='bold', fontsize=9)
+                            fig_skills.tight_layout()
+                            st.pyplot(fig_skills)
+                            plt.close(fig_skills)
+                        else:
+                            st.info("No skill data available in results for the Top 5 Skills chart.")
+                    else:
+                        st.info("No 'Matched Keywords' column found in results for skill analysis.")
+            except Exception as e:
+                st.warning(f"⚠️ Could not render insights due to data error: {e}")
+
+        st.markdown("---")
+
+        # --- New Dashboard Widgets ---
+        if st.session_state.dashboard_widgets['My Recent Screenings']:
+            st.subheader("My Recent Screenings")
+            if not df_results.empty:
+                # Expander for "Resumes Screened"
+                with st.expander(f"View {resume_count} Screened Resumes"):
+                    for idx, row in df_results.iterrows():
+                        st.markdown(f"- **{row['Candidate Name']}** (Score: {row['Score (%)']:.1f}%, File: {row['File Name']})")
+                st.dataframe(df_results[['Candidate Name', 'Score (%)', 'Years Experience', 'File Name']].head(5), use_container_width=True, hide_index=True)
+                if st.button("View All Screenings in Analytics", key="view_all_screenings_dashboard"):
+                    st.session_state.tab_override = '📊 Screening Analytics'
+                    st.rerun()
+            else:
+                st.info("No recent screenings to display. Run the Resume Screener to see results here.")
+
+        if st.session_state.dashboard_widgets['Top Performing JDs']:
+            st.subheader("Top Performing Job Descriptions")
+            if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+                df_all_results = st.session_state['comprehensive_df'].copy()
+
+                # --- START FIX: Ensure 'JD Used' column exists for display ---
+                if 'JD Used' not in df_all_results.columns:
+                    # This is a fallback/mock for demonstration if screener.py doesn't add it
+                    df_all_results['JD Used'] = 'Default Job Description'
+                    st.warning("Note: 'JD Used' column not found in screening results. Using 'Default Job Description' for display. Please update your screener to track the JD used.")
+                # --- END FIX ---
+
+                if 'JD Used' in df_all_results.columns: # Re-check after potential mock addition
+                    # Ensure CGPA is numeric before filtering
+                    df_all_results['CGPA (4.0 Scale)'] = pd.to_numeric(df_all_results['CGPA (4.0 Scale)'], errors='coerce')
+                    df_all_results['CGPA (4.0 Scale)'] = df_all_results['CGPA (4.0 Scale)'].astype(float)
+
+                    # Filter for shortlisted candidates based on session state criteria
+                    shortlisted_per_jd = df_all_results[
+                        (df_all_results["Score (%)"] >= cutoff_score) &
+                        (df_all_results["Years Experience"] >= min_exp_required) &
+                        (df_all_results["Years Experience"] <= max_exp_allowed) & # Apply max experience filter
+                        ((df_all_results['CGPA (4.0 Scale)'].isnull()) | (df_all_results['CGPA (4.0 Scale)'] >= min_cgpa_required)) # Apply CGPA filter
+                    ]['JD Used'].value_counts().reset_index()
+                    shortlisted_per_jd.columns = ['Job Description', 'Shortlisted Count']
+
+                    if not shortlisted_per_jd.empty:
+                        st.dataframe(shortlisted_per_jd, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No shortlisted candidates found for any JD yet based on current criteria.")
+                else:
+                    st.info("Still unable to determine top performing JDs. 'JD Used' column is missing even after fallback.")
+            else:
+                st.info("No screening results available to determine top performing JDs.")
+
+            if st.button("Manage All Job Descriptions", key="manage_all_jds_dashboard"):
+                st.session_state.tab_override = '📁 Manage JDs'
+                st.rerun()
+
+        if st.session_state.dashboard_widgets['Pending Approvals']:
+            st.subheader("Pending Approvals")
+            if 'pending_approvals' not in st.session_state:
+                st.session_state.pending_approvals = []
+
+            if not st.session_state.pending_approvals:
+                st.info("No candidates currently awaiting approval.")
+                # Add a mock button to add a candidate for approval for testing
+                if st.button("Mock: Add Candidate for Approval"):
+                    mock_candidate = {
+                        "candidate_name": f"Mock Candidate {len(st.session_state.pending_approvals) + 1}",
+                        "score": 85,
+                        "experience": 4,
+                        "jd_used": "Business Analyst",
+                        "status": "pending",
+                        "notes": "Good potential, needs managerial review."
+                    }
+                    st.session_state.pending_approvals.append(mock_candidate)
+                    log_activity_main(f"Mock candidate '{mock_candidate['candidate_name']}' added for approval.")
+                    st.rerun()
+            else:
+                st.write("Review the following candidates:")
+                for i, candidate in enumerate(st.session_state.pending_approvals):
+                    if candidate['status'] == 'pending':
+                        with st.expander(f"Candidate: {candidate['candidate_name']} (Score: {candidate['score']}%)"):
+                            st.write(f"**JD Used:** {candidate['jd_used']}")
+                            st.write(f"**Experience:** {candidate['experience']} years")
+                            st.write(f"**Notes:** {candidate['notes']}")
+
+                            col_approve, col_reject = st.columns(2)
+                            with col_approve:
+                                if st.button(f"✅ Approve {candidate['candidate_name']}", key=f"approve_{i}"):
+                                    st.session_state.pending_approvals[i]['status'] = 'approved'
+                                    log_activity_main(f"Candidate '{candidate['candidate_name']}' approved.")
+                                    st.success(f"Approved {candidate['candidate_name']}!")
+                                    st.rerun()
+                            with col_reject:
+                                if st.button(f"❌ Reject {candidate['candidate_name']}", key=f"reject_{i}"):
+                                    st.session_state.pending_approvals[i]['status'] = 'rejected'
+                                    log_activity_main(f"Candidate '{candidate['candidate_name']}' rejected.")
+                                    st.error(f"Rejected {candidate['candidate_name']}.")
+                                    st.rerun()
+                # Optionally show approved/rejected candidates
+                approved_rejected = [c for c in st.session_state.pending_approvals if c['status'] != 'pending']
+                if approved_rejected:
+                    st.markdown("---")
+                    st.subheader("Reviewed Candidates")
+                    reviewed_df = pd.DataFrame(approved_rejected)
+                    st.dataframe(reviewed_df[['candidate_name', 'score', 'experience', 'status']], use_container_width=True, hide_index=True)
+
+
+    # ======================
+    # Page Routing via function calls (remaining pages)
+    # ======================
+    elif tab == "🧠 Resume Screener":
+        try:
+            # Import the screener page function (assuming it's in a separate file)
+            from screener import resume_screener_page
+            resume_screener_page() # Call the imported function
+            # The logging and pending approval logic here should ideally be handled within resume_screener_page itself
+            # after a successful screening operation. For now, keeping it here for demonstration.
+            if 'comprehensive_df' in st.session_state and not st.session_state['comprehensive_df'].empty:
+                # Log activity only if new data was added to comprehensive_df
+                current_df_len = len(st.session_state['comprehensive_df'])
+                if st.session_state.get('last_screen_log_count', 0) < current_df_len:
+                    log_activity_main(f"Performed resume screening for {current_df_len} candidates.")
+                    st.session_state.last_screen_log_count = current_df_len
+
+                # Example: Triggering a pending approval for a high-scoring candidate
+                for result in st.session_state['comprehensive_df'].to_dict('records'):
+                    if result.get('Score (%)', 0) >= 90 and result['Candidate Name'] not in [app['candidate_name'] for app in st.session_state.get('pending_approvals', []) if app['status'] == 'pending']:
+                        if 'pending_approvals' not in st.session_state:
+                            st.session_state.pending_approvals = []
+                        st.session_state.pending_approvals.append({
+                            "candidate_name": result['Candidate Name'], # Corrected key
+                            "score": result['Score (%)'],
+                            "experience": result['Years Experience'],
+                            "jd_used": result.get('JD Used', 'N/A'),
+                            "status": "pending",
+                            "notes": f"High-scoring candidate from recent screening."
+                        })
+                        log_activity_main(f"Candidate '{result['Candidate Name']}' sent for approval (high score).")
+                        st.toast(f"Candidate {result['Candidate Name']} sent for approval!")
+
+        except ImportError:
+            st.error("`screener.py` not found or `resume_screener_page` function not defined. Please ensure 'screener.py' exists and contains the 'resume_screener_page' function.")
+        except Exception as e:
+            st.error(f"Error loading Resume Screener: {e}")
+
+    elif tab == "📁 Manage JDs":
+        try:
+            with open("manage_jds.py", encoding="utf-8") as f:
+                exec(f.read())
+        except FileNotFoundError:
+            st.info("`manage_jds.py` not found. Please ensure the file exists in the same directory.")
+        except Exception as e:
+            st.error(f"Error loading Manage JDs: {e}")
+
+    elif tab == "📊 Screening Analytics":
+        analytics_dashboard_page()
+
+    elif tab == "📈 Advanced Tools": # New page: Advanced Tools
+        # Import the advanced tools page function
+        from advanced import advanced_tools_page
+        # Pass the necessary global variables to the advanced_tools_page
+        advanced_tools_page(
+            app_id=FIREBASE_PROJECT_ID,
+            FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+            FIRESTORE_BASE_URL=FIRESTORE_BASE_URL
+        )
+    elif tab == "🤝 Collaboration Hub": # New page: Collaboration Hub
+        # Import and call the collaboration hub page function
+        from collaboration import collaboration_hub_page
+        # Pass the necessary global variables to the collaboration_hub_page
+        collaboration_hub_page(
+            app_id=FIREBASE_PROJECT_ID,
+            FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY,
+            FIRESTORE_BASE_URL=FIRESTORE_BASE_URL
+        )
+
+    elif tab == "🏢 About Us": # Call the imported function
+        about_us_page()
+
+    elif tab == "⚖️ Privacy Policy & Terms": # Call the imported function
+        privacy_policy_page()
+
+    elif tab == "📤 Email Candidates":
+        try:
+            # Import the email sender function (assuming it's in a separate file)
+            from email_sender import send_email_to_candidate
+            send_email_to_candidate() # Call the imported function
+        except ImportError:
+            st.error("`email_sender.py` not found or `send_email_to_candidate` function not defined. Please ensure 'email_sender.py' exists and contains the 'send_email_to_candidate' function.")
+        except Exception as e:
+            st.error(f"Error loading Email Candidates: {e}")
+
+    elif tab == "🔍 Search Resumes":
+        try:
+            with open("search.py", encoding="utf-8") as f:
+                exec(f.read())
+        except FileNotFoundError:
+            st.info("`search.py` not found. Please ensure the file exists in the same directory.")
+        except Exception as e:
+            st.error(f"Error loading Search Resumes: {e}")
+
+    elif tab == "📝 Candidate Notes":
+        try:
+            with open("notes.py", encoding="utf-8") as f:
+                exec(f.read())
+        except FileNotFoundError:
+            st.info("`notes.py` not found. Please ensure the file exists in the same directory.")
+        except Exception as e:
+            st.error(f"Error loading Candidate Notes: {e}")
+
+    elif tab == "❓ Feedback & Help":
+        # Import the feedback page function
+        from feedback import feedback_and_help_page
+        if 'user_email' not in st.session_state:
+            st.session_state['user_email'] = st.session_state.get('username', 'anonymous_user')
+        feedback_and_help_page()
+    elif tab == "📦 Bulk Resume Import":
+        # Import the bulk upload page function
+        from bulk_upload_page import bulk_upload_page
+        # Load JDs from the 'data' directory for the bulk upload page
+        jd_texts = {}
         if os.path.exists("data"):
             for fname in os.listdir("data"):
                 if fname.endswith(".txt"):
-                    job_roles[fname.replace(".txt", "").replace("_", " ").title()] = os.path.join("data", fname)
-
-        jd_option = st.selectbox("📌 **Select a Pre-Loaded Job Role or Upload Your Own Job Description**", list(job_roles.keys()))
+                    with open(os.path.join("data", fname), "r", encoding="utf-8") as f:
+                        jd_texts[fname.replace(".txt", "").replace("_", " ").title()] = f.read()
         
-        jd_name_for_results = ""
-        if jd_option == "Upload my own":
-            jd_file = st.file_uploader("Upload Job Description (TXT, PDF)", type=["txt", "pdf"], help="Upload a .txt or .pdf file containing the job description.")
-            if jd_file:
-                jd_text = extract_text_from_file(jd_file)
-                jd_name_for_results = jd_file.name.replace('.pdf', '').replace('.txt', '')
-            else:
-                jd_name_for_results = "Uploaded JD (No file selected)"
-        else:
-            jd_path = job_roles[jd_option]
-            if jd_path and os.path.exists(jd_path):
-                with open(jd_path, "r", encoding="utf-8") as f:
-                    jd_text = f.read()
-            jd_name_for_results = jd_option
+        # Pass the comprehensive_df and jd_texts to the bulk_upload_page
+        bulk_upload_page(st.session_state['comprehensive_df'], jd_texts)
 
-        if jd_text:
-            with st.expander("📝 View Loaded Job Description"):
-                st.text_area("Job Description Content", jd_text, height=200, disabled=True, label_visibility="collapsed")
+    elif tab == "⚙️ Admin Tools": # Admin Tools page
+        st.markdown('<div class="dashboard-header">⚙️ Admin Tools</div>', unsafe_allow_html=True)
+        if is_admin:
+            st.subheader(f"Welcome, Admin {st.session_state.username}!")
+            admin_tab = st.tabs(["Create User", "Reset Password", "Toggle User Status", "Activity Log"])
 
-    with col2:
-        cutoff = st.slider("📈 **Minimum Score Cutoff (%)**", 0, 100, 75, key="min_score_cutoff_slider", help="Candidates scoring below this percentage will be flagged for closer review or considered less suitable.")
-        st.session_state['screening_cutoff_score'] = cutoff
-
-        min_experience = st.slider("💼 **Minimum Experience Required (Years)**", 0, 15, 2, key="min_exp_slider", help="Candidates with less than this experience will be noted.")
-        st.session_state['screening_min_experience'] = min_experience
-
-        max_experience = st.slider("⬆️ **Maximum Experience Allowed (Years)**", 0, 20, 10, key="max_exp_slider", help="Candidates with more than this experience might be considered overqualified or outside the target range.")
-        st.session_state['screening_max_experience'] = max_experience
-
-        min_cgpa = st.slider("🎓 **Minimum CGPA Required (4.0 Scale)**", 0.0, 4.0, 2.5, 0.1, key="min_cgpa_slider", help="Candidates with CGPA below this value (normalized to 4.0) will be noted.")
-        st.session_state['screening_min_cgpa'] = min_cgpa
-
-        st.markdown("---")
-        st.info("Once criteria are set, upload resumes below to begin screening.")
-
-    st.markdown("## 🎯 Skill Prioritization (Optional)")
-    st.caption("Assign higher importance to specific skills in the Job Description.")
-    
-    all_master_skills = sorted(list(MASTER_SKILLS))
-
-    col_weights_1, col_weights_2 = st.columns(2)
-    with col_weights_1:
-        high_priority_skills = st.multiselect(
-            "🌟 **High Priority Skills (Weight x3)**",
-            options=all_master_skills,
-            help="Select skills that are absolutely critical for this role. These will significantly boost the score if found."
-        )
-    with col_weights_2:
-        medium_priority_skills = st.multiselect(
-            "✨ **Medium Priority Skills (Weight x2)**",
-            options=[s for s in all_master_skills if s not in high_priority_skills],
-            help="Select skills that are very important, but not as critical as high priority ones."
-        )
-
-    resume_files = st.file_uploader("📄 **Upload Resumes (PDF, JPG, PNG)**", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, help="Upload one or more PDF or image resumes for screening.")
-
-    if jd_text and resume_files:
-        st.markdown("---")
-        st.markdown("## ☁️ Job Description Keyword Cloud")
-        st.caption("Visualizing the most frequent and important keywords from the Job Description.")
-        st.info("💡 To filter candidates by these skills, use the 'Filter Candidates by Skill' section below the main results table.")
-        
-        jd_words_for_cloud_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
-        jd_words_for_cloud = " ".join(list(jd_words_for_cloud_set))
-
-        if jd_words_for_cloud:
-            wordcloud = WordCloud(width=800, height=400, background_color='white', collocations=False).generate(jd_words_for_cloud)
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.imshow(wordcloud, interpolation='bilinear')
-            ax.axis('off')
-            st.pyplot(fig)
-            plt.close(fig)
-        else:
-            st.info("No significant keywords to display for the Job Description. Please ensure your JD has sufficient content or adjust your SKILL_CATEGORIES list.")
-        st.markdown("---")
-
-        results = []
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        total_resumes = len(resume_files)
-        
-        # Use ProcessPoolExecutor for true parallel processing
-        st.info(f"Processing {total_resumes} resumes in parallel using multiple CPU cores...")
-        # Max workers can be set to os.cpu_count() for optimal CPU utilization
-        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-            futures = []
-            for file in resume_files:
-                # Read file content into memory once to pass to the executor
-                file_data_bytes = file.read()
-                futures.append(executor.submit(
-                    _process_single_resume_for_screener_page,
-                    file_data_bytes, file.name, file.type, jd_text, jd_name_for_results,
-                    high_priority_skills, medium_priority_skills, max_experience
-                ))
-            
-            for i, future in enumerate(as_completed(futures)):
-                status_text.text(f"Processing: {resume_files[i].name} ({i+1}/{total_resumes})...")
-                try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as exc:
-                    st.error(f"Resume processing generated an exception for {resume_files[i].name}: {exc}")
-                progress_bar.progress((i + 1) / total_resumes)
-            
-        progress_bar.empty()
-        status_text.empty()
-        
-        # Filter out any error results before creating DataFrame
-        results = [r for r in results if r.get("Tag") != "❌ Processing Error"]
-
-        if not results:
-            st.warning("No resumes were successfully processed. Please check the files and try again.")
-            st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure DF is empty
-            return
-
-        st.session_state['comprehensive_df'] = pd.DataFrame(results).sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
-        
-        st.session_state['comprehensive_df'].to_csv("results.csv", index=False)
-
-
-        st.markdown("---")
-        st.markdown("## 📊 Candidate Score Comparison")
-        st.caption("Visual overview of how each candidate ranks against the job requirements.")
-        dark_mode = st.session_state.get("dark_mode_main", False)
-
-        if not st.session_state['comprehensive_df'].empty:
-            fig, ax = plt.subplots(figsize=(12, 7))
-            colors = ['#4CAF50' if s >= cutoff else '#FFC107' if s >= (cutoff * 0.75) else '#F44346' for s in st.session_state['comprehensive_df']['Score (%)']]
-            bars = ax.bar(st.session_state['comprehensive_df']['Candidate Name'], st.session_state['comprehensive_df']['Score (%)'], color=colors)
-            ax.set_xlabel("Candidate", fontsize=14, color='white' if dark_mode else 'black')
-            ax.set_ylabel("Score (%)", fontsize=14, color='white' if dark_mode else 'black')
-            ax.set_title("Resume Screening Scores Across Candidates", fontsize=16, fontweight='bold', color='white' if dark_mode else 'black')
-            ax.set_ylim(0, 100)
-            plt.xticks(rotation=60, ha='right', fontsize=10, color='white' if dark_mode else 'black')
-            plt.yticks(fontsize=10, color='white' if dark_mode else 'black')
-            ax.tick_params(axis='x', colors='white' if dark_mode else 'black')
-            ax.tick_params(axis='y', colors='white' if dark_mode else 'black')
-
-            if dark_mode:
-                fig.patch.set_facecolor('#1E1E1E')
-                ax.set_facecolor('#2D2D2D')
-                ax.spines['bottom'].set_color('white')
-                ax.spines['top'].set_color('white')
-                ax.spines['left'].set_color('white')
-                ax.spines['right'].set_color('white')
-            
-            for bar in bars:
-                yval = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f"{yval:.1f}", ha='center', va='bottom', fontsize=9, color='white' if dark_mode else 'black')
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-        else:
-            st.info("Upload resumes to see a comparison chart.")
-
-        st.markdown("---")
-
-        st.markdown("## 👑 Top Candidate AI Assessment")
-        st.caption("A concise, AI-powered assessment for the most suitable candidate.")
-        
-        if not st.session_state['comprehensive_df'].empty:
-            top_candidate = st.session_state['comprehensive_df'].iloc[0]
-            
-            cgpa_display = f"{top_candidate['CGPA (4.0 Scale)']:.2f}" if pd.notna(top_candidate['CGPA (4.0 Scale)']) else "N/A"
-            semantic_sim_display = f"{top_candidate['Semantic Similarity']:.2f}" if pd.notna(top_candidate['Semantic Similarity']) else "N/A"
-
-            st.markdown(f"### **{top_candidate['Candidate Name']}**")
-            st.markdown(f"**Score:** {top_candidate['Score (%)']:.2f}% | **Experience:** {top_candidate['Years Experience']:.1f} years | **CGPA:** {cgpa_display} (4.0 Scale) | **Semantic Similarity:** {semantic_sim_display}")
-            
-            if top_candidate['Certificate Rank'] != "Not Applicable":
-                st.markdown(f"**ScreenerPro Certification:** {top_candidate['Certificate Rank']}")
-
-            st.markdown(f"**AI Assessment:**")
-            st.markdown(top_candidate['Detailed HR Assessment'])
-            
-            st.markdown("#### Matched Skills Breakdown:")
-            if top_candidate['Matched Keywords (Categorized)']:
-                if isinstance(top_candidate['Matched Keywords (Categorized)'], dict):
-                    for category, skills in top_candidate['Matched Keywords (Categorized)'].items():
-                        st.write(f"**{category}:** {', '.join(skills)}")
+            with admin_tab[0]:
+                admin_registration_section()
+            with admin_tab[1]:
+                admin_password_reset_section()
+            with admin_tab[2]:
+                admin_disable_enable_user_section()
+            with admin_tab[3]:
+                st.subheader("Recent Activity Log (Main App)")
+                if 'activity_log' in st.session_state and st.session_state.activity_log:
+                    for log_entry in st.session_state.activity_log:
+                        st.text(log_entry)
                 else:
-                    st.write(f"Raw Matched Keywords: {top_candidate['Matched Keywords']}")
-            else:
-                st.write("No categorized matched skills found.")
-
-            st.markdown("#### Missing Skills Breakdown (from JD):")
-            jd_raw_skills_set, jd_categorized_skills_for_top = extract_relevant_keywords(jd_text, all_master_skills)
-            resume_raw_skills_set_for_top, _ = extract_relevant_keywords(top_candidate['Resume Raw Text'], all_master_skills)
-            
-            missing_skills_for_top = jd_raw_skills_set.difference(resume_raw_skills_set_for_top)
-            
-            if missing_skills_for_top:
-                missing_categorized = collections.defaultdict(list)
-                for skill in missing_skills_for_top:
-                    found_category = False
-                    for category, skills_in_category in SKILL_CATEGORIES.items():
-                        if skill.lower() in [s.lower() for s in skills_in_category]:
-                            missing_categorized[category].append(skill)
-                            found_category = True
-                            break
-                    if not found_category:
-                        missing_categorized["Uncategorized"].append(skill)
-                
-                if missing_categorized:
-                    for category, skills in missing_categorized.items():
-                        st.write(f"**{category}:** {', '.join(skills)}")
-                else:
-                    st.write("No categorized missing skills found for this candidate relative to the JD.")
-            else:
-                st.write("No missing skills found for this candidate relative to the JD.")
-
-
-            if top_candidate['Email'] != "Not Found":
-                mailto_link_top = create_mailto_link(
-                    recipient_email=top_candidate['Email'],
-                    candidate_name=top_candidate['Candidate Name'],
-                    job_title=jd_name_for_results if jd_name_for_results != "Uploaded JD (No file selected)" else "Job Opportunity"
-                )
-                st.markdown(f'<a href="{mailto_link_top}" target="_blank"><button style="background-color:#00cec9;color:white;border:none;padding:10px 20px;text-align:center;text-decoration:none;display:inline-block;font-size:16px;margin:4px 2px;cursor:pointer;border-radius:8px;">📧 Invite Top Candidate for Interview</button></a>', unsafe_allow_html=True)
-            else:
-                st.info(f"Email address not found for {top_candidate['Candidate Name']}. Cannot send automated invitation.")
-            
-            st.markdown("---")
-            st.info("For detailed analytics, matched keywords, and missing skills for ALL candidates, please navigate to the **Analytics Dashboard**.")
-
+                    st.info("No recent activity to display.")
         else:
-            st.info("No candidates processed yet to determine the top candidate.")
+            st.error("Access Denied: You do not have administrative privileges to view this page.")
 
 
-        st.markdown("## 🌟 Candidates Meeting Criteria Overview")
-        st.caption("Candidates automatically identified as meeting your defined score, experience, and CGPA criteria.")
-
-        auto_shortlisted_candidates = st.session_state['comprehensive_df'][
-            (st.session_state['comprehensive_df']['Score (%)'] >= cutoff) & 
-            (st.session_state['comprehensive_df']['Years Experience'] >= min_experience) &
-            (st.session_state['comprehensive_df']['Years Experience'] <= max_experience)
-        ].copy()
-
-        if 'CGPA (4.0 Scale)' in auto_shortlisted_candidates.columns and auto_shortlisted_candidates['CGPA (4.0 Scale)'].notnull().any():
-            auto_shortlisted_candidates = auto_shortlisted_candidates[
-                (auto_shortlisted_candidates['CGPA (4.0 Scale)'].isnull()) | (auto_shortlisted_candidates['CGPA (4.0 Scale)'] >= min_cgpa)
-            ]
-
-        if not auto_shortlisted_candidates.empty:
-            st.success(f"**{len(auto_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, and minimum CGPA ≥ {min_cgpa} or N/A).")
-            
-            display_auto_shortlisted_cols = [
-                'Candidate Name',
-                'Score (%)',
-                'Years Experience',
-                'CGPA (4.0 Scale)',
-                'Semantic Similarity',
-                'Email',
-                'AI Suggestion',
-                'Certificate Rank'
-            ]
-            
-            st.dataframe(
-                auto_shortlisted_candidates[display_auto_shortlisted_cols],
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Score (%)": st.column_config.ProgressColumn(
-                        "Score (%)",
-                        help="Matching score against job requirements",
-                        format="%.1f", 
-                        min_value=0,
-                        max_value=100,
-                    ),
-                    "Years Experience": st.column_config.NumberColumn(
-                        "Years Experience",
-                        help="Total years of professional experience",
-                        format="%.1f years",
-                    ),
-                    "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                        "CGPA (4.0 Scale)",
-                        help="Candidate's CGPA normalized to a 4.0 scale",
-                        format="%.2f",
-                        min_value=0.0,
-                        max_value=4.0
-                    ),
-                    "Semantic Similarity": st.column_config.NumberColumn(
-                        "Semantic Similarity",
-                        help="Conceptual similarity between JD and Resume (higher is better)",
-                        format="%.2f",
-                        min_value=0,
-                        max_value=1
-                    ),
-                    "AI Suggestion": st.column_config.Column(
-                        "AI Suggestion",
-                        help="AI's concise overall assessment and recommendation"
-                    ),
-                    "Certificate Rank": st.column_config.Column(
-                        "Certificate Rank",
-                        help="ScreenerPro Certification Level"
-                    )
-                }
-            )
-            st.info("For individual detailed AI assessments and action steps, please refer to the table below.")
-
-        else:
-            st.warning(f"No candidates met the defined screening criteria (score cutoff, experience between {min_experience}-{max_experience} years, and minimum CGPA). You might consider adjusting the sliders or reviewing the uploaded resumes/JD.")
-
-        st.markdown("---")
-
-        st.markdown("## 📋 Comprehensive Candidate Results Table")
-        st.caption("Full details for all processed resumes. Use the filters below to refine the view.")
-        
-        st.markdown("### 🔍 Filter Candidates")
-        filter_col1, filter_col2, filter_col3 = st.columns(3)
-        filter_col4, filter_col5, filter_col6 = st.columns(3)
-
-        with filter_col1:
-            jd_raw_skills_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
-            all_unique_jd_skills = sorted(list(jd_raw_skills_set))
-            selected_filter_skills = st.multiselect(
-                "**Skills (AND logic):**",
-                options=all_unique_jd_skills,
-                help="Only candidates possessing ALL selected skills will be shown."
-            )
-        with filter_col2:
-            search_query = st.text_input(
-                "**Keyword Search:**",
-                placeholder="Name, Email, Location, Raw Text...",
-                help="Search for text across Candidate Name, Email, Location, and Resume Raw Text."
-            )
-        with filter_col3:
-            selected_tags = st.multiselect(
-                "**AI Tag:**",
-                options=["👑 Exceptional Match", "🔥 Strong Candidate", "✨ Promising Fit", "⚠️ Needs Review", "❌ Limited Match"],
-                help="Filter by AI-generated assessment tags."
-            )
-        
-        with filter_col4:
-            min_score_filter, max_score_filter = st.slider(
-                "**Score Range (%):**",
-                0, 100, (0, 100), key="score_range_filter", help="Filter candidates by their overall score range."
-            )
-        with filter_col5:
-            min_exp_filter, max_exp_filter = st.slider(
-                "**Experience Range (Years):**",
-                0, 20, (0, 20), key="exp_range_filter", help="Filter candidates by their years of experience range."
-            )
-        with filter_col6:
-            min_cgpa_filter, max_cgpa_filter = st.slider(
-                "**CGPA Range (4.0 Scale):**",
-                0.0, 4.0, (0.0, 4.0), 0.1, key="cgpa_range_filter", help="Filter candidates by their CGPA range (normalized to 4.0)."
-            )
-        
-        filter_col_loc, filter_col_lang = st.columns(2)
-        with filter_col_loc:
-            all_locations = sorted(st.session_state['comprehensive_df']['Location'].unique())
-            selected_locations = st.multiselect(
-                "**Location:**",
-                options=all_locations,
-                help="Filter by candidate location."
-            )
-        with filter_col_lang:
-            all_languages_from_df = sorted(list(set(
-                lang.strip() for langs_str in st.session_state['comprehensive_df']['Languages'] if langs_str != "Not Found" for lang in langs_str.split(',')
-            )))
-            selected_languages = st.multiselect(
-                "**Languages:**",
-                options=all_languages_from_df,
-                help="Filter by languages spoken by the candidate."
-            )
-
-
-        filtered_display_df = st.session_state['comprehensive_df'].copy()
-
-        if selected_filter_skills:
-            for skill in selected_filter_skills:
-                filtered_display_df = filtered_display_df[filtered_display_df['Matched Keywords'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
-
-        if search_query:
-            search_query_lower = search_query.lower()
-            filtered_display_df = filtered_display_df[
-                filtered_display_df['Candidate Name'].str.lower().str.contains(search_query_lower, na=False) |
-                filtered_display_df['Email'].str.lower().str.contains(search_query_lower, na=False) |
-                filtered_display_df['Phone Number'].str.lower().str.contains(search_query_lower, na=False) |
-                filtered_display_df['Location'].str.lower().str.contains(search_query_lower, na=False) |
-                filtered_display_df['Resume Raw Text'].str.lower().str.contains(search_query_lower, na=False)
-            ]
-        
-        if selected_tags:
-            filtered_display_df = filtered_display_df[filtered_display_df['Tag'].isin(selected_tags)]
-        
-        filtered_display_df = filtered_display_df[
-            (filtered_display_df['Score (%)'] >= min_score_filter) & (filtered_display_df['Score (%)'] <= max_score_filter)
-        ]
-        filtered_display_df = filtered_display_df[
-            (filtered_display_df['Years Experience'] >= min_exp_filter) & (filtered_display_df['Years Experience'] <= max_exp_filter)
-        ]
-        if not filtered_display_df.empty and 'CGPA (4.0 Scale)' in filtered_display_df.columns:
-            if not (min_cgpa_filter == 0.0 and max_cgpa_filter == 4.0):
-                filtered_display_df = filtered_display_df[
-                    ((filtered_display_df['CGPA (4.0 Scale)'].notnull()) & 
-                     (filtered_display_df['CGPA (4.0 Scale)'] >= min_cgpa_filter) & 
-                     (filtered_display_df['CGPA (4.0 Scale)'] <= max_cgpa_filter))
-                ]
-        
-        if selected_locations:
-            location_pattern = '|'.join([re.escape(loc) for loc in selected_locations])
-            filtered_display_df = filtered_display_df[
-                filtered_display_df['Location'].str.contains(location_pattern, case=False, na=False)
-            ]
-        
-        if selected_languages:
-            language_pattern = '|'.join([re.escape(lang) for lang in selected_languages])
-            filtered_display_df = filtered_display_df[
-                filtered_display_df['Languages'].str.contains(language_pattern, case=False, na=False)
-            ]
-
-        comprehensive_cols = [
-            'Candidate Name',
-            'Score (%)',
-            'Years Experience',
-            'CGPA (4.0 Scale)',
-            'Email',
-            'Phone Number',
-            'Location',
-            'Languages',
-            'Education Details',
-            'Work History',
-            'Project Details',
-            'Semantic Similarity',
-            'Tag',
-            'AI Suggestion',
-            'Certificate Rank',
-            'Matched Keywords',
-            'Missing Skills',
-            'JD Used',
-            'Date Screened',
-            'Certificate ID'
-        ]
-        
-        final_display_cols = [col for col in comprehensive_cols if col in filtered_display_df.columns]
-
-        st.dataframe(
-            filtered_display_df[final_display_cols],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Score (%)": st.column_config.ProgressColumn(
-                    "Score (%)",
-                    help="Matching score against job requirements",
-                    format="%.1f",
-                    min_value=0,
-                    max_value=100,
-                ),
-                "Years Experience": st.column_config.NumberColumn(
-                    "Years Experience",
-                    help="Total years of professional experience",
-                    format="%.1f years",
-                ),
-                "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                    "CGPA (4.0 Scale)",
-                    help="Candidate's CGPA normalized to a 4.0 scale",
-                    format="%.2f",
-                    min_value=0.0,
-                    max_value=4.0
-                ),
-                "Semantic Similarity": st.column_config.NumberColumn(
-                    "Semantic Similarity",
-                    help="Conceptual similarity between JD and Resume (higher is better)",
-                    format="%.2f",
-                    min_value=0,
-                    max_value=1
-                ),
-                "AI Suggestion": st.column_config.Column(
-                    "AI Suggestion",
-                    help="AI's concise overall assessment and recommendation"
-                ),
-                "Certificate Rank": st.column_config.Column(
-                    "Certificate Rank",
-                    help="ScreenerPro Certification Level",
-                    width="small"
-                ),
-                "Matched Keywords": st.column_config.Column(
-                    "Matched Keywords",
-                    help="Keywords found in both JD and Resume"
-                ),
-                "Missing Skills": st.column_config.Column(
-                    "Missing Skills",
-                    help="Key skills from JD not found in Resume"
-                ),
-                "JD Used": st.column_config.Column(
-                    "JD Used",
-                    help="Job Description used for this screening"
-                ),
-                "Date Screened": st.column_config.DateColumn(
-                    "Date Screened",
-                    help="Date when the resume was screened",
-                    format="YYYY-MM-DD"
-                ),
-                "Phone Number": st.column_config.Column(
-                    "Phone Number",
-                    help="Candidate's phone number extracted from resume"
-                ),
-                "Location": st.column_config.Column(
-                    "Location",
-                    help="Candidate's location extracted from resume"
-                ),
-                "Languages": st.column_config.Column(
-                    "Languages",
-                    help="Languages spoken by the candidate"
-                ),
-                "Education Details": st.column_config.Column(
-                    "Education Details",
-                    help="Structured education history (University, Degree, Major, Year)"
-                ),
-                "Work History": st.column_config.Column(
-                    "Work History",
-                    help="Structured work experience (Company, Title, Dates)"
-                ),
-                "Project Details": st.column_config.Column(
-                    "Project Details",
-                    help="Structured project experience (Title, Description, Technologies)"
-                ),
-                "Certificate ID": st.column_config.Column(
-                    "Certificate ID",
-                    help="Unique ID for the certificate",
-                    disabled=True,
-                    width="hidden"
-                )
-            }
-        )
-        
-        st.markdown("---")
-        st.markdown("## 🏆 Generate Candidate Certificates")
-        st.caption("Select a candidate to view or download their ScreenerPro Certification.")
-
-        if not st.session_state['comprehensive_df'].empty:
-            candidate_names_for_cert = st.session_state['comprehensive_df']['Candidate Name'].tolist()
-            selected_candidate_name_for_cert = st.selectbox(
-                "**Select Candidate for Certificate:**",
-                options=candidate_names_for_cert,
-                key="certificate_candidate_select"
-            )
-
-            if selected_candidate_name_for_cert:
-                candidate_rows = st.session_state['comprehensive_df'][
-                    st.session_state['comprehensive_df']['Candidate Name'] == selected_candidate_name_for_cert
-                ]
-                
-                if not candidate_rows.empty:
-                    candidate_data_for_cert = candidate_rows.iloc[0].to_dict()
-
-                    if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
-                        # Generate HTML content for the certificate (for preview and PDF conversion)
-                        certificate_html_content = generate_certificate_html(candidate_data_for_cert)
-                        st.session_state['certificate_html_content'] = certificate_html_content # Store for preview
-
-                        # Generate PDF content
-                        certificate_pdf_content = generate_certificate_pdf(certificate_html_content)
-
-                        col_cert_view, col_cert_download = st.columns(2)
-                        with col_cert_view:
-                            if st.button("👁️ View Certificate (HTML Preview)", key="view_cert_button"):
-                                # This button just triggers the preview, content is already generated
-                                pass 
-                                
-                        with col_cert_download:
-                            if certificate_pdf_content:
-                                st.download_button(
-                                    label="⬇️ Download Certificate (PDF)",
-                                    data=certificate_pdf_content,
-                                    file_name=f"ScreenerPro_Certificate_{candidate_data_for_cert['Candidate Name'].replace(' ', '_')}.pdf",
-                                    mime="application/pdf",
-                                    key="download_cert_pdf_button"
-                                )
-                            else:
-                                st.warning("PDF generation failed, cannot provide download.")
-                        
-                        # Automatically send email if certificate PDF is generated and email is available
-                        if candidate_data_for_cert.get('Email') and candidate_data_for_cert['Email'] != "Not Found":
-                            if certificate_pdf_content:
-                                # Pass secrets to the email function as it runs in the main thread
-                                gmail_address = st.secrets.get("GMAIL_ADDRESS")
-                                gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD")
-                                send_certificate_email(
-                                    recipient_email=candidate_data_for_cert['Email'],
-                                    candidate_name=candidate_data_for_cert['Candidate Name'],
-                                    score=candidate_data_for_cert['Score (%)'],
-                                    certificate_pdf_content=certificate_pdf_content,
-                                    gmail_address=gmail_address,
-                                    gmail_app_password=gmail_app_password
-                                )
-                            else:
-                                st.error("PDF certificate could not be generated, so email could not be sent.")
-                        else:
-                            st.info(f"No email address found for {candidate_data_for_cert['Candidate Name']}. Certificate could not be sent automatically.")
-
-                    else:
-                        st.info(f"{selected_candidate_name_for_cert} does not qualify for a ScreenerPro Certificate at this time.")
-                else:
-                    st.warning(f"Selected candidate '{selected_candidate_name_for_cert}' not found in the processed results. Please re-select or re-process resumes.")
-        else:
-            st.info("No candidates available to generate certificates for. Please screen resumes first.")
-
-    if st.session_state['certificate_html_content']:
-        st.markdown("---")
-        st.markdown("### Generated Certificate Preview (HTML)")
-        st.components.v1.html(st.session_state['certificate_html_content'], height=600, scrolling=True)
-        st.markdown("---")
-
-
-    else:
-        st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
-
-@st.cache_data
-def generate_certificate_html(candidate_data):
-    # Hardcoded HTML template from the 'beautiful-certificate-html' immersive
-    html_template = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ScreenerPro Certification - Candidate Name</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f8f9fa; /* Light background for print compatibility */
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 20px;
-            box-sizing: border-box;
-        }
-        .certificate-container {
-            width: 100%;
-            max-width: 800px;
-            background: linear-gradient(145deg, #ffffff, #e6e6e6);
-            border: 10px solid #00cec9; /* Main border color */
-            border-radius: 20px;
-            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
-            padding: 40px;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-        }
-        .logo-text {
-            font-family: 'Playfair Display', serif; /* A more elegant font for the logo */
-            font-size: 2.8em; /* Larger logo text */
-            color: #00cec9;
-            font-weight: 700;
-            margin-bottom: 15px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-        }
-        .certificate-header {
-            font-family: 'Playfair Display', serif;
-            font-size: 2.5em;
-            color: #34495e; /* Darker text for header */
-            margin-bottom: 20px;
-            font-weight: 700;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.05);
-        }
-        .certificate-subheader {
-            font-size: 1.2em;
-            color: #555;
-            margin-bottom: 30px;
-        }
-        .certificate-body {
-            margin-bottom: 40px;
-        }
-        .certificate-body p {
-            font-size: 1.1em;
-            line-height: 1.6;
-            color: #333;
-        }
-        .candidate-name {
-            font-family: 'Playfair Display', serif;
-            font-size: 3.2em; /* Even larger name */
-            color: #00cec9; /* Teal for the name */
-            margin: 25px 0;
-            font-weight: 700;
-            border-bottom: 3px dashed #b0e0e6; /* Lighter dashed line */
-            display: inline-block;
-            padding-bottom: 8px;
-            animation: pulse 1.5s infinite alternate; /* Subtle animation */
-        }
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            100% { transform: scale(1.02); }
-        }
-        .score-rank {
-            font-size: 1.6em; /* Larger score/rank */
-            color: #28a745; /* Green for success */
-            font-weight: 700;
-            margin-top: 20px;
-            padding: 5px 15px;
-            background-color: #e6ffe6; /* Light green background */
-            border-radius: 10px;
-            display: inline-block;
-        }
-        .date-id {
-            font-size: 0.95em;
-            color: #777;
-            margin-top: 35px;
-        }
-        .footer-text {
-            font-size: 0.85em;
-            color: #999;
-            margin-top: 40px;
-        }
-        /* Print styles */
-        @media print {
-            body {
-                background-color: #fff;
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-            }
-            .certificate-container {
-                border: 5px solid #00cec9;
-                box-shadow: none;
-            }
-            .logo-text, .certificate-header, .candidate-name, .score-rank {
-                color: #00cec9 !important; /* Ensure colors are printed */
-                text-shadow: none !important;
-            }
-            .candidate-name {
-                animation: none !important; /* Disable animation for print */
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="certificate-container">
-        <div class="logo-text">ScreenerPro</div>
-        <div class="certificate-header">Certification of Excellence</div>
-        <div class="certificate-subheader">This is to proudly certify that</div>
-        <div class="candidate-name">{{CANDIDATE_NAME}}</div>
-        <div class="certificate-body">
-            <p>has successfully completed the comprehensive AI-powered screening process by ScreenerPro and achieved a distinguished ranking of</p>
-            <div class="score-rank">
-                {{CERTIFICATE_RANK}}
-            </div>
-            <p>demonstrating an outstanding Screener Score of **{{SCORE}}%**.</p>
-            <p>This certification attests to their highly relevant skills, extensive experience, and strong alignment with the demanding requirements of modern professional roles. It signifies their readiness to excel in challenging environments and contribute significantly to organizational success.</p>
-        </div>
-        <div class="date-id">
-            Awarded on: {{DATE_SCREENED}}<br>
-            Certificate ID: {{CERTIFICATE_ID}}
-        </div>
-        <div class="footer-text">
-            This certificate is digitally verified by ScreenerPro.
-        </div>
-    </div>
-</body>
-</html>
-    """
-
-    candidate_name = candidate_data.get('Candidate Name', 'Candidate Name')
-    score = candidate_data.get('Score (%)', 0.0)
-    certificate_rank = candidate_data.get('Certificate Rank', 'Not Applicable')
-    date_screened = candidate_data.get('Date Screened', datetime.now().date()).strftime("%B %d, %Y")
-    certificate_id = candidate_data.get('Certificate ID', 'N/A')
-    
-    html_content = html_template.replace("{{CANDIDATE_NAME}}", candidate_name)
-    html_content = html_content.replace("{{SCORE}}", f"{score:.1f}")
-    html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
-    html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
-    html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
-
-    return html_content
-
-# This line ensures the Streamlit app runs
-if __name__ == "__main__":
-    resume_screener_page()
+    elif tab == "🚪 Logout":
+        log_activity_main(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out.")
+        st.session_state.authenticated = False
+        st.session_state.pop('username', None)
+        st.success("✅ Logged out.")
+        st.rerun()
