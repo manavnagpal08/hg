@@ -211,14 +211,9 @@ SKILL_CATEGORIES = {
 MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
 
 # IMPORTANT: REPLACE THESE WITH YOUR ACTUAL DEPLOYMENT URLs OR USE ENVIRONMENT VARIABLES
+# These are global constants, not arguments to the function.
 APP_BASE_URL = "https://screenerpro-app.streamlit.app"
 CERTIFICATE_HOSTING_URL = "https://manav-jain.github.io/screenerpro-certs"
-
-# Firebase Config (for local testing, replace with actual keys if using Firestore locally)
-# In Canvas, these are typically provided via __firebase_config, __app_id, __initial_auth_token
-FIREBASE_REST_API_BASE_URL = os.environ.get("FIREBASE_REST_API_BASE_URL", "https://firestore.googleapis.com/v1")
-FIREBASE_WEB_API_KEY = os.environ.get("FIREBASE_WEB_API_KEY", "YOUR_FIREBASE_WEB_API_KEY") # Replace with a real key if needed for local testing with Firestore
-APP_ID = os.environ.get("APP_ID", "screenerpro-default-app-id")
 
 
 @st.cache_resource
@@ -1155,7 +1150,15 @@ def _parallel_extract_text(file_data):
     except Exception as e:
         return file_name, None, str(e) # Return error message if extraction fails
 
-def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_id):
+# Modified resume_screener_page function signature (no arguments)
+def resume_screener_page():
+    # Retrieve Firebase config and app_id dynamically
+    # These are typically injected by the Canvas environment.
+    # Provide sensible defaults for local development.
+    app_id = os.environ.get("APP_ID", "screenerpro-default-app-id")
+    firebase_web_api_key = os.environ.get("FIREBASE_WEB_API_KEY", "YOUR_FIREBASE_WEB_API_KEY")
+    firestore_rest_api_base_url = os.environ.get("FIREBASE_REST_API_BASE_URL", "https://firestore.googleapis.com/v1")
+
     st.title("📄 Resume Screener Pro")
     st.markdown("Upload resumes (PDF or Image) and a job description to find the best candidates.")
 
@@ -1576,7 +1579,7 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
     filter_col4, filter_col5, filter_col6 = st.columns(3)
 
     with filter_col1:
-        # jd_text here should be st.session_state.job_desc_text
+        # Reference st.session_state.job_desc_text for JD skills
         jd_raw_skills_set, _ = extract_relevant_keywords(st.session_state.job_desc_text, MASTER_SKILLS)
         all_unique_jd_skills = sorted(list(jd_raw_skills_set))
         selected_filter_skills = st.multiselect(
@@ -1840,22 +1843,11 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
                         )
                     
                     with col_cert_email_option:
-                        attach_html = st.checkbox("Attach HTML to Email?", key="attach_html_checkbox", help="If checked, the full HTML certificate file will be attached to the email. Note: Dynamic features (QR code, live verification) may not work when opened locally from attachment.")
-
-                    # Automatically send email if certificate is generated and email is available
-                    if candidate_data_for_cert.get('Email') and candidate_data_for_cert['Email'] != "Not Found":
-                        # For send_email_with_certificate, we need the PDF bytes, not HTML content directly
-                        pdf_bytes_for_email = BytesIO()
-                        HTML(string=certificate_html_content).write_pdf(pdf_bytes_for_email)
-                        pdf_bytes_for_email.seek(0)
-
-                        send_email_with_certificate(
-                            recipient_email=candidate_data_for_cert['Email'],
-                            candidate_name=candidate_data_for_cert['Candidate Name'],
-                            certificate_pdf_bytes=pdf_bytes_for_email.getvalue()
-                        )
-                    else:
-                        st.info(f"No email address found for {candidate_data_for_cert['Candidate Name']}. Certificate could not be sent automatically.")
+                        # Removed the checkbox to automatically send email for simplicity and to avoid repeated sends
+                        # if st.checkbox(f"Send certificate to {candidate_data_for_cert['Email']}?", key="send_email_checkbox"):
+                        #     send_email_with_certificate(candidate_data_for_cert['Email'], candidate_data_for_cert['Candidate Name'], pdf_bytes.getvalue())
+                        #     st.success(f"Email sent to {candidate_data_for_cert['Email']}!")
+                        pass # Placeholder for potential future email functionality
 
                 else:
                     st.info(f"{selected_candidate_name_for_cert} does not qualify for a ScreenerPro Certificate at this time.")
@@ -1881,14 +1873,8 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
 
 # This block makes the script runnable directly as a Streamlit app
 if __name__ == "__main__":
-    # These variables are typically provided by the Canvas environment.
-    # For local testing, you might need to set them as environment variables
-    # or replace with actual values if you're connecting to a real Firebase project.
-    # For a simple local run without Firebase, these can remain as dummy strings.
-    firestore_rest_api_base_url = os.environ.get("FIREBASE_REST_API_BASE_URL", "https://firestore.googleapis.com/v1")
-    firebase_web_api_key = os.environ.get("FIREBASE_WEB_API_KEY", "YOUR_FIREBASE_WEB_API_KEY")
-    app_id = os.environ.get("APP_ID", "screenerpro-default-app-id")
-
-    # Call the main page function
-    resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_id)
+    # In a Canvas environment, __app_id and __firebase_config are global.
+    # For local testing, we provide defaults.
+    # The resume_screener_page function now retrieves these directly.
+    resume_screener_page()
 
