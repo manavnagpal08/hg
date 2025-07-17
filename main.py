@@ -1502,6 +1502,19 @@ else:
         if 'user_email' not in st.session_state:
             st.session_state['user_email'] = st.session_state.get('username', 'anonymous_user')
         feedback_and_help_page()
+    elif tab == "📦 Bulk Resume Import":
+        # Import the bulk upload page function
+        from bulk_upload_page import bulk_upload_page
+        # Load JDs from the 'data' directory for the bulk upload page
+        jd_texts = {}
+        if os.path.exists("data"):
+            for fname in os.listdir("data"):
+                if fname.endswith(".txt"):
+                    with open(os.path.join("data", fname), "r", encoding="utf-8") as f:
+                        jd_texts[fname.replace(".txt", "").replace("_", " ").title()] = f.read()
+        
+        # Pass the comprehensive_df and jd_texts to the bulk_upload_page
+        bulk_upload_page(st.session_state['comprehensive_df'], jd_texts)
 
     elif tab == "⚙️ Admin Tools": # Admin Tools page
         st.markdown('<div class="dashboard-header">⚙️ Admin Tools</div>', unsafe_allow_html=True)
