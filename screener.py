@@ -201,7 +201,7 @@ SKILL_CATEGORIES = {
     "QuickBooks", "SAP FICO", "Oracle Financials", "Workday", "Microsoft Dynamics", "NetSuite", "Adobe Creative Suite", "Canva", "Mailchimp", "Hootsuite", "Buffer", "SEMrush", "Ahrefs", "Moz", "Screaming Frog",
     "JMeter", "Postman", "SoapUI", "SVN", "Perforce", "Asana", "Monday.com", "Miro", "Lucidchart", "Visio", "MS Project", "Primavera", "AutoCAD", "SolidWorks", "MATLAB", "LabVIEW", "Simulink", "ANSYS",
     "CATIA", "NX", "Revit", "ArcGIS", "QGIS", "OpenCV", "NLTK", "SpaCy", "Gensim", "Hugging Face Transformers",
-    "Docker Compose", "Helm", "Ansible Tower", "SaltStack", "Chef InSpec", "Terraform Cloud", "Vault",
+    ""Docker Compose", "Helm", "Ansible Tower", "SaltStack", "Chef InSpec", "Terraform Cloud", "Vault",
     "Consul", "Nomad", "Prometheus", "Grafana", "Alertmanager", "Loki", "Tempo", "Jaeger", "Zipkin",
     "Fluentd", "Logstash", "Kibana", "Grafana Loki", "Datadog", "New Relic", "AppDynamics", "Dynatrace",
     "Nagios", "Zabbix", "Icinga", "PRTG", "SolarWinds", "Wireshark", "Nmap", "Metasploit", "Burp Suite",
@@ -1416,20 +1416,24 @@ def resume_screener_page():
             file_data_bytes = file.read() # Read file content into memory once
             file_infos_for_extraction.append((file_data_bytes, file.name, file.type))
 
+        # Define a chunk size for processing
+        CHUNK_SIZE = 10 # Process 10 resumes at a time to manage memory and CPU usage
+
         # Use ProcessPoolExecutor for CPU-bound text extraction
-        # Max workers set to os.cpu_count() for optimal CPU utilization with processes
         with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor: 
-            text_futures = [executor.submit(_extract_text_wrapper, info) for info in file_infos_for_extraction]
-            
-            for i, future in enumerate(as_completed(text_futures)):
-                # Update status text less frequently or with a general message to avoid Streamlit context issues in threads
-                status_text.text(f"Extracting text: Processing resume {i+1} of {total_resumes}...")
-                try:
-                    extracted_texts_info.append(future.result())
-                except Exception as e:
-                    st.error(f"Error extracting text for {file_infos_for_extraction[i][1]}: {e}")
-                    extracted_texts_info.append((file_infos_for_extraction[i][1], f"[ERROR] {e}")) # Mark as error
-                progress_bar.progress((i + 1) / total_resumes)
+            for i in range(0, total_resumes, CHUNK_SIZE):
+                chunk_files_info = file_infos_for_extraction[i:i + CHUNK_SIZE]
+                text_futures = [executor.submit(_extract_text_wrapper, info) for info in chunk_files_info]
+                
+                for j, future in enumerate(as_completed(text_futures)):
+                    current_processed = i + j + 1
+                    status_text.text(f"Extracting text: Processing resume {current_processed} of {total_resumes}...")
+                    try:
+                        extracted_texts_info.append(future.result())
+                    except Exception as e:
+                        st.error(f"Error extracting text for {chunk_files_info[j][1]}: {e}")
+                        extracted_texts_info.append((chunk_files_info[j][1], f"[ERROR] {e}")) # Mark as error
+                    progress_bar.progress(current_processed / total_resumes)
         
         end_time_extraction = time.time()
         print(f"Time taken for Text Extraction: {end_time_extraction - start_time_extraction:.2f} seconds")
@@ -1501,21 +1505,25 @@ def resume_screener_page():
                 jd_name_for_results, high_priority_skills, medium_priority_skills, max_experience,
                 global_ml_model
             ))
+        
+        total_successful_resumes = len(processing_args)
+        current_analysis_processed = 0
 
         # Use ProcessPoolExecutor for CPU-bound analysis
-        # Max workers set to os.cpu_count() for optimal CPU utilization with processes
         with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor: 
-            analysis_futures = [executor.submit(_process_single_resume_for_screener_page, *args) for args in processing_args]
-            
-            for i, future in enumerate(as_completed(analysis_futures)):
-                # Update status text less frequently or with a general message
-                status_text.text(f"Analyzing resumes: Processing candidate {i+1} of {len(resume_names_for_embedding)}...")
-                try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as exc:
-                    st.error(f"Resume processing generated an exception for {resume_names_for_embedding[i]}: {exc}")
-                progress_bar.progress((i + 1) / len(resume_names_for_embedding))
+            for i in range(0, total_successful_resumes, CHUNK_SIZE):
+                chunk_processing_args = processing_args[i:i + CHUNK_SIZE]
+                analysis_futures = [executor.submit(_process_single_resume_for_screener_page, *args) for args in chunk_processing_args]
+                
+                for j, future in enumerate(as_completed(analysis_futures)):
+                    current_analysis_processed = i + j + 1
+                    status_text.text(f"Analyzing resumes: Processing candidate {current_analysis_processed} of {total_successful_resumes}...")
+                    try:
+                        result = future.result()
+                        results.append(result)
+                    except Exception as exc:
+                        st.error(f"Resume processing generated an exception for {chunk_processing_args[j][0]}: {exc}")
+                    progress_bar.progress(current_analysis_processed / total_successful_resumes)
         
         # Add results from failed extractions back to the list
         results.extend(failed_extraction_results)
