@@ -24,7 +24,7 @@ from email.mime.text import MIMEText
 from PIL import Image
 import pytesseract
 import cv2
-from pdf2image import convert_from_bytes
+from pdf22image import convert_from_bytes
 import shutil
 
 try:
@@ -595,88 +595,103 @@ def extract_work_history(text):
                 })
     return work_details
 
-def extract_project_details(text):
+def extract_project_details(text, MASTER_SKILLS):
+    """
+    Extracts real project entries from resume text.
+    Returns a list of dicts: Title, Description, Technologies Used
+    """
+
     project_details = []
-    
-    project_section_keywords = r'(?:projects|personal projects|key projects|portfolio|selected projects|major projects|academic projects|relevant projects)'
-    
+
+    text = text.replace('\r', '').replace('\t', ' ')
+    lines = text.split('\n')
+    lines = [line.strip() for line in lines if line.strip()]
+
+    # Step 1: Isolate project section
+    project_section_keywords = r'(projects|personal projects|key projects|portfolio|selected projects|major projects|academic projects|relevant projects)'
     project_section_match = re.search(project_section_keywords + r'\s*(\n|$)', text, re.IGNORECASE)
-    
+
     if not project_section_match:
-        project_text = text
+        project_text = text[:1000]  # fallback to first 1000 chars
         start_index = 0
     else:
         start_index = project_section_match.end()
-        sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
+        sections = ['education', 'experience', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
         end_index = len(text)
         for section in sections:
-            section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
-            if section_match:
-                end_index = start_index + section_match.start()
+            match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
+            if match:
+                end_index = start_index + match.start()
                 break
         project_text = text[start_index:end_index].strip()
-    
+
     if not project_text:
         return []
 
     lines = [line.strip() for line in project_text.split('\n') if line.strip()]
-    
     current_project = {"Project Title": None, "Description": [], "Technologies Used": set()}
-    
-    strong_project_indicators = [
-        "project", "developed", "implemented", "created", "designed", "built", "contributed to",
-        "achieved", "led", "managed", "research", "capstone", "thesis", "portfolio"
+
+    forbidden_title_keywords = [
+        'skills gained', 'responsibilities', 'reflection', 'summary',
+        'achievements', 'capabilities', 'what i learned', 'tools used'
     ]
 
     for i, line in enumerate(lines):
         line_lower = line.lower()
-        
+
+        # Skip all-uppercase names or headers
+        if re.match(r'^[A-Z\s]{5,}$', line) and len(line.split()) <= 4:
+            continue
+
+        # Previous line was a bullet?
         prev_line_is_bullet = False
-        if i > 0:
-            prev_line = lines[i-1].strip()
-            if re.match(r'^[•*-]', prev_line):
-                prev_line_is_bullet = True
+        if i > 0 and re.match(r'^[•*-]', lines[i - 1]):
+            prev_line_is_bullet = True
 
-        is_potential_title = (
-            (line and (line[0].isupper() or re.match(r'^\d', line))) and
-            len(line.split()) > 1 and
-            len(line.split()) < 15 and
-            not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line_lower) and
-            not re.match(r'^[•*-]\s*(?:achieved|contributed|implemented|developed|designed|built|managed|led)', line_lower) and
-            any(keyword in line_lower for keyword in strong_project_indicators) and
-            not prev_line_is_bullet
+        # Strong new project title if:
+        # - starts with number or bullet
+        # - not just a soft skill block
+        # - contains 3–15 words
+        # - not all caps
+        is_title = (
+            (re.match(r'^[•*-]?\s*\d+[\).:-]?\s', line) or line.lower().startswith("project")) and
+            3 <= len(line.split()) <= 15 and
+            not any(kw in line_lower for kw in forbidden_title_keywords) and
+            not prev_line_is_bullet and
+            not line.isupper()
         )
-        
-        is_url = re.match(r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)', line_lower)
 
-        if is_potential_title or is_url:
-            if current_project["Project Title"] is not None or current_project["Description"]:
-                if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
-                    full_description_for_skills = "\n".join(current_project["Description"])
-                    extracted_skills_for_project, _ = extract_relevant_keywords(full_description_for_skills, MASTER_SKILLS)
-                    current_project["Technologies Used"].update(extracted_skills_for_project)
+        is_url = re.match(r'https?://', line_lower)
 
-                    project_details.append({
-                        "Project Title": current_project["Project Title"],
-                        "Description": full_description_for_skills.strip(),
-                        "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
-                    })
+        # New Project Begins
+        if is_title or is_url:
+            if current_project["Project Title"] or current_project["Description"]:
+                full_desc = "\n".join(current_project["Description"])
+                techs, _ = extract_relevant_keywords(full_desc, MASTER_SKILLS)
+                current_project["Technologies Used"].update(techs)
+
+                project_details.append({
+                    "Project Title": current_project["Project Title"],
+                    "Description": full_desc.strip(),
+                    "Technologies Used": ", ".join(sorted(current_project["Technologies Used"]))
+                })
+
             current_project = {"Project Title": line, "Description": [], "Technologies Used": set()}
         else:
             current_project["Description"].append(line)
-            
-    if current_project["Project Title"] is not None or current_project["Description"]:
-        if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
-            full_description_for_skills = "\n".join(current_project["Description"])
-            extracted_skills_for_project, _ = extract_relevant_keywords(full_description_for_skills, MASTER_SKILLS)
-            current_project["Technologies Used"].update(extracted_skills_for_project)
 
-            project_details.append({
-                "Project Title": current_project["Project Title"],
-                "Description": full_description_for_skills.strip(),
-                "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
-            })
-            
+    # Add last project
+    if current_project["Project Title"] or current_project["Description"]:
+        full_desc = "\n".join(current_project["Description"])
+        techs, _ = extract_relevant_keywords(full_desc, MASTER_SKILLS)
+        current_project["Technologies Used"].update(techs)
+
+        project_details.append({
+            "Project Title": current_project["Project Title"],
+            "Description": full_desc.strip(),
+            "Technologies Used": ", ".join(sorted(current_project["Technologies Used"]))
+        })
+
     return project_details
 
 
@@ -1022,7 +1037,7 @@ The {sender_name}""")
 
 def send_certificate_email(recipient_email, candidate_name, certificate_html_content):
     gmail_address = "screenerpro.ai@gmail.com"
-    gmail_app_password = "kxgr bpdc yavo deoo"
+    gmail_app_password = "hcss uefd gaae wrse"
 
     if not gmail_address or not gmail_app_password or gmail_address == "screenerpro.ai@gmail.com":
         st.error("Email sending is not configured. Please replace the placeholder Gmail credentials in `screener.py` to enable this feature.")
@@ -1194,11 +1209,11 @@ def resume_screener_page():
             location = extract_location(text)
             languages = extract_languages(text) 
             
-            education_details_text = extract_education_text(text) # Changed to use the new function
+            education_details_text = extract_education_text(text)
             work_history_raw = extract_work_history(text)
-            project_details_raw = extract_project_details(text)
-
-            education_details_formatted = education_details_text # Directly use the string output
+            project_details_raw = extract_project_details(text, MASTER_SKILLS) # Pass MASTER_SKILLS
+            
+            education_details_formatted = education_details_text
             work_history_formatted = format_work_history(work_history_raw)
             project_details_formatted = format_project_details(project_details_raw)
 
