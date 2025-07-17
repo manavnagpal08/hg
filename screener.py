@@ -436,40 +436,34 @@ def extract_years_of_experience(text):
 
     return 0.0 # Default to 0.0 if nothing found
 
-import re
-
 def extract_email(text):
     """
-    Extracts an email address from OCR'd text, fixing common scan errors
-    without over-replacing valid characters.
+    Extract a cleaned email from OCR-affected text.
+    Handles common mistakes while avoiding over-replacement.
     """
-    text_processed = text.lower().replace(' ', '')  # remove spaces
+    # Step 1: Normalize text
+    text = text.lower()
+    text = text.replace(' ', '').replace('\n', '').replace('\t', '')
 
-    # Safe, targeted OCR error replacements (only for domain/user parts)
-    ocr_replacements = {
-        ' dot ': '.', 'dot': '.', '(dot)': '.', '[dot]': '.', '-dot-': '.', '_dot_': '.',
-        ' at ': '@', 'at': '@', '(at)': '@', '[at]': '@', '-at-': '@', '_at_': '@',
-        'coim': 'com', 'gmaii': 'gmail', 'hotmaii': 'hotmail', 'yah00': 'yahoo',
-        'outiook': 'outlook', 'iive': 'live', 'gmai': 'gmail', 'yaho': 'yahoo',
-        'hotmai': 'hotmail', 'outlok': 'outlook', 'ive': 'live'
+    # Step 2: Fix obvious OCR & formatting mistakes (only safe ones)
+    fixes = {
+        '(dot)': '.', '[dot]': '.', '{dot}': '.', '_dot_': '.', '-dot-': '.', ' dot ': '.', 'dot': '.',
+        '(at)': '@', '[at]': '@', '{at}': '@', '_at_': '@', '-at-': '@', ' at ': '@', 'at': '@',
+        'coim': 'com', 'gmaii': 'gmail', 'gmai': 'gmail', 'yah00': 'yahoo', 'yaho': 'yahoo',
+        'hotmai': 'hotmail', 'hotmaii': 'hotmail', 'outiook': 'outlook', 'outlok': 'outlook',
+        'iive': 'live', 'ive': 'live'
     }
 
-    for old, new in ocr_replacements.items():
-        text_processed = text_processed.replace(old, new)
+    for wrong, right in fixes.items():
+        text = text.replace(wrong, right)
 
-    # Clean non-email characters
-    text_processed = re.sub(r'[^a-zA-Z0-9.@%+-]', '', text_processed)
+    # Step 3: Remove unwanted symbols that break regex
+    text = re.sub(r'[^\w.@+-]', '', text)
 
-    # Fix common domain formatting issues
-    text_processed = re.sub(r'(\w+)@(\w+)\s*com\b', r'\1@\2.com', text_processed)
-    text_processed = re.sub(r'(\w+)@(\w+)\s*org\b', r'\1@\2.org', text_processed)
-    text_processed = re.sub(r'(\w+)@(\w+)\s*net\b', r'\1@\2.net', text_processed)
-    text_processed = re.sub(r'(\w+)@(\w+)\s*in\b', r'\1@\2.in', text_processed)
+    # Step 4: Match valid emails with common TLDs
+    email_regex = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|net|org|edu|gov|mil|in|co\.in|co\.uk|ai|io|dev|info|biz|me|us|ca|de|fr|jp|au|cn|ru)\b'
+    match = re.search(email_regex, text)
 
-    # Final email pattern (safe TLDs only)
-    email_regex = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|org|net|edu|gov|mil|in|co\.in|co\.uk|io|ai|dev|info|biz|me|us|ca|fr|de|jp|au|cn|ru)\b'
-    
-    match = re.search(email_regex, text_processed)
     return match.group(0) if match else None
 
 
