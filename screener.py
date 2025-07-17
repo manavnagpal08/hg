@@ -436,60 +436,42 @@ def extract_years_of_experience(text):
 
     return 0.0 # Default to 0.0 if nothing found
 
+import re
+
 def extract_email(text):
     """
-    Extracts an email address from the given text, with enhanced preprocessing
-    to handle common OCR errors.
+    Extracts an email address from OCR'd text, fixing common scan errors
+    without over-replacing valid characters.
     """
-    text_processed = text.lower()
+    text_processed = text.lower().replace(' ', '')  # remove spaces
 
-    # Aggressive replacements for common OCR errors in email parts
-    # Remove all spaces first
-    text_processed = text_processed.replace(' ', '') 
-    
-    # Common OCR character confusions and non-email characters to remove/replace
+    # Safe, targeted OCR error replacements (only for domain/user parts)
     ocr_replacements = {
-        'dot': '.', '(dot)': '.', '[dot]': '.', '-dot-': '.', '_dot_': '.',
-        'at': '@', '(at)': '@', '[at]': '@', '-at-': '@', '_at_': '@',
-        '1': 'l', '0': 'o', '5': 's', 'q': 'g', 'i': 'l', 'v': 'y',
-        's': '5', # User feedback: S and 5 confusion
-        'g': 'q', # User feedback: q and g confusion
-        'o': '0', # User feedback: 0 and O confusion
-        'l': '1', # User feedback: 1 and l confusion
-        'b': '6', 'z': '2', 'a': '4', 'e': '3', 't': '7', 'j': '9', # Other common ones
-        '\\': '', '/': '', '#': '', '*': '', '(': '', ')': '', '[': '', ']': '', '{': '', '}': '',
-        '!': '', '?': '', '+': '', '=': '', '-': '', '_': '', '~': '', '^': '', '%': '', '$': '',
-        '&': '', '|': '', '<': '', '>': '', ';': '', ':': '', ',': '',
-        # More specific OCR errors often seen in email context
-        'rn': 'm', 'cl': 'd', 'ci': 'c', 'ii': 'n', 'vv': 'w', 'uu': 'u',
+        ' dot ': '.', 'dot': '.', '(dot)': '.', '[dot]': '.', '-dot-': '.', '_dot_': '.',
+        ' at ': '@', 'at': '@', '(at)': '@', '[at]': '@', '-at-': '@', '_at_': '@',
         'coim': 'com', 'gmaii': 'gmail', 'hotmaii': 'hotmail', 'yah00': 'yahoo',
-        'outioook': 'outlook', 'iive': 'live', 'gmai': 'gmail', 'yaho': 'yahoo',
+        'outiook': 'outlook', 'iive': 'live', 'gmai': 'gmail', 'yaho': 'yahoo',
         'hotmai': 'hotmail', 'outlok': 'outlook', 'ive': 'live'
     }
 
-    # Apply replacements
     for old, new in ocr_replacements.items():
         text_processed = text_processed.replace(old, new)
-    
-    # Further clean up any non-email characters that might remain
-    # Keep only alphanumeric, ., %, +-, and @
+
+    # Clean non-email characters
     text_processed = re.sub(r'[^a-zA-Z0-9.@%+-]', '', text_processed)
 
-    # Specific domain corrections if they appear standalone or malformed
+    # Fix common domain formatting issues
     text_processed = re.sub(r'(\w+)@(\w+)\s*com\b', r'\1@\2.com', text_processed)
     text_processed = re.sub(r'(\w+)@(\w+)\s*org\b', r'\1@\2.org', text_processed)
     text_processed = re.sub(r'(\w+)@(\w+)\s*net\b', r'\1@\2.net', text_processed)
     text_processed = re.sub(r'(\w+)@(\w+)\s*in\b', r'\1@\2.in', text_processed)
-    text_processed = re.sub(r'(\w+)@(\w+)\s*co\.in\b', r'\1@\2.co.in', text_processed)
-    text_processed = re.sub(r'(\w+)@(\w+)\s*co\.uk\b', r'\1@\2.co.uk', text_processed)
 
-    # Regex for email address. More specific to common email patterns.
-    # Allows for a wider range of characters in username and domain,
-    # and specifically looks for common TLDs.
-    email_regex = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|org|net|edu|gov|mil|in|co\.in|co\.uk|io|ai|dev|info|biz|me|us|ca|fr|de|jp|au|cn|ru|outlook|gmail|yahoo|hotmail|aol|protonmail|icloud|mail|live)\b'
+    # Final email pattern (safe TLDs only)
+    email_regex = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|org|net|edu|gov|mil|in|co\.in|co\.uk|io|ai|dev|info|biz|me|us|ca|fr|de|jp|au|cn|ru)\b'
     
     match = re.search(email_regex, text_processed)
     return match.group(0) if match else None
+
 
 def extract_phone_number(text):
     """Extracts a phone number from the given text."""
