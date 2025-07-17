@@ -1051,7 +1051,7 @@ def send_certificate_email(recipient_email, candidate_name, certificate_id, cert
     # This URL should point to the Streamlit app's certificate page, e.g.,
     # "https://your-streamlit-app-url.streamlit.app" or "https://your-custom-domain.com".
     # The certificate.html will then use the ID from the URL to fetch data.
-    APP_BASE_URL = "YOUR_APP_BASE_URL" # <-- REPLACE THIS
+    APP_BASE_URL = "https://cbie8lbzkfhxgwsbvrsab4.streamlit.app/" # <-- REPLACE THIS
     verification_link = f"{APP_BASE_URL}/certificate/{certificate_id}"
 
     msg = MIMEMultipart('alternative')
