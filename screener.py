@@ -1293,9 +1293,16 @@ def resume_screener_page():
     if 'screening_min_cgpa' not in st.session_state:
         st.session_state['screening_min_cgpa'] = 2.5
     
-    # Initialize DataFrame and raw texts
+    # Initialize DataFrame with all expected columns to prevent KeyError
     if 'comprehensive_df' not in st.session_state:
-        st.session_state['comprehensive_df'] = pd.DataFrame()
+        st.session_state['comprehensive_df'] = pd.DataFrame(columns=[
+            "File Name", "Candidate Name", "Score (%)", "Years Experience", "CGPA (4.0 Scale)",
+            "Email", "Phone Number", "Location", "Languages", "Education Details",
+            "Work History", "Project Details", "AI Suggestion", "Detailed HR Assessment",
+            "Matched Keywords", "Missing Skills", "Matched Keywords (Categorized)",
+            "Missing Skills (Categorized)", "Semantic Similarity", "Resume Raw Text",
+            "JD Used", "Date Screened", "Certificate ID", "Certificate Rank", "Tag"
+        ])
     if 'resume_raw_texts' not in st.session_state:
         st.session_state['resume_raw_texts'] = {}
     if 'view_certificate_id' not in st.session_state:
@@ -1995,7 +2002,7 @@ def resume_screener_page():
                     with col_cert_view:
                         if st.button("👁️ View Certificate", key="view_cert_button"):
                             st.session_state['view_certificate_id'] = candidate_data_for_cert['Certificate ID']
-                            st.rerun() # Rerun to trigger modal display
+                            st.rerun() # Changed from st.experimental_rerun()
 
                     with col_cert_download:
                         certificate_html_content = generate_certificate_html(candidate_data_for_cert)
@@ -2113,8 +2120,8 @@ def generate_certificate_html(candidate_data):
     
     # Replace placeholders in the HTML template
     html_content = html_template.replace("{{CANDIDATE_NAME}}", candidate_name)
-    html_content = html_content.replace("{{SCORE}}", f"{score:.1f}")
-    html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
+    html_content = html_template.replace("{{SCORE}}", f"{score:.1f}")
+    html_content = html_template.replace("{{CERTIFICATE_RANK}}", certificate_rank)
     html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
     html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
     
