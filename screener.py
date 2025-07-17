@@ -303,6 +303,8 @@ def extract_relevant_keywords(text, filter_set):
 
 def extract_text_from_file(file_bytes, file_name, file_type):
     full_text = ""
+    # Tesseract configuration for speed and common resume layout
+    tesseract_config = "--oem 1 --psm 3" 
 
     if "pdf" in file_type:
         try:
@@ -313,7 +315,7 @@ def extract_text_from_file(file_bytes, file_name, file_type):
                 images = convert_from_bytes(file_bytes)
                 for img in images:
                     processed_img = preprocess_image_for_ocr(img)
-                    full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
+                    full_text += pytesseract.image_to_string(processed_img, lang='eng', config=tesseract_config) + "\n"
             else:
                 full_text = pdf_text
 
@@ -323,7 +325,7 @@ def extract_text_from_file(file_bytes, file_name, file_type):
                 images = convert_from_bytes(file_bytes)
                 for img in images:
                     processed_img = preprocess_image_for_ocr(img)
-                    full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
+                    full_text += pytesseract.image_to_string(processed_img, lang='eng', config=tesseract_config) + "\n"
             except Exception as e_ocr:
                 print(f"ERROR: Failed to extract text from PDF via OCR for {file_name}: {str(e_ocr)}")
                 return f"[ERROR] Failed to extract text from PDF via OCR: {str(e_ocr)}"
@@ -332,7 +334,7 @@ def extract_text_from_file(file_bytes, file_name, file_type):
         try:
             img = Image.open(BytesIO(file_bytes)).convert("RGB")
             processed_img = preprocess_image_for_ocr(img)
-            full_text = pytesseract.image_to_string(processed_img, lang='eng')
+            full_text = pytesseract.image_to_string(processed_img, lang='eng', config=tesseract_config)
         except Exception as e:
             print(f"ERROR: Failed to extract text from image for {file_name}: {str(e)}")
             return f"[ERROR] Failed to extract text from image: {str(e)}"
