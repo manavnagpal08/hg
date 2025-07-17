@@ -90,7 +90,9 @@ def register_section(role="hr"):
                 if role == "hr":
                     st.session_state.active_hr_tab_selection = "Login"
                 else: # candidate
-                    st.session_state.active_candidate_tab_selection = "Login"
+                    # After successful candidate registration, switch to login view
+                    st.session_state.candidate_view_mode = "login"
+                    st.rerun() # Rerun to show the login form
 
 def admin_registration_section():
     """Admin-driven user creation form."""
@@ -368,25 +370,28 @@ def candidate_login_section():
     if "candidate_username" not in st.session_state:
         st.session_state.candidate_username = None
     
-    # Initialize active_candidate_tab_selection if not present
-    if "active_candidate_tab_selection" not in st.session_state:
-        st.session_state.active_candidate_tab_selection = "Login"
-
+    # Initialize candidate_view_mode: "login" or "register"
+    if "candidate_view_mode" not in st.session_state:
+        st.session_state.candidate_view_mode = "login" # Default to login view
 
     if st.session_state.candidate_authenticated:
         candidate_portal_content()
         return True
 
-    tab_selection = st.radio(
-        "Select an option:",
-        ("Login", "Register"),
-        key="candidate_login_register_radio",
-        index=0 if st.session_state.active_candidate_tab_selection == "Login" else 1
-    )
+    # Use buttons for navigation between login and register
+    col_login, col_register = st.columns(2)
+    with col_login:
+        if st.button("🔐 Candidate Login", key="candidate_login_btn"):
+            st.session_state.candidate_view_mode = "login"
+            st.rerun()
+    with col_register:
+        if st.button("📝 Register New Candidate Account", key="candidate_register_btn"):
+            st.session_state.candidate_view_mode = "register"
+            st.rerun()
 
-    if tab_selection == "Login":
+    if st.session_state.candidate_view_mode == "login":
         st.subheader("🔐 Candidate Login")
-        st.info("If you don't have an account, please go to the 'Register' option first.")
+        st.info("If you don't have an account, click 'Register New Candidate Account'.")
         with st.form("candidate_login_form", clear_on_submit=False):
             username = st.text_input("Username", key="candidate_username_login")
             password = st.text_input("Password", type="password", key="candidate_password_login")
@@ -411,7 +416,7 @@ def candidate_login_section():
                     else:
                         st.error("❌ Invalid username or password.")
     
-    elif tab_selection == "Register":
+    elif st.session_state.candidate_view_mode == "register":
         register_section(role="candidate")
 
     return st.session_state.candidate_authenticated
@@ -500,4 +505,3 @@ if __name__ == "__main__":
                 st.rerun()
         else:
             st.info("Please login or register for the Candidate Portal.")
-
