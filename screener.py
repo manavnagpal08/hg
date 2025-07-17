@@ -28,6 +28,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 import traceback
 
+# --- OCR Specific Imports (Moved to top) ---
+from PIL import Image
+import pytesseract
+import cv2
+from pdf2image import convert_from_bytes
+
 # Global NLTK download check (should run once)
 try:
     nltk.data.find('corpora/stopwords')
@@ -233,7 +239,6 @@ global_sentence_model, global_ml_model = load_ml_model()
 
 
 def preprocess_image_for_ocr(image):
-    import cv2 # Import here for multiprocessing compatibility if needed, though better to pass processed images
     img_cv = np.array(image)
     img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
     img_processed = cv2.adaptiveThreshold(img_cv, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -296,11 +301,6 @@ def extract_relevant_keywords(text, filter_set):
 
 
 def extract_text_from_file(file_bytes, file_name, file_type):
-    import pytesseract # Import here for multiprocessing compatibility
-    from PIL import Image
-    from pdf2image import convert_from_bytes
-    import cv2 # Import here for multiprocessing compatibility
-
     full_text = ""
 
     if "pdf" in file_type:
@@ -317,6 +317,7 @@ def extract_text_from_file(file_bytes, file_name, file_type):
                 full_text = pdf_text
 
         except Exception as e:
+            # Fallback to OCR directly if pdfplumber fails or for any other PDF error
             try:
                 images = convert_from_bytes(file_bytes)
                 for img in images:
@@ -1416,7 +1417,11 @@ def resume_screener_page():
             
             for i, future in enumerate(as_completed(text_futures)):
                 status_text.text(f"Extracting text: {file_infos_for_extraction[i][1]} ({i+1}/{total_resumes})...")
-                extracted_texts_info.append(future.result())
+                try:
+                    extracted_texts_info.append(future.result())
+                except Exception as e:
+                    st.error(f"Error extracting text for {file_infos_for_extraction[i][1]}: {e}")
+                    extracted_texts_info.append((file_infos_for_extraction[i][1], f"[ERROR] {e}")) # Mark as error
                 progress_bar.progress((i + 1) / total_resumes)
         
         progress_bar.empty()
@@ -1435,7 +1440,7 @@ def resume_screener_page():
             "Detailed HR Assessment": f"Error processing resume: {text.replace('[ERROR] ', '')}",
             "Matched Keywords": "", "Missing Skills": "",
             "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
-            "Semantic Similarity": 0.0, "Resume Raw Text": text,
+            "Semantic Similarity": 0.0, "Resume Raw Text": "",
             "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
             "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
             "Tag": "❌ Text Extraction Error"
