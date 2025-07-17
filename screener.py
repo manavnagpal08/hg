@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
 from sentence_transformers import SentenceTransformer
-# import nltk # Removed NLTK for stopwords
 import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
@@ -27,26 +26,19 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from io import BytesIO
 import traceback
 import time
-import pandas as pd # Ensure pandas is imported
-import requests # For Firestore REST API calls
-import json # For JSON parsing/dumping
-from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS # New, more efficient stop words
-import ntlk
+import pandas as pd
+import requests
+import json
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
 # CRITICAL: Disable Hugging Face tokenizers parallelism to avoid deadlocks with ProcessPoolExecutor
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# --- OCR Specific Imports (Moved to top) ---
+# --- OCR Specific Imports ---
 from PIL import Image
 import pytesseract
 import cv2
 from pdf2image import convert_from_bytes
-
-# Global NLTK download check (should run once) - No longer needed for stopwords, but kept in case other NLTK components are used later.
-# try:
-#     nltk.data.find('corpora/stopwords')
-# except LookupError:
-#     nltk.download('stopwords')
 
 # Define global constants
 MASTER_CITIES = set([
@@ -93,9 +85,9 @@ MASTER_CITIES = set([
     "Indian Creek", "North Bay Village", "Biscayne Park", "El Portal", "Miami Shores", "North Miami Beach",
     "Aventura"
 ])
-NLTK_STOP_WORDS = set(nltk.corpus.stopwords.words('english'))
-# Changed to use sklearn's ENGLISH_STOP_WORDS for efficiency
-STOP_WORDS = set(ENGLISH_STOP_WORDS).union(set([
+
+# Define custom stop words
+CUSTOM_STOP_WORDS = set([
     "work", "experience", "years", "year", "months", "month", "day", "days", "project", "projects",
     "team", "teams", "developed", "managed", "led", "created", "implemented", "designed",
     "responsible", "proficient", "knowledge", "ability", "strong", "proven", "demonstrated",
@@ -178,8 +170,8 @@ STOP_WORDS = set(ENGLISH_STOP_WORDS).union(set([
     "rhce", "vmware", "vcpa", "vcpd", "vcpi", "vcpe", "vcpx", "citrix", "cc-v", "cc-p",
     "cc-e", "cc-m", "cc-s", "cc-x", "palo", "alto", "pcnsa", "pcnse", "fortinet", "fcsa",
     "fcsp", "fcc", "fcnsp", "fct", "fcp", "fcs", "fce", "fcn", "fcnp", "fcnse"
-]))
-STOP_WORDS = NLTK_STOP_WORDS.union(CUSTOM_STOP_WORDS)
+])
+STOP_WORDS = set(ENGLISH_STOP_WORDS).union(CUSTOM_STOP_WORDS)
 
 SKILL_CATEGORIES = {
     "Programming Languages": ["Python", "Java", "JavaScript", "C++", "C#", "Go", "Ruby", "PHP", "Swift", "Kotlin", "TypeScript", "R", "Bash Scripting", "Shell Scripting"],
@@ -218,9 +210,15 @@ SKILL_CATEGORIES = {
 
 MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
 
-# IMPORTANT: REPLACE THESE WITH YOUR ACTUAL DEPLOYMENT URLs
+# IMPORTANT: REPLACE THESE WITH YOUR ACTUAL DEPLOYMENT URLs OR USE ENVIRONMENT VARIABLES
 APP_BASE_URL = "https://screenerpro-app.streamlit.app"
 CERTIFICATE_HOSTING_URL = "https://manav-jain.github.io/screenerpro-certs"
+
+# Firebase Config (for local testing, replace with actual keys if using Firestore locally)
+# In Canvas, these are typically provided via __firebase_config, __app_id, __initial_auth_token
+FIREBASE_REST_API_BASE_URL = os.environ.get("FIREBASE_REST_API_BASE_URL", "https://firestore.googleapis.com/v1")
+FIREBASE_WEB_API_KEY = os.environ.get("FIREBASE_WEB_API_KEY", "YOUR_FIREBASE_WEB_API_KEY") # Replace with a real key if needed for local testing with Firestore
+APP_ID = os.environ.get("APP_ID", "screenerpro-default-app-id")
 
 
 @st.cache_resource
@@ -235,6 +233,7 @@ def get_tesseract_cmd():
 @st.cache_resource
 def load_ml_model():
     try:
+        # Assuming model is 'all-MiniLM-L6-v2' and ml_screening_model.pkl is present
         model = SentenceTransformer("all-MiniLM-L6-v2")
         ml_model = joblib.load("ml_screening_model.pkl")
         return model, ml_model
@@ -874,6 +873,25 @@ def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_si
     )
     return suggestion_text
 
+def assign_tag(score):
+    if score >= 90: return "👑 Exceptional Match"
+    elif score >= 75: return "🔥 Strong Candidate"
+    elif score >= 60: return "✨ Promising Fit"
+    elif score >= 40: return "⚠️ Needs Review"
+    else: return "❌ Limited Match"
+
+def assign_certificate_rank(score):
+    if score >= 90: return "Platinum"
+    elif score >= 85: return "Gold"
+    elif score >= 75: return "Silver"
+    else: return "Not Applicable"
+
+def create_mailto_link(recipient_email, candidate_name, job_title):
+    subject = urllib.parse.quote_plus(f"Interview Invitation: {job_title}")
+    body = urllib.parse.quote_plus(f"Dear {candidate_name},\n\nWe would like to invite you for an interview for the {job_title} position.\n\nBest regards,\n[Your Company Name]")
+    return f"mailto:{recipient_email}?subject={subject}&body={body}"
+
+
 def save_certificate_to_firestore_rest(certificate_data, firestore_rest_api_base_url, firebase_web_api_key, app_id):
     """
     Saves certificate data to Firestore using the REST API.
@@ -1137,17 +1155,23 @@ def _parallel_extract_text(file_data):
     except Exception as e:
         return file_name, None, str(e) # Return error message if extraction fails
 
-# Modified resume_screener_page function signature
 def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_id):
     st.title("📄 Resume Screener Pro")
     st.markdown("Upload resumes (PDF or Image) and a job description to find the best candidates.")
 
+    # Initialize session states if they don't exist
     if 'resume_data' not in st.session_state:
         st.session_state.resume_data = []
     if 'job_desc_text' not in st.session_state:
         st.session_state.job_desc_text = ""
     if 'job_desc_embedding' not in st.session_state:
         st.session_state.job_desc_embedding = None
+    if 'comprehensive_df' not in st.session_state:
+        st.session_state.comprehensive_df = pd.DataFrame()
+    if 'certificate_html_content' not in st.session_state:
+        st.session_state.certificate_html_content = ""
+    if 'dark_mode_main' not in st.session_state:
+        st.session_state.dark_mode_main = False # Default to light mode
 
     # Job Description Input
     with st.expander("Job Description", expanded=True):
@@ -1176,15 +1200,12 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
     if uploaded_files and st.session_state.job_desc_embedding is not None:
         if st.button("🚀 Start Screening"):
             st.session_state.resume_data = [] # Clear previous results
-            
-            # Removed progress_bar and status_text updates from within the loop for speed
-            # progress_bar = st.progress(0, text="Starting resume processing...")
-            # status_text = st.empty()
+            st.session_state.comprehensive_df = pd.DataFrame() # Clear comprehensive_df as well
             
             st.info(f"Starting processing for {len(uploaded_files)} resumes. This may take a moment...")
 
             all_file_data_for_extraction = []
-            for i, uploaded_file in enumerate(uploaded_files):
+            for uploaded_file in uploaded_files:
                 file_bytes = uploaded_file.read()
                 file_name = uploaded_file.name
                 file_type = uploaded_file.type
@@ -1192,18 +1213,16 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
 
             extracted_results = []
             extracted_texts_for_embedding = []
-            resume_metadata = [] # To store original file info and extracted text
 
             start_time = time.time()
 
             # Phase 1: Parallel Text Extraction
-            # status_text.info(f"Phase 1/2: Extracting text from {total_files} resumes in parallel...") # Removed
             log_activity_screener(f"Starting parallel text extraction for {len(uploaded_files)} resumes.")
             
             with ProcessPoolExecutor() as executor:
                 futures = {executor.submit(_parallel_extract_text, data): data[1] for data in all_file_data_for_extraction}
                 
-                for i, future in enumerate(as_completed(futures)):
+                for future in as_completed(futures):
                     file_name_original = futures[future]
                     try:
                         file_name, extracted_text, error = future.result()
@@ -1217,65 +1236,47 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
                     except Exception as e:
                         st.error(f"Unexpected error during text extraction for {file_name_original}: {e}")
                         log_activity_screener(f"Unexpected error during text extraction for {file_name_original}: {e}")
-                    
-                    # progress_bar.progress((i + 1) / total_files, text=f"Extracted text from {i+1}/{total_files} resumes...") # Removed
-
             extraction_end_time = time.time()
             log_activity_screener(f"Text extraction phase completed in {extraction_end_time - start_time:.2f} seconds.")
 
             # Phase 2: Batch Embedding and Further Processing
             if extracted_texts_for_embedding:
-                # status_text.info(f"Phase 2/2: Generating embeddings and analyzing {len(extracted_texts_for_embedding)} resumes...") # Removed
                 log_activity_screener(f"Starting batch embedding for {len(extracted_texts_for_embedding)} resumes.")
                 
                 # Generate all embeddings in one batch
-                all_resume_embeddings = global_sentence_model.encode(extracted_texts_for_embedding, show_progress_bar=False) # Changed to False
+                all_resume_embeddings = global_sentence_model.encode(extracted_texts_for_embedding, show_progress_bar=False)
                 
                 log_activity_screener("Batch embedding completed.")
 
                 # Process each resume sequentially after getting its embedding
                 for i, (file_name, full_text) in enumerate(extracted_results):
                     if "[ERROR]" in full_text:
-                        st.error(f"Skipping {file_name} due to prior text extraction error.")
                         st.session_state.resume_data.append({
-                            "File Name": file_name,
-                            "Status": "Error: Text extraction failed",
-                            "Score": 0,
-                            "Semantic Similarity": 0,
-                            "AI Suggestion": "N/A",
-                            "Extracted Skills": "N/A",
-                            "Categorized Skills": {},
-                            "Years of Experience": 0,
-                            "Email": "N/A",
-                            "Phone": "N/A",
-                            "Location": "N/A",
-                            "Name": "N/A",
-                            "CGPA (4.0 Scale)": "N/A",
-                            "Education": "N/A",
-                            "Work History": "N/A",
-                            "Projects": "N/A",
-                            "Languages": "N/A"
+                            "File Name": file_name, "Status": "Error: Text extraction failed",
+                            "Score (%)": 0, "Semantic Similarity": 0, "AI Suggestion": "N/A",
+                            "Extracted Skills": "N/A", "Categorized Skills": {}, "Years Experience": 0,
+                            "Email": "N/A", "Phone Number": "N/A", "Location": "N/A", "Candidate Name": "N/A",
+                            "CGPA (4.0 Scale)": "N/A", "Education Details": "N/A", "Work History": "N/A",
+                            "Project Details": "N/A", "Languages": "N/A", "Resume Raw Text": full_text,
+                            "Tag": "❌ Limited Match", "Certificate Rank": "Not Applicable",
+                            "Missing Skills": "N/A", "JD Used": st.session_state.job_desc_text, "Date Screened": date.today().strftime("%Y-%m-%d"),
+                            "Certificate ID": "N/A"
                         })
                         continue
 
                     try:
                         cleaned_text = clean_text(full_text)
-                        resume_embedding = all_resume_embeddings[i] # Get the pre-calculated embedding
+                        resume_embedding = all_resume_embeddings[i]
 
-                        # Calculate semantic similarity
                         semantic_similarity = cosine_similarity([resume_embedding], [st.session_state.job_desc_embedding])[0][0]
-
-                        # Prepare features for ML model
                         years_exp = extract_years_of_experience(full_text)
                         
-                        # Use the trained ML model to predict a score
-                        # Ensure features are in the correct order and format (e.g., 2D array)
                         features = np.array([[semantic_similarity, years_exp]])
                         if global_ml_model:
                             predicted_score_proba = global_ml_model.predict_proba(features)[0][1] * 100
                             score = round(predicted_score_proba, 2)
                         else:
-                            score = round(semantic_similarity * 100, 2) # Fallback if ML model not loaded
+                            score = round(semantic_similarity * 100, 2)
 
                         extracted_skills, categorized_skills = extract_relevant_keywords(full_text, MASTER_SKILLS)
                         email = extract_email(full_text)
@@ -1284,385 +1285,286 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
                         name = extract_name(full_text)
                         cgpa = extract_cgpa(full_text)
                         education = extract_education_text(full_text)
-                        work_history = extract_work_history(full_text)
-                        projects = extract_project_details(full_text, MASTER_SKILLS)
+                        work_history_details = extract_work_history(full_text)
+                        projects_details = extract_project_details(full_text, MASTER_SKILLS)
                         languages = extract_languages(full_text)
 
                         ai_suggestion = generate_concise_ai_suggestion(name if name else file_name, score, years_exp, semantic_similarity, cgpa)
+                        
+                        tag = assign_tag(score)
+                        cert_rank = assign_certificate_rank(score)
+
+                        # Calculate missing skills
+                        jd_raw_skills_set, _ = extract_relevant_keywords(st.session_state.job_desc_text, MASTER_SKILLS)
+                        resume_raw_skills_set, _ = extract_relevant_keywords(full_text, MASTER_SKILLS)
+                        missing_skills = ", ".join(sorted(jd_raw_skills_set.difference(resume_raw_skills_set))) if jd_raw_skills_set.difference(resume_raw_skills_set) else "None"
+
+                        certificate_id = str(uuid.uuid4()) if cert_rank != "Not Applicable" else "N/A"
 
                         st.session_state.resume_data.append({
                             "File Name": file_name,
                             "Status": "Processed",
-                            "Score": score,
+                            "Score (%)": score,
                             "Semantic Similarity": round(semantic_similarity, 3),
                             "AI Suggestion": ai_suggestion,
                             "Extracted Skills": ", ".join(sorted(extracted_skills)),
                             "Categorized Skills": categorized_skills,
-                            "Years of Experience": years_exp,
+                            "Years Experience": years_exp,
                             "Email": email,
-                            "Phone": phone,
+                            "Phone Number": phone,
                             "Location": location,
-                            "Name": name,
+                            "Candidate Name": name if name else file_name,
                             "CGPA (4.0 Scale)": cgpa,
-                            "Education": education,
-                            "Work History": format_work_history(work_history),
-                            "Projects": format_project_details(projects),
+                            "Education Details": education,
+                            "Work History": format_work_history(work_history_details),
+                            "Project Details": format_project_details(projects_details),
                             "Languages": languages,
-                            "Full Text": full_text # Store full text for detailed view
+                            "Resume Raw Text": full_text,
+                            "Tag": tag,
+                            "Certificate Rank": cert_rank,
+                            "Missing Skills": missing_skills,
+                            "JD Used": st.session_state.job_desc_text,
+                            "Date Screened": date.today().strftime("%Y-%m-%d"),
+                            "Certificate ID": certificate_id
                         })
-
-                        # Certificate Generation and Saving
-                        if score >= 75: # Example threshold for certificate
-                            certificate_id = str(uuid.uuid4())
-                            certificate_data = {
-                                "certificate_id": certificate_id,
-                                "candidate_name": name if name else file_name,
-                                "score": score,
-                                "rank": "Top Performer", # This would ideally come from ranking all candidates
-                                "date_issued": datetime.now().strftime("%Y-%m-%d"),
-                                "job_description_hash": hash(st.session_state.job_desc_text), # Hash of JD for uniqueness
-                                "semantic_similarity": semantic_similarity,
-                                "years_experience": years_exp,
-                                "skills": list(extracted_skills),
-                                "email": email,
-                                "education": education,
-                                "work_history_summary": format_work_history(work_history),
-                                "projects_summary": format_project_details(projects),
-                                "location": location
-                            }
-                            
-                            # Save to Firestore via REST API
-                            save_certificate_to_firestore_rest(certificate_data, firestore_rest_api_base_url, firebase_web_api_key, app_id)
-
-                            # Generate and optionally send PDF certificate
-                            certificate_html = generate_certificate_html(name if name else file_name, score, "Top Performer", date.today(), certificate_id)
-                            
-                            # Convert HTML to PDF
-                            pdf_bytes = BytesIO()
-                            HTML(string=certificate_html).write_pdf(pdf_bytes)
-                            pdf_bytes.seek(0)
-                            
-                            st.download_button(
-                                label=f"Download Certificate for {name if name else file_name}",
-                                data=pdf_bytes.getvalue(),
-                                file_name=f"ScreenerPro_Certificate_{name.replace(' ', '_')}.pdf",
-                                mime="application/pdf",
-                                key=f"download_cert_{file_name}"
-                            )
-                            
-                            if email and st.checkbox(f"Send certificate to {email} for {name if name else file_name}?", key=f"send_email_{file_name}"):
-                                send_email_with_certificate(email, name if name else file_name, pdf_bytes.getvalue())
-                                st.success(f"Email sent to {email} for {name if name else file_name}!")
 
                     except Exception as e:
                         st.error(f"Error processing {file_name}: {e}")
                         traceback.print_exc()
                         log_activity_screener(f"Error processing {file_name}: {e}")
                         st.session_state.resume_data.append({
-                            "File Name": file_name,
-                            "Status": f"Error: {e}",
-                            "Score": 0,
-                            "Semantic Similarity": 0,
-                            "AI Suggestion": "N/A",
-                            "Extracted Skills": "N/A",
-                            "Categorized Skills": {},
-                            "Years of Experience": 0,
-                            "Email": "N/A",
-                            "Phone": "N/A",
-                            "Location": "N/A",
-                            "Name": "N/A",
-                            "CGPA (4.0 Scale)": "N/A",
-                            "Education": "N/A",
-                            "Work History": "N/A",
-                            "Projects": "N/A",
-                            "Languages": "N/A"
+                            "File Name": file_name, "Status": f"Error: {e}",
+                            "Score (%)": 0, "Semantic Similarity": 0, "AI Suggestion": "N/A",
+                            "Extracted Skills": "N/A", "Categorized Skills": {}, "Years Experience": 0,
+                            "Email": "N/A", "Phone Number": "N/A", "Location": "N/A", "Candidate Name": "N/A",
+                            "CGPA (4.0 Scale)": "N/A", "Education Details": "N/A", "Work History": "N/A",
+                            "Project Details": "N/A", "Languages": "N/A", "Resume Raw Text": full_text,
+                            "Tag": "❌ Limited Match", "Certificate Rank": "Not Applicable",
+                            "Missing Skills": "N/A", "JD Used": st.session_state.job_desc_text, "Date Screened": date.today().strftime("%Y-%m-%d"),
+                            "Certificate ID": "N/A"
                         })
-                    
-                    # progress_bar.progress((i + 1) / len(extracted_results), text=f"Analyzing {i+1}/{len(extracted_results)} resumes...") # Removed
             else:
                 st.warning("No valid text extracted from uploaded resumes for embedding.")
             
             end_time = time.time()
             total_processing_time = end_time - start_time
-            st.success(f"Processing complete! Total time: {total_processing_time:.2f} seconds for {len(st.session_state.resume_data)} resumes.") # Final success message
+            st.success(f"Processing complete! Total time: {total_processing_time:.2f} seconds for {len(st.session_state.resume_data)} resumes.")
             log_activity_screener(f"Total processing time: {total_processing_time:.2f} seconds for {len(st.session_state.resume_data)} resumes.")
-            # progress_bar.empty() # Removed
-            # status_text.empty() # Removed
 
-    if st.session_state.resume_data:
-        st.subheader("Screening Results")
-        
-        # Convert to DataFrame for better display and filtering
-        df = pd.DataFrame(st.session_state.resume_data)
-        
-        # Filter out error rows for main display, but keep them in raw data
-        display_df = df[df['Status'] == 'Processed'].copy()
-        
-        if not display_df.empty:
-            # Sort by score by default
-            display_df = display_df.sort_values(by="Score", ascending=False).reset_index(drop=True)
-            display_df["Rank"] = display_df.index + 1 # Add rank based on sorted order
+            # Populate comprehensive_df after all processing
+            if st.session_state.resume_data:
+                st.session_state.comprehensive_df = pd.DataFrame(st.session_state.resume_data)
+                # Sort by score for default display and ranking
+                st.session_state.comprehensive_df = st.session_state.comprehensive_df.sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
+                st.session_state.comprehensive_df["Rank"] = st.session_state.comprehensive_df.index + 1
+            else:
+                st.session_state.comprehensive_df = pd.DataFrame() # Ensure it's empty if no data
 
+    if not st.session_state.comprehensive_df.empty:
+        st.subheader("Screening Results Summary")
+        
+        display_df_summary = st.session_state.comprehensive_df[st.session_state.comprehensive_df['Status'] == 'Processed'].copy()
+        
+        if not display_df_summary.empty:
             st.dataframe(
-                display_df[[
-                    "Rank", "File Name", "Name", "Score", "Semantic Similarity", 
-                    "Years of Experience", "Location", "Email", "Phone", "AI Suggestion"
+                display_df_summary[[
+                    "Rank", "File Name", "Candidate Name", "Score (%)", "Semantic Similarity", 
+                    "Years Experience", "Location", "Email", "Phone Number", "AI Suggestion"
                 ]].style.format({
-                    "Score": "{:.2f}%",
+                    "Score (%)": "{:.2f}%",
                     "Semantic Similarity": "{:.3f}"
                 }),
                 use_container_width=True,
                 hide_index=True
             )
 
-            st.subheader("Detailed Candidate Insights")
-            selected_candidate_name = st.selectbox("Select a candidate for detailed view:", display_df["Name"].tolist() if not display_df["Name"].isnull().all() else display_df["File Name"].tolist())
-
-            if selected_candidate_name:
-                # Find the selected candidate's full data
-                selected_candidate_data = display_df[(display_df["Name"] == selected_candidate_name) | (display_df["File Name"] == selected_candidate_name)].iloc[0]
-
-                st.markdown(f"### Details for {selected_candidate_data['Name'] if selected_candidate_data['Name'] else selected_candidate_data['File Name']}")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Overall Score", f"{selected_candidate_data['Score']:.2f}%")
-                    st.metric("Semantic Similarity", f"{selected_candidate_data['Semantic Similarity']:.3f}")
-                    st.metric("Years of Experience", f"{selected_candidate_data['Years of Experience']} years")
-                    st.metric("CGPA (4.0 Scale)", selected_candidate_data['CGPA (4.0 Scale)'] if selected_candidate_data['CGPA (4.0 Scale)'] else "N/A")
-                    st.metric("Location", selected_candidate_data['Location'])
-                with col2:
-                    st.metric("Email", selected_candidate_data['Email'] if selected_candidate_data['Email'] else "N/A")
-                    st.metric("Phone", selected_candidate_data['Phone'] if selected_candidate_data['Phone'] else "N/A")
-                    st.metric("Education", selected_candidate_data['Education'] if selected_candidate_data['Education'] else "N/A")
-                    st.metric("Languages", selected_candidate_data['Languages'])
+            # Candidate Score Comparison Graph (Conditional Display)
+            st.markdown("---")
+            st.markdown("## 📊 Candidate Score Comparison")
+            st.caption("Visual overview of how each candidate ranks against the job requirements.")
+            
+            if len(display_df_summary) < 25: # Condition for displaying the graph
+                fig, ax = plt.subplots(figsize=(12, 7))
+                cutoff = 75 # Default cutoff for visualization, can be tied to a slider if needed
+                colors = ['#4CAF50' if s >= cutoff else '#FFC107' if s >= (cutoff * 0.75) else '#F44346' for s in display_df_summary['Score (%)']]
+                bars = ax.bar(display_df_summary['Candidate Name'], display_df_summary['Score (%)'], color=colors)
+                ax.set_xlabel("Candidate", fontsize=14)
+                ax.set_ylabel("Score (%)", fontsize=14)
+                ax.set_title("Resume Screening Scores Across Candidates", fontsize=16, fontweight='bold')
+                ax.set_ylim(0, 100)
+                plt.xticks(rotation=60, ha='right', fontsize=10)
+                plt.yticks(fontsize=10)
                 
-                st.markdown("---")
-                st.subheader("AI Suggestion")
-                st.markdown(selected_candidate_data['AI Suggestion'])
-
-                st.subheader("Work History")
-                st.markdown(selected_candidate_data['Work History'] if selected_candidate_data['Work History'] else "Not Found")
-
-                st.subheader("Projects")
-                st.markdown(selected_candidate_data['Projects'] if selected_candidate_data['Projects'] else "Not Found")
-
-                st.subheader("Extracted Skills")
-                st.write(selected_candidate_data['Extracted Skills'] if selected_candidate_data['Extracted Skills'] else "No specific skills extracted.")
+                # Dynamic text color based on Streamlit's dark mode (if available, otherwise default)
+                # This requires Streamlit's internal theme detection or a custom toggle
+                # For simplicity, we'll assume a light background for plots unless explicitly set
+                # In a real app, you might use st.get_option("theme.base") to check 'dark' or 'light'
+                # For now, keeping colors fixed for plot elements for consistency.
                 
-                st.subheader("Categorized Skills Breakdown")
-                categorized_skills = selected_candidate_data['Categorized Skills']
-                if categorized_skills:
-                    for category, skills_list in categorized_skills.items():
-                        if skills_list:
-                            st.markdown(f"**{category}:** {', '.join(sorted(set(skills_list)))}")
-                else:
-                    st.write("No categorized skills found.")
+                for bar in bars:
+                    yval = bar.get_height()
+                    ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f"{yval:.1f}", ha='center', va='bottom', fontsize=9)
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+            else:
+                st.info(f"Graph not displayed for {len(display_df_summary)} resumes. Displaying graphs for fewer than 25 resumes provides a clearer visualization.")
 
-                st.subheader("Raw Resume Text")
-                with st.expander("View Full Extracted Text"):
-                    st.text(selected_candidate_data['Full Text'])
+            st.markdown("---")
 
-                # Skill Cloud Visualization
-                st.subheader("Skill Cloud")
-                extracted_skills_text = selected_candidate_data['Extracted Skills']
-                if extracted_skills_text and extracted_skills_text != "N/A":
-                    wordcloud = WordCloud(width=800, height=400, background_color='white', colormap='viridis').generate(extracted_skills_text)
-                    fig, ax = plt.subplots(figsize=(10, 5))
-                    ax.imshow(wordcloud, interpolation='bilinear')
-                    ax.axis('off')
-                    st.pyplot(fig)
-                    plt.close(fig) # Close the plot to prevent memory issues
+            st.markdown("## 👑 Top Candidate AI Assessment")
+            st.caption("A concise, AI-powered assessment for the most suitable candidate.")
+            
+            top_candidate = display_df_summary.iloc[0]
+            
+            cgpa_display = f"{top_candidate['CGPA (4.0 Scale)']:.2f}" if pd.notna(top_candidate['CGPA (4.0 Scale)']) else "N/A"
+            semantic_sim_display = f"{top_candidate['Semantic Similarity']:.2f}" if pd.notna(top_candidate['Semantic Similarity']) else "N/A"
+
+            st.markdown(f"### **{top_candidate['Candidate Name']}**")
+            st.markdown(f"**Score:** {top_candidate['Score (%)']:.2f}% | **Experience:** {top_candidate['Years Experience']:.1f} years | **CGPA:** {cgpa_display} (4.0 Scale) | **Semantic Similarity:** {semantic_sim_display}")
+            
+            if top_candidate['Certificate Rank'] != "Not Applicable":
+                st.markdown(f"**ScreenerPro Certification:** {top_candidate['Certificate Rank']}")
+
+            st.markdown(f"**AI Assessment:**")
+            st.markdown(top_candidate['AI Suggestion'])
+            
+            st.markdown("#### Matched Skills Breakdown:")
+            if top_candidate['Categorized Skills']:
+                if isinstance(top_candidate['Categorized Skills'], dict):
+                    for category, skills in top_candidate['Categorized Skills'].items():
+                        if skills: # Only display categories with skills
+                            st.write(f"**{category}:** {', '.join(skills)}")
                 else:
-                    st.info("Upload resumes and screen to see the skill cloud.")
+                    st.write(f"Raw Matched Keywords: {top_candidate['Extracted Skills']}")
+            else:
+                st.write("No categorized matched skills found.")
+
+            st.markdown("#### Missing Skills Breakdown (from JD):")
+            if top_candidate['Missing Skills'] and top_candidate['Missing Skills'] != "None":
+                st.write(top_candidate['Missing Skills'])
+            else:
+                st.write("No missing skills found for this candidate relative to the JD.")
+
+
+            if top_candidate['Email'] != "Not Found":
+                jd_name_for_results = "Uploaded Job Description" # Default name for JD
+                mailto_link_top = create_mailto_link(
+                    recipient_email=top_candidate['Email'],
+                    candidate_name=top_candidate['Candidate Name'],
+                    job_title=jd_name_for_results
+                )
+                st.markdown(f'<a href="{mailto_link_top}" target="_blank"><button style="background-color:#00cec9;color:white;border:none;padding:10px 20px;text-align:center;text-decoration:none;display:inline-block;font-size:16px;margin:4px 2px;cursor:pointer;border-radius:8px;">📧 Invite Top Candidate for Interview</button></a>', unsafe_allow_html=True)
+            else:
+                st.info(f"Email address not found for {top_candidate['Candidate Name']}. Cannot send automated invitation.")
+            
+            st.markdown("---")
+            st.info("For detailed analytics, matched keywords, and missing skills for ALL candidates, please refer to the table below.")
+
         else:
             st.info("No resumes were successfully processed. Please check for errors above.")
-
-    st.markdown("---")
-    st.markdown("## 📊 Candidate Score Comparison")
-    st.caption("Visual overview of how each candidate ranks against the job requirements.")
-    dark_mode = st.session_state.get("dark_mode_main", False)
-
-    if not st.session_state['comprehensive_df'].empty:
-        # New condition: Only display graph if number of resumes is less than 25
-        if len(st.session_state['comprehensive_df']) < 25:
-            fig, ax = plt.subplots(figsize=(12, 7))
-            colors = ['#4CAF50' if s >= cutoff else '#FFC107' if s >= (cutoff * 0.75) else '#F44346' for s in st.session_state['comprehensive_df']['Score (%)']]
-            bars = ax.bar(st.session_state['comprehensive_df']['Candidate Name'], st.session_state['comprehensive_df']['Score (%)'], color=colors)
-            ax.set_xlabel("Candidate", fontsize=14, color='white' if dark_mode else 'black')
-            ax.set_ylabel("Score (%)", fontsize=14, color='white' if dark_mode else 'black')
-            ax.set_title("Resume Screening Scores Across Candidates", fontsize=16, fontweight='bold', color='white' if dark_mode else 'black')
-            ax.set_ylim(0, 100)
-            plt.xticks(rotation=60, ha='right', fontsize=10, color='white' if dark_mode else 'black')
-            plt.yticks(fontsize=10, color='white' if dark_mode else 'black')
-            ax.tick_params(axis='x', colors='white' if dark_mode else 'black')
-            ax.tick_params(axis='y', colors='white' if dark_mode else 'black')
-
-            if dark_mode:
-                fig.patch.set_facecolor('#1E1E1E')
-                ax.set_facecolor('#2D2D2D')
-                ax.spines['bottom'].set_color('white')
-                ax.spines['top'].set_color('white')
-                ax.spines['left'].set_color('white')
-                ax.spines['right'].set_color('white')
-            
-            for bar in bars:
-                yval = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f"{yval:.1f}", ha='center', va='bottom', fontsize=9, color='white' if dark_mode else 'black')
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-        else:
-            st.info(f"Graph not displayed for {len(st.session_state['comprehensive_df'])} resumes. Displaying graphs for fewer than 25 resumes provides a clearer visualization.")
-    else:
-        st.info("Upload resumes to see a comparison chart.")
-
-    st.markdown("---")
-
-    st.markdown("## 👑 Top Candidate AI Assessment")
-    st.caption("A concise, AI-powered assessment for the most suitable candidate.")
-    
-    if not st.session_state['comprehensive_df'].empty:
-        top_candidate = st.session_state['comprehensive_df'].iloc[0]
-        
-        cgpa_display = f"{top_candidate['CGPA (4.0 Scale)']:.2f}" if pd.notna(top_candidate['CGPA (4.0 Scale)']) else "N/A"
-        semantic_sim_display = f"{top_candidate['Semantic Similarity']:.2f}" if pd.notna(top_candidate['Semantic Similarity']) else "N/A"
-
-        st.markdown(f"### **{top_candidate['Candidate Name']}**")
-        st.markdown(f"**Score:** {top_candidate['Score (%)']:.2f}% | **Experience:** {top_candidate['Years Experience']:.1f} years | **CGPA:** {cgpa_display} (4.0 Scale) | **Semantic Similarity:** {semantic_sim_display}")
-        
-        if top_candidate['Certificate Rank'] != "Not Applicable":
-            st.markdown(f"**ScreenerPro Certification:** {top_candidate['Certificate Rank']}")
-
-        st.markdown(f"**AI Assessment:**")
-        st.markdown(top_candidate['Detailed HR Assessment'])
-        
-        st.markdown("#### Matched Skills Breakdown:")
-        if top_candidate['Matched Keywords (Categorized)']:
-            if isinstance(top_candidate['Matched Keywords (Categorized)'], dict):
-                for category, skills in top_candidate['Matched Keywords (Categorized)'].items():
-                    st.write(f"**{category}:** {', '.join(skills)}")
-            else:
-                st.write(f"Raw Matched Keywords: {top_candidate['Matched Keywords']}")
-        else:
-            st.write("No categorized matched skills found.")
-
-        st.markdown("#### Missing Skills Breakdown (from JD):")
-        jd_raw_skills_set, jd_categorized_skills_for_top = extract_relevant_keywords(jd_text, all_master_skills)
-        resume_raw_skills_set_for_top, _ = extract_relevant_keywords(top_candidate['Resume Raw Text'], all_master_skills)
-        
-        missing_skills_for_top = jd_raw_skills_set.difference(resume_raw_skills_set_for_top)
-        
-        if missing_skills_for_top:
-            missing_categorized = collections.defaultdict(list)
-            for skill in missing_skills_for_top:
-                found_category = False
-                for category, skills_in_category in SKILL_CATEGORIES.items():
-                    if skill.lower() in [s.lower() for s in skills_in_category]:
-                        missing_categorized[category].append(skill)
-                        found_category = True
-                        break
-                if not found_category:
-                    missing_categorized["Uncategorized"].append(skill)
-            
-            if missing_categorized:
-                for category, skills in missing_categorized.items():
-                    st.write(f"**{category}:** {', '.join(skills)}")
-            else:
-                st.write("No categorized missing skills found for this candidate relative to the JD.")
-        else:
-            st.write("No missing skills found for this candidate relative to the JD.")
-
-
-        if top_candidate['Email'] != "Not Found":
-            mailto_link_top = create_mailto_link(
-                recipient_email=top_candidate['Email'],
-                candidate_name=top_candidate['Candidate Name'],
-                job_title=jd_name_for_results if jd_name_for_results != "Uploaded JD (No file selected)" else "Job Opportunity"
-            )
-            st.markdown(f'<a href="{mailto_link_top}" target="_blank"><button style="background-color:#00cec9;color:white;border:none;padding:10px 20px;text-align:center;text-decoration:none;display:inline-block;font-size:16px;margin:4px 2px;cursor:pointer;border-radius:8px;">📧 Invite Top Candidate for Interview</button></a>', unsafe_allow_html=True)
-        else:
-            st.info(f"Email address not found for {top_candidate['Candidate Name']}. Cannot send automated invitation.")
-        
-        st.markdown("---")
-        st.info("For detailed analytics, matched keywords, and missing skills for ALL candidates, please navigate to the **Analytics Dashboard**.")
 
     else:
         st.info("No candidates processed yet to determine the top candidate.")
 
+    st.markdown("---")
 
     st.markdown("## 🌟 Candidates Meeting Criteria Overview")
     st.caption("Candidates automatically identified as meeting your defined score, experience, and CGPA criteria.")
 
-    auto_shortlisted_candidates = st.session_state['comprehensive_df'][
-        (st.session_state['comprehensive_df']['Score (%)'] >= cutoff) & 
-        (st.session_state['comprehensive_df']['Years Experience'] >= min_experience) &
-        (st.session_state['comprehensive_df']['Years Experience'] <= max_experience)
-    ].copy()
-
-    if 'CGPA (4.0 Scale)' in auto_shortlisted_candidates.columns and auto_shortlisted_candidates['CGPA (4.0 Scale)'].notnull().any():
-        auto_shortlisted_candidates = auto_shortlisted_candidates[
-            (auto_shortlisted_candidates['CGPA (4.0 Scale)'].isnull()) | (auto_shortlisted_candidates['CGPA (4.0 Scale)'] >= min_cgpa)
-        ]
-
-    if not auto_shortlisted_candidates.empty:
-        st.success(f"**{len(auto_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, and minimum CGPA ≥ {min_cgpa} or N/A).")
-        
-        display_auto_shortlisted_cols = [
-            'Candidate Name',
-            'Score (%)',
-            'Years Experience',
-            'CGPA (4.0 Scale)',
-            'Semantic Similarity',
-            'Email',
-            'AI Suggestion',
-            'Certificate Rank'
-        ]
-        
-        st.dataframe(
-            auto_shortlisted_candidates[display_auto_shortlisted_cols],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Score (%)": st.column_config.ProgressColumn(
-                    "Score (%)",
-                    help="Matching score against job requirements",
-                    format="%.1f", 
-                    min_value=0,
-                    max_value=100,
-                ),
-                "Years Experience": st.column_config.NumberColumn(
-                    "Years Experience",
-                    help="Total years of professional experience",
-                    format="%.1f years",
-                ),
-                "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                    "CGPA (4.0 Scale)",
-                    help="Candidate's CGPA normalized to a 4.0 scale",
-                    format="%.2f",
-                    min_value=0.0,
-                    max_value=4.0
-                ),
-                "Semantic Similarity": st.column_config.NumberColumn(
-                    "Semantic Similarity",
-                    help="Conceptual similarity between JD and Resume (higher is better)",
-                    format="%.2f",
-                    min_value=0,
-                    max_value=1
-                ),
-                "AI Suggestion": st.column_config.Column(
-                    "AI Suggestion",
-                    help="AI's concise overall assessment and recommendation"
-                ),
-                "Certificate Rank": st.column_config.Column(
-                    "Certificate Rank",
-                    help="ScreenerPro Certification Level"
-                )
-            }
+    # Sliders for criteria
+    col_criteria1, col_criteria2, col_criteria3 = st.columns(3)
+    with col_criteria1:
+        cutoff = st.slider(
+            "**Minimum Score (%) for Shortlisting:**",
+            0, 100, 70, help="Candidates with a score below this will not be shortlisted automatically."
         )
-        st.info("For individual detailed AI assessments and action steps, please refer to the table below.")
+    with col_criteria2:
+        min_experience, max_experience = st.slider(
+            "**Experience Range (Years) for Shortlisting:**",
+            0, 20, (2, 10), help="Candidates must have experience within this range to be shortlisted."
+        )
+    with col_criteria3:
+        min_cgpa = st.slider(
+            "**Minimum CGPA (4.0 Scale) for Shortlisting:**",
+            0.0, 4.0, 2.5, 0.1, help="Candidates must have a CGPA above this value to be shortlisted (N/A is considered passing)."
+        )
+
+    if not st.session_state.comprehensive_df.empty:
+        auto_shortlisted_candidates = st.session_state.comprehensive_df[
+            (st.session_state.comprehensive_df['Score (%)'] >= cutoff) & 
+            (st.session_state.comprehensive_df['Years Experience'] >= min_experience) &
+            (st.session_state.comprehensive_df['Years Experience'] <= max_experience)
+        ].copy()
+
+        # Filter by CGPA, handling NaN values (candidates without CGPA are included if they meet other criteria)
+        if 'CGPA (4.0 Scale)' in auto_shortlisted_candidates.columns:
+            auto_shortlisted_candidates = auto_shortlisted_candidates[
+                (auto_shortlisted_candidates['CGPA (4.0 Scale)'].isnull()) | (auto_shortlisted_candidates['CGPA (4.0 Scale)'] >= min_cgpa)
+            ]
+
+        if not auto_shortlisted_candidates.empty:
+            st.success(f"**{len(auto_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, and minimum CGPA ≥ {min_cgpa} or N/A).")
+            
+            display_auto_shortlisted_cols = [
+                'Candidate Name',
+                'Score (%)',
+                'Years Experience',
+                'CGPA (4.0 Scale)',
+                'Semantic Similarity',
+                'Email',
+                'AI Suggestion',
+                'Certificate Rank'
+            ]
+            
+            st.dataframe(
+                auto_shortlisted_candidates[display_auto_shortlisted_cols],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Score (%)": st.column_config.ProgressColumn(
+                        "Score (%)",
+                        help="Matching score against job requirements",
+                        format="%.1f", 
+                        min_value=0,
+                        max_value=100,
+                    ),
+                    "Years Experience": st.column_config.NumberColumn(
+                        "Years Experience",
+                        help="Total years of professional experience",
+                        format="%.1f years",
+                    ),
+                    "CGPA (4.0 Scale)": st.column_config.NumberColumn(
+                        "CGPA (4.0 Scale)",
+                        help="Candidate's CGPA normalized to a 4.0 scale",
+                        format="%.2f",
+                        min_value=0.0,
+                        max_value=4.0
+                    ),
+                    "Semantic Similarity": st.column_config.NumberColumn(
+                        "Semantic Similarity",
+                        help="Conceptual similarity between JD and Resume (higher is better)",
+                        format="%.2f",
+                        min_value=0,
+                        max_value=1
+                    ),
+                    "AI Suggestion": st.column_config.Column(
+                        "AI Suggestion",
+                        help="AI's concise overall assessment and recommendation"
+                    ),
+                    "Certificate Rank": st.column_config.Column(
+                        "Certificate Rank",
+                        help="ScreenerPro Certification Level"
+                    )
+                }
+            )
+            st.info("For individual detailed AI assessments and action steps, please refer to the table below.")
+
+        else:
+            st.warning(f"No candidates met the defined screening criteria (score cutoff, experience between {min_experience}-{max_experience} years, and minimum CGPA). You might consider adjusting the sliders or reviewing the uploaded resumes/JD.")
 
     else:
-        st.warning(f"No candidates met the defined screening criteria (score cutoff, experience between {min_experience}-{max_experience} years, and minimum CGPA). You might consider adjusting the sliders or reviewing the uploaded resumes/JD.")
+        st.info("No candidates available to apply criteria to. Please screen resumes first.")
 
     st.markdown("---")
 
@@ -1674,7 +1576,8 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
     filter_col4, filter_col5, filter_col6 = st.columns(3)
 
     with filter_col1:
-        jd_raw_skills_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
+        # jd_text here should be st.session_state.job_desc_text
+        jd_raw_skills_set, _ = extract_relevant_keywords(st.session_state.job_desc_text, MASTER_SKILLS)
         all_unique_jd_skills = sorted(list(jd_raw_skills_set))
         selected_filter_skills = st.multiselect(
             "**Skills (AND logic):**",
@@ -1712,7 +1615,7 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
     
     filter_col_loc, filter_col_lang = st.columns(2)
     with filter_col_loc:
-        all_locations = sorted(st.session_state['comprehensive_df']['Location'].unique())
+        all_locations = sorted(st.session_state.comprehensive_df['Location'].unique()) if not st.session_state.comprehensive_df.empty else []
         selected_locations = st.multiselect(
             "**Location:**",
             options=all_locations,
@@ -1720,8 +1623,8 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
         )
     with filter_col_lang:
         all_languages_from_df = sorted(list(set(
-            lang.strip() for langs_str in st.session_state['comprehensive_df']['Languages'] if langs_str != "Not Found" for lang in langs_str.split(',')
-        )))
+            lang.strip() for langs_str in st.session_state.comprehensive_df['Languages'] if langs_str != "Not Found" for lang in langs_str.split(',')
+        ))) if not st.session_state.comprehensive_df.empty else []
         selected_languages = st.multiselect(
             "**Languages:**",
             options=all_languages_from_df,
@@ -1729,11 +1632,11 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
         )
 
 
-    filtered_display_df = st.session_state['comprehensive_df'].copy()
+    filtered_display_df = st.session_state.comprehensive_df.copy()
 
     if selected_filter_skills:
         for skill in selected_filter_skills:
-            filtered_display_df = filtered_display_df[filtered_display_df['Matched Keywords'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
+            filtered_display_df = filtered_display_df[filtered_display_df['Extracted Skills'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
 
     if search_query:
         search_query_lower = search_query.lower()
@@ -1759,7 +1662,8 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
             filtered_display_df = filtered_display_df[
                 ((filtered_display_df['CGPA (4.0 Scale)'].notnull()) & 
                  (filtered_display_df['CGPA (4.0 Scale)'] >= min_cgpa_filter) & 
-                 (filtered_display_df['CGPA (4.0 Scale)'] <= max_cgpa_filter))
+                 (filtered_display_df['CGPA (4.0 Scale)'] <= max_cgpa_filter)) |
+                (filtered_display_df['CGPA (4.0 Scale)'].isnull()) # Include NaNs if CGPA filter is not strict
             ]
     
     if selected_locations:
@@ -1790,7 +1694,7 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
         'Tag',
         'AI Suggestion',
         'Certificate Rank',
-        'Matched Keywords',
+        'Extracted Skills', # Renamed from Matched Keywords for clarity
         'Missing Skills',
         'JD Used',
         'Date Screened',
@@ -1839,9 +1743,9 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
                 help="ScreenerPro Certification Level",
                 width="small"
             ),
-            "Matched Keywords": st.column_config.Column(
-                "Matched Keywords",
-                help="Keywords found in both JD and Resume"
+            "Extracted Skills": st.column_config.Column( # Renamed
+                "Extracted Skills",
+                help="Skills found in the Resume"
             ),
             "Missing Skills": st.column_config.Column(
                 "Missing Skills",
@@ -1893,8 +1797,8 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
     st.markdown("## 🏆 Generate Candidate Certificates")
     st.caption("Select a candidate to view or download their ScreenerPro Certification.")
 
-    if not st.session_state['comprehensive_df'].empty:
-        candidate_names_for_cert = st.session_state['comprehensive_df']['Candidate Name'].tolist()
+    if not st.session_state.comprehensive_df.empty:
+        candidate_names_for_cert = st.session_state.comprehensive_df['Candidate Name'].tolist()
         selected_candidate_name_for_cert = st.selectbox(
             "**Select Candidate for Certificate:**",
             options=candidate_names_for_cert,
@@ -1902,8 +1806,8 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
         )
 
         if selected_candidate_name_for_cert:
-            candidate_rows = st.session_state['comprehensive_df'][
-                st.session_state['comprehensive_df']['Candidate Name'] == selected_candidate_name_for_cert
+            candidate_rows = st.session_state.comprehensive_df[
+                st.session_state.comprehensive_df['Candidate Name'] == selected_candidate_name_for_cert
             ]
             
             if not candidate_rows.empty:
@@ -1966,38 +1870,25 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
         st.components.v1.html(st.session_state['certificate_html_content'], height=600, scrolling=True)
         st.markdown("---")
 
-
+    st.markdown("---")
+    st.subheader("Activity Log (Screener.py)")
+    if 'activity_log_screener' in st.session_state:
+        for log_entry in st.session_state.activity_log_screener:
+            st.code(log_entry, language="text")
     else:
-        st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
-# --- Certificate HTML Generation Function ---
-def generate_certificate_html(candidate_data):
-    """
-    Generates the HTML content for a ScreenerPro Certification by reading a template file.
-    """
-    certificate_template_path = "certification.html"
-    
-    if not os.path.exists(certificate_template_path):
-        st.error(f"Error: Certificate template file '{certificate_template_path}' not found.")
-        return "<h1>Certificate Template Not Found</h1><p>Please ensure 'certification.html' is in the root directory.</p>"
+        st.info("No activities logged yet for Screener.py.")
 
-    try:
-        with open(certificate_template_path, "r", encoding="utf-8") as f:
-            html_template = f.read()
-    except Exception as e:
-        st.error(f"Error reading certificate template: {e}")
-        return f"<h1>Error Loading Certificate Template</h1><p>{e}</p>"
 
-    candidate_name = candidate_data.get('Candidate Name', 'Candidate Name')
-    score = candidate_data.get('Score (%)', 0.0)
-    certificate_rank = candidate_data.get('Certificate Rank', 'Not Applicable')
-    date_screened = candidate_data.get('Date Screened', datetime.now().date()).strftime("%B %d, %Y")
-    certificate_id = candidate_data.get('Certificate ID', 'N/A')
-    
-    html_content = html_template.replace("{{CANDIDATE_NAME}}", candidate_name)
-    html_content = html_content.replace("{{SCORE}}", f"{score:.1f}")
-    html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
-    html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
-    html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
-    
-    return html_content
+# This block makes the script runnable directly as a Streamlit app
+if __name__ == "__main__":
+    # These variables are typically provided by the Canvas environment.
+    # For local testing, you might need to set them as environment variables
+    # or replace with actual values if you're connecting to a real Firebase project.
+    # For a simple local run without Firebase, these can remain as dummy strings.
+    firestore_rest_api_base_url = os.environ.get("FIREBASE_REST_API_BASE_URL", "https://firestore.googleapis.com/v1")
+    firebase_web_api_key = os.environ.get("FIREBASE_WEB_API_KEY", "YOUR_FIREBASE_WEB_API_KEY")
+    app_id = os.environ.get("APP_ID", "screenerpro-default-app-id")
+
+    # Call the main page function
+    resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_id)
 
