@@ -15,7 +15,7 @@ import nltk
 import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
-import uuid # Import uuid for generating unique IDs
+import uuid # Added for certificate ID generation
 
 # --- OCR Specific Imports ---
 from PIL import Image
@@ -181,26 +181,41 @@ CUSTOM_STOP_WORDS = set([
 ])
 STOP_WORDS = NLTK_STOP_WORDS.union(CUSTOM_STOP_WORDS)
 
-# Placeholder for SKILL_CATEGORIES - you need to define this dictionary
-# in your actual application, or load it from a file.
-# Example structure:
+# --- Skill Categories (for categorization and weighting) ---
 SKILL_CATEGORIES = {
-    "Programming Languages": ["Python", "Java", "JavaScript", "C++", "C#", "Go", "Ruby", "PHP", "Swift", "Kotlin", "R"],
-    "Web Development": ["HTML", "CSS", "React", "Angular", "Vue.js", "Node.js", "Express.js", "Django", "Flask", "FastAPI", "Spring Boot", "Bootstrap", "Tailwind CSS"],
-    "Cloud Platforms": ["AWS", "Azure", "GCP", "Docker", "Kubernetes", "Serverless", "Lambda"],
-    "Databases": ["SQL", "MySQL", "PostgreSQL", "MongoDB", "Cassandra", "Redis", "Elasticsearch"],
-    "Data Science/ML": ["Pandas", "NumPy", "Scikit-learn", "TensorFlow", "PyTorch", "Keras", "XGBoost", "Matplotlib", "Seaborn"],
-    "DevOps/CI/CD": ["Git", "GitHub", "GitLab", "Jenkins", "Ansible", "Terraform", "CI/CD"],
-    "Operating Systems": ["Linux", "Windows", "macOS"],
-    "Project Management": ["Agile", "Scrum", "Kanban", "Jira", "Confluence"],
-    "Soft Skills": ["Communication", "Teamwork", "Problem Solving", "Leadership", "Adaptability"],
-    "Networking": ["TCP/IP", "DNS", "VPN", "Firewall"],
-    "Security": ["Cybersecurity", "Penetration Testing", "Incident Response", "Encryption"],
-    "Big Data": ["Hadoop", "Spark", "Kafka", "Flink"],
-    "CRM/ERP": ["Salesforce", "SAP", "ServiceNow"],
-    "Business Intelligence": ["Tableau", "Power BI", "QlikView"]
+    "Programming Languages": ["Python", "Java", "JavaScript", "C++", "C#", "Go", "Ruby", "PHP", "Swift", "Kotlin", "TypeScript", "R", "Bash Scripting", "Shell Scripting"],
+    "Web Technologies": ["HTML5", "CSS3", "React", "Angular", "Vue.js", "Node.js", "Django", "Flask", "Spring Boot", "Express.js", "WebSockets"],
+    "Databases": ["SQL", "NoSQL", "PostgreSQL", "MySQL", "MongoDB", "Cassandra", "Elasticsearch", "Neo4j", "Redis", "BigQuery", "Snowflake", "Redshift", "Aurora", "DynamoDB", "DocumentDB", "CosmosDB"],
+    "Cloud Platforms": ["AWS", "Azure", "Google Cloud Platform", "GCP", "Serverless", "AWS Lambda", "Azure Functions", "Google Cloud Functions"],
+    "DevOps & MLOps": ["Git", "GitHub", "GitLab", "Bitbucket", "CI/CD", "Docker", "Kubernetes", "Terraform", "Ansible", "Jenkins", "CircleCI", "GitHub Actions", "Azure DevOps", "MLOps"],
+    "Data Science & ML": ["Machine Learning", "Deep Learning", "Natural Language Processing", "Computer Vision", "Reinforcement Learning", "Scikit-learn", "TensorFlow", "PyTorch", "Keras", "XGBoost", "LightGBM", "Data Cleaning", "Feature Engineering",
+    "Model Evaluation", "Statistical Modeling", "Time Series Analysis", "Predictive Modeling", "Clustering",
+    "Classification", "Regression", "Neural Networks", "Convolutional Networks", "Recurrent Networks",
+    "Transformers", "LLMs", "Prompt Engineering", "Generative AI", "MLOps", "Data Munging", "A/B Testing",
+    "Experiment Design", "Hypothesis Testing", "Bayesian Statistics", "Causal Inference", "Graph Neural Networks"],
+    "Data Analytics & BI": ["Data Cleaning", "Feature Engineering", "Model Evaluation", "Statistical Analysis", "Time Series Analysis", "Data Munging", "A/B Testing", "Experiment Design", "Hypothesis Testing", "Bayesian Statistics", "Causal Inference", "Excel (Advanced)", "Tableau", "Power BI", "Looker", "Qlik Sense", "Google Data Studio", "Dax", "M Query", "ETL", "ELT", "Data Warehousing", "Data Lake", "Data Modeling", "Business Intelligence", "Data Visualization", "Dashboarding", "Report Generation", "Google Analytics"],
+    "Soft Skills": ["Stakeholder Management", "Risk Management", "Change Management", "Communication Skills", "Public Speaking", "Presentation Skills", "Cross-functional Collaboration",
+    "Problem Solving", "Critical Thinking", "Analytical Skills", "Adaptability", "Time Management",
+    "Organizational Skills", "Attention to Detail", "Leadership", "Mentorship", "Team Leadership",
+    "Decision Making", "Negotiation", "Client Management", "Stakeholder Communication", "Active Listening",
+    "Creativity", "Innovation", "Research", "Data Analysis", "Report Writing", "Documentation"],
+    "Project Management": ["Agile Methodologies", "Scrum", "Kanban", "Jira", "Trello", "Product Lifecycle", "Sprint Planning", "Project Charter", "Gantt Charts", "MVP", "Backlog Grooming",
+    "Program Management", "Portfolio Management", "PMP", "CSM"],
+    "Security": ["Cybersecurity", "Information Security", "Risk Assessment", "Compliance", "GDPR", "HIPAA", "ISO 27001", "Penetration Testing", "Vulnerability Management", "Incident Response", "Security Audits", "Forensics", "Threat Intelligence", "SIEM", "Firewall Management", "Endpoint Security", "IAM", "Cryptography", "Network Security", "Application Security", "Cloud Security"],
+    "Other Tools & Frameworks": ["Jira", "Confluence", "Swagger", "OpenAPI", "Zendesk", "ServiceNow", "Intercom", "Live Chat", "Ticketing Systems", "HubSpot", "Salesforce Marketing Cloud",
+    "QuickBooks", "SAP FICO", "Oracle Financials", "Workday", "Microsoft Dynamics", "NetSuite", "Adobe Creative Suite", "Canva", "Mailchimp", "Hootsuite", "Buffer", "SEMrush", "Ahrefs", "Moz", "Screaming Frog",
+    "JMeter", "Postman", "SoapUI", "SVN", "Perforce", "Asana", "Monday.com", "Miro", "Lucidchart", "Visio", "MS Project", "Primavera", "AutoCAD", "SolidWorks", "MATLAB", "LabVIEW", "Simulink", "ANSYS",
+    "CATIA", "NX", "Revit", "ArcGIS", "QGIS", "OpenCV", "NLTK", "SpaCy", "Gensim", "Hugging Face Transformers",
+    "Docker Compose", "Helm", "Ansible Tower", "SaltStack", "Chef InSpec", "Terraform Cloud", "Vault",
+    "Consul", "Nomad", "Prometheus", "Grafana", "Alertmanager", "Loki", "Tempo", "Jaeger", "Zipkin",
+    "Fluentd", "Logstash", "Kibana", "Grafana Loki", "Datadog", "New Relic", "AppDynamics", "Dynatrace",
+    "Nagios", "Zabbix", "Icinga", "PRTG", "SolarWinds", "Wireshark", "Nmap", "Metasploit", "Burp Suite",
+    "OWASP ZAP", "Nessus", "Qualys", "Rapid7", "Tenable", "CrowdStrike", "SentinelOne", "Palo Alto Networks",
+    "Fortinet", "Cisco Umbrella", "Okta", "Auth0", "Keycloak", "Ping Identity", "Active Directory",
+    "LDAP", "OAuth", "JWT", "OpenID Connect", "SAML", "MFA", "SSO", "PKI", "TLS/SSL", "VPN", "IDS/IPS",
+    "DLP", "CASB", "SOAR", "XDR", "EDR", "MDR", "GRC", "ITIL", "Lean Six Sigma", "CFA", "CPA", "SHRM-CP",
+    "PHR", "CEH", "OSCP", "CCNA", "CISSP", "CISM", "CompTIA Security+"]
 }
-
 
 # Dynamically generate MASTER_SKILLS from SKILL_CATEGORIES
 MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
@@ -235,7 +250,6 @@ def preprocess_image_for_ocr(image):
     
     # Invert the colors if necessary (Tesseract often prefers black text on white background,
     # but sometimes white text on black background from thresholding can work better)
-    # This line can be commented out or adjusted based on testing.
     # img_processed = cv2.bitwise_not(img_processed) 
 
     # Convert back to PIL Image
@@ -438,34 +452,48 @@ def extract_years_of_experience(text):
 
 def extract_email(text):
     """
-    Extract a cleaned email from OCR-affected text.
-    Handles common mistakes while avoiding over-replacement.
+    Extracts an email address from the given text, with enhanced preprocessing
+    to handle common OCR errors.
     """
-    # Step 1: Normalize text
-    text = text.lower()
-    text = text.replace(' ', '').replace('\n', '').replace('\t', '')
+    text_processed = text.lower()
 
-    # Step 2: Fix obvious OCR & formatting mistakes (only safe ones)
-    fixes = {
-        '(dot)': '.', '[dot]': '.', '{dot}': '.', '_dot_': '.', '-dot-': '.', ' dot ': '.', 'dot': '.',
-        '(at)': '@', '[at]': '@', '{at}': '@', '_at_': '@', '-at-': '@', ' at ': '@', 'at': '@',
-        'coim': 'com', 'gmaii': 'gmail', 'gmai': 'gmail', 'yah00': 'yahoo', 'yaho': 'yahoo',
-        'hotmai': 'hotmail', 'hotmaii': 'hotmail', 'outiook': 'outlook', 'outlok': 'outlook',
-        'iive': 'live', 'ive': 'live'
-    }
+    # Aggressive replacements for common OCR errors in email parts
+    text_processed = text_processed.replace(' ', '') # Remove all spaces
+    text_processed = text_processed.replace('dot', '.')
+    text_processed = text_processed.replace('(dot)', '.')
+    text_processed = text_processed.replace('[dot]', '.')
+    text_processed = text_processed.replace('-dot-', '.')
+    text_processed = text_processed.replace('_dot_', '.')
+    
+    text_processed = text_processed.replace('at', '@')
+    text_processed = text_processed.replace('(at)', '@')
+    text_processed = text_processed.replace('[at]', '@')
+    text_processed = text_processed.replace('-at-', '@')
+    text_processed = text_processed.replace('_at_', '@')
 
-    for wrong, right in fixes.items():
-        text = text.replace(wrong, right)
+    # Common character confusions by OCR
+    text_processed = text_processed.replace('1', 'l') # 'l' as '1'
+    text_processed = text_processed.replace('0', 'o') # 'o' as '0'
+    text_processed = text_processed.replace('s', '5') # 's' as '5'
+    text_processed = text_processed.replace('q', 'g') # 'q' as 'g' (less common but can happen)
+    text_processed = text_processed.replace('i', 'l') # 'l' as 'i' (for example, in 'mail')
+    text_processed = text_processed.replace('v', 'y') # 'y' as 'v' (less common)
 
-    # Step 3: Remove unwanted symbols that break regex
-    text = re.sub(r'[^\w.@+-]', '', text)
+    # Specific domain corrections if they appear standalone or malformed
+    text_processed = re.sub(r'(\w+)@(\w+)\s*com\b', r'\1@\2.com', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*org\b', r'\1@\2.org', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*net\b', r'\1@\2.net', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*in\b', r'\1@\2.in', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*co\.in\b', r'\1@\2.co.in', text_processed)
+    text_processed = re.sub(r'(\w+)@(\w+)\s*co\.uk\b', r'\1@\2.co.uk', text_processed)
 
-    # Step 4: Match valid emails with common TLDs
-    email_regex = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|net|org|edu|gov|mil|in|co\.in|co\.uk|ai|io|dev|info|biz|me|us|ca|de|fr|jp|au|cn|ru)\b'
-    match = re.search(email_regex, text)
-
+    # Regex for email address. More specific to common email patterns.
+    # Allows for a wider range of characters in username and domain,
+    # and specifically looks for common TLDs.
+    email_regex = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|org|net|edu|gov|mil|in|co\.in|co\.uk|io|ai|dev|info|biz|me|us|ca|fr|de|jp|au|cn|ru|outlook|gmail|yahoo|hotmail|aol|protonmail|icloud|mail|live)\b'
+    
+    match = re.search(email_regex, text_processed)
     return match.group(0) if match else None
-
 
 def extract_phone_number(text):
     """Extracts a phone number from the given text."""
@@ -653,25 +681,6 @@ def extract_education_details(text):
     return education_details
 
 
-def format_education_details(edu_list):
-    """Formats a list of education dictionaries into a readable string."""
-    if not edu_list:
-        return "Not Found"
-    formatted_entries = []
-    for entry in edu_list:
-        parts = []
-        if entry.get("Degree"):
-            parts.append(entry["Degree"])
-        if entry.get("Major"):
-            parts.append(f"in {entry['Major']}")
-        if entry.get("University"):
-            parts.append(f"from {entry['University']}")
-        if entry.get("Year"):
-            parts.append(f"({entry['Year']})")
-        formatted_entries.append(" ".join(parts).strip())
-    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
-
-
 def extract_work_history(text):
     """
     Extracts work history details (Company, Title, Start Date, End Date) from text.
@@ -761,6 +770,211 @@ def extract_work_history(text):
                 })
     return work_details
 
+def extract_project_details(text):
+    """
+    Extracts project details (Title, Description, Technologies) from text.
+    This is a heuristic and may not capture all formats, especially with OCR.
+    Returns a list of dicts.
+    """
+    project_details = []
+    
+    # Define keywords that often precede or indicate a project section
+    project_section_keywords = r'(?:projects|personal projects|key projects|portfolio|selected projects|major projects|academic projects|relevant projects)'
+    
+    # Find the start of the project section
+    project_section_match = re.search(project_section_keywords + r'\s*(\n|$)', text, re.IGNORECASE)
+    
+    if not project_section_match:
+        project_text = text # Fallback to full text if no clear section header
+        start_index = 0
+    else:
+        start_index = project_section_match.end()
+        # Define potential end markers for the project section
+        sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
+        end_index = len(text)
+        for section in sections:
+            section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
+            if section_match:
+                end_index = start_index + section_match.start()
+                break
+        project_text = text[start_index:end_index].strip()
+    
+    if not project_text:
+        return [] # No project text found
+
+    lines = [line.strip() for line in project_text.split('\n') if line.strip()]
+    
+    current_project = {"Project Title": None, "Description": [], "Technologies Used": set()}
+    
+    # Keywords that strongly suggest a project title or a new project entry
+    strong_project_indicators = [
+        "project", "developed", "implemented", "created", "designed", "built", "contributed to",
+        "achieved", "led", "managed", "research", "capstone", "thesis", "portfolio"
+    ]
+
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
+        
+        # Add a check for previous line not being a bullet point for better project title detection
+        prev_line_is_bullet = False
+        if i > 0:
+            prev_line = lines[i-1].strip()
+            if re.match(r'^[•*-]', prev_line):
+                prev_line_is_bullet = True
+
+        is_potential_title = (
+            (line and (line[0].isupper() or re.match(r'^\d', line))) and
+            len(line.split()) > 1 and
+            len(line.split()) < 15 and
+            not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line_lower) and
+            not re.match(r'^[•*-]\s*(?:achieved|contributed|implemented|developed|designed|built|managed|led)', line_lower) and
+            any(keyword in line_lower for keyword in strong_project_indicators) and
+            not prev_line_is_bullet # New condition: not preceded by a bullet point
+        )
+        
+        is_url = re.match(r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)', line_lower)
+
+        if is_potential_title or is_url:
+            # If we already have a project being built, save it before starting a new one
+            if current_project["Project Title"] is not None or current_project["Description"]:
+                if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
+                    # Extract technologies from the *full* collected description of the previous project
+                    full_description_for_skills = "\n".join(current_project["Description"])
+                    extracted_skills_for_project, _ = extract_relevant_keywords(full_description_for_skills, MASTER_SKILLS)
+                    current_project["Technologies Used"].update(extracted_skills_for_project) # Add to the set
+
+                    project_details.append({
+                        "Project Title": current_project["Project Title"],
+                        "Description": full_description_for_skills.strip(),
+                        "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
+                    })
+            # Start a new project
+            current_project = {"Project Title": line, "Description": [], "Technologies Used": set()}
+        else:
+            # Add line to current project's description
+            current_project["Description"].append(line)
+            
+    # Add the last project if it exists
+    if current_project["Project Title"] is not None or current_project["Description"]:
+        if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
+            # Extract technologies from the *full* collected description of the last project
+            full_description_for_skills = "\n".join(current_project["Description"])
+            extracted_skills_for_project, _ = extract_relevant_keywords(full_description_for_skills, MASTER_SKILLS)
+            current_project["Technologies Used"].update(extracted_skills_for_project) # Add to the set
+
+            project_details.append({
+                "Project Title": current_project["Project Title"],
+                "Description": full_description_for_skills.strip(),
+                "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
+            })
+            
+    return project_details
+
+
+def extract_languages(text):
+    """
+    Extracts spoken languages from the resume text.
+    Looks for a "Languages" section and lists known languages.
+    """
+    languages_list = set() # Use a set to automatically handle duplicates
+    cleaned_full_text = clean_text(text)
+
+    # Define a comprehensive list of languages (Indian and Foreign)
+    all_languages = [
+        "english", "hindi", "spanish", "french", "german", "mandarin", "japanese", "arabic",
+        "russian", "portuguese", "italian", "korean", "bengali", "marathi", "telugu", "tamil",
+        "gujarati", "urdu", "kannada", "odia", "malayalam", "punjabi", "assamese", "kashmiri",
+        "sindhi", "sanskrit", "dutch", "swedish", "norwegian", "danish", "finnish", "greek",
+        "turkish", "hebrew", "thai", "vietnamese", "indonesian", "malay", "filipino", "swahili",
+        "farsi", "persian", "polish", "ukrainian", "romanian", "czech", "slovak", "hungarian",
+        "chinese", "vietnamese", "tagalog", "amharic", "somali", "nepali", "sinhala", "burmese",
+        "khmer", "lao", "pashto", "dari", "uzbek", "kazakh", "azerbaijani", "georgian", "armenian",
+        "albanian", "serbian", "croatian", "bosnian", "bulgarian", "macedonian", "slovenian",
+        "estonian", "latvian", "lithuanian", "icelandic", "irish", "welsh", "gaelic", "maltese",
+        "esperanto", "latin", "ancient greek", "modern greek", "yiddish", "romani", "catalan",
+        "galician", "basque", "breton", "cornish", "manx", "frisian", "luxembourgish", "sami",
+        "romansh", "sardinian", "corsican", "occitan", "provencal", "walloon", "flemish",
+        "afrikaans", "zulu", "xhosa", "sesotho", "setswana", "shona", "ndebele", "venda", "tsonga",
+        "swati", "kikuyu", "luganda", "kinyarwanda", "kirundi", "lingala", "kongo", "yoruba",
+        "igbo", "hausa", "fulani", "twi", "ewe", "ga", "dagbani", "gur", "mossi", "bambara",
+        "senufo", "wolof", "mandinka", "susu", "krio", "temne", "limba", "mende", "gola", "vai",
+        "kpele", "loma", "bandi", "kpelle", "kru", "bassa", "grebo", "krahn", "dan", "mano",
+        "guerze", "kono", "kisi", "gola", "de", "bassa", "kru", "grebo", "krahn", "dan", "mano",
+        "guerze", "kono", "kisi", "gola", "de",
+        # Added common abbreviations/alternative names
+        "de" # For German
+    ]
+    
+    # Sort languages by length descending to match longer phrases first (e.g., "Ancient Greek" before "Greek")
+    sorted_all_languages = sorted(all_languages, key=len, reverse=True)
+
+    # Look for a "Languages" section header with more flexibility
+    # Added more variations and optional punctuation/spacing
+    languages_section_match = re.search(
+        r'\b(languages|language skills|linguistic abilities|proficiencies in languages|known languages)\s*[:\s]*(\n|$)',
+        cleaned_full_text, re.IGNORECASE
+    )
+    
+    text_to_search_for_languages = cleaned_full_text # Default to full text
+
+    if languages_section_match:
+        start_index = languages_section_match.end()
+        # Define potential end markers for the languages section
+        sections = ['education', 'experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications', 'interests', 'hobbies', 'achievements']
+        end_index = len(cleaned_full_text)
+        for section in sections:
+            section_match = re.search(r'\b' + re.escape(section) + r'\b', cleaned_full_text[start_index:], re.IGNORECASE)
+            if section_match:
+                end_index = start_index + section_match.start()
+                break
+        
+        languages_text_segment = cleaned_full_text[start_index:end_index].strip()
+        
+        # Extract languages from the identified section
+        for lang in sorted_all_languages:
+            # Use a more flexible regex to capture language names, potentially with descriptors
+            # e.g., "English (Fluent)", "French - Native", "Spanish, Conversational", "German: Basic"
+            # The regex will look for the language name followed by optional characters/words
+            # up to a newline or another language.
+            pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
+            if re.search(pattern, languages_text_segment, re.IGNORECASE):
+                # Add the properly cased language name from the *original* all_languages list if it exists,
+                # otherwise add the matched abbreviation/alias.
+                if lang == "de":
+                    languages_list.add("German")
+                else:
+                    languages_list.add(lang.title()) # Add the properly cased language name
+    else:
+        # Fallback: if no explicit section, try to find languages anywhere in the cleaned full text
+        for lang in sorted_all_languages:
+            pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
+            if re.search(pattern, cleaned_full_text, re.IGNORECASE):
+                if lang == "de":
+                    languages_list.add("German")
+                else:
+                    languages_list.add(lang.title())
+
+    return ", ".join(sorted(list(languages_list))) if languages_list else "Not Found"
+
+
+def format_education_details(edu_list):
+    """Formats a list of education dictionaries into a readable string."""
+    if not edu_list:
+        return "Not Found"
+    formatted_entries = []
+    for entry in edu_list:
+        parts = []
+        if entry.get("Degree"):
+            parts.append(entry["Degree"])
+        if entry.get("Major"):
+            parts.append(f"in {entry['Major']}")
+        if entry.get("University"):
+            parts.append(f"from {entry['University']}")
+        if entry.get("Year"):
+            parts.append(f"({entry['Year']})")
+        formatted_entries.append(" ".join(parts).strip())
+    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
+
 def format_work_history(work_list):
     """Formats a list of work history dictionaries into a readable string."""
     if not work_list:
@@ -769,117 +983,15 @@ def format_work_history(work_list):
     for entry in work_list:
         parts = []
         if entry.get("Title"):
-            parts.append(f"**{entry['Title']}**")
+            parts.append(entry["Title"])
         if entry.get("Company"):
             parts.append(f"at {entry['Company']}")
         if entry.get("Start Date") and entry.get("End Date"):
             parts.append(f"({entry['Start Date']} - {entry['End Date']})")
+        elif entry.get("Start Date"):
+            parts.append(f"(Since {entry['Start Date']})")
         formatted_entries.append(" ".join(parts).strip())
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
-
-def extract_project_details(text):
-    """
-    Extracts project details (Project Title, Technologies Used, Description) from text.
-    This uses heuristics and may require refinement based on resume formats.
-    Returns a list of dicts.
-    """
-    projects = []
-    text_lower = text.lower()
-
-    # Define common project section headers
-    project_section_keywords = [
-        r'\bprojects\b', r'\bpersonal projects\b', r'\bportfolio\b', r'\bkey projects\b',
-        r'\bacademic projects\b', r'\brelevant projects\b'
-    ]
-    
-    # Find the start of the projects section
-    project_section_start_index = -1
-    for keyword in project_section_keywords:
-        match = re.search(keyword, text_lower)
-        if match:
-            project_section_start_index = match.end()
-            break
-
-    if project_section_start_index != -1:
-        # Define common section headers that might follow projects (to mark the end)
-        following_sections = [
-            r'\beducation\b', r'\bwork history\b', r'\bexperience\b', r'\bskills\b',
-            r'\bcertifications\b', r'\bawards\b', r'\bpublications\b', r'\binterests\b'
-        ]
-        
-        project_section_end_index = len(text)
-        for keyword in following_sections:
-            match = re.search(keyword, text_lower[project_section_start_index:])
-            if match:
-                project_section_end_index = project_section_start_index + match.start()
-                break
-        
-        projects_text = text[project_section_start_index:project_section_end_index].strip()
-        
-        # Split the projects text into individual project blocks
-        # Heuristic: projects often start with a bolded title, or a line with a year/date, or a bullet point.
-        # This regex tries to split by lines that look like new project titles (capitalized words, maybe a year)
-        project_blocks = re.split(r'\n(?=\s*[\*-]?\s*[A-Z][a-zA-Z\s\d,\-&()\/]+\b(?:project|tool|system|application|platform)?\b(?: \(\d{4}(?:-\d{4}|-present)?\))?)', projects_text, flags=re.IGNORECASE)
-        
-        for block in project_blocks:
-            block = block.strip()
-            if not block:
-                continue
-
-            project_title = None
-            technologies_used = []
-            description = []
-
-            lines = block.split('\n')
-            
-            # First line is often the title
-            if lines:
-                potential_title_line = lines[0].strip()
-                # Try to clean up common prefixes/suffixes
-                project_title = re.sub(r'^\s*[\*-]?\s*project\s*:\s*|\s*project\s*$', '', potential_title_line, flags=re.IGNORECASE).strip()
-                if project_title:
-                    # Remove years from title if present
-                    project_title = re.sub(r'\(\d{4}(?:-\d{4}|-present)?\)', '', project_title).strip()
-                    # Remove common bullet points
-                    project_title = re.sub(r'^[\*-]\s*', '', project_title).strip()
-                    
-                    # Heuristic: if the title is too short or looks like just a year, it's probably not a title
-                    if len(project_title.split()) < 2 or re.fullmatch(r'\d{4}', project_title):
-                        project_title = None # Invalidate if it doesn't look like a real title
-                    else:
-                        # Remove the title line from the block for further parsing
-                        lines.pop(0)
-
-            # Process remaining lines for technologies and description
-            current_description_lines = []
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                
-                # Extract technologies from the line
-                line_skills, _ = extract_relevant_keywords(line, MASTER_SKILLS)
-                if line_skills:
-                    technologies_used.extend(list(line_skills))
-                
-                # Add line to description if it's not just a skill list or a date
-                if not (re.fullmatch(r'(\d{4})\s*[-–]\s*(\d{4}|present)', line) or
-                        re.fullmatch(r'((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})\s*[-–]\s*(present|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})', line, re.IGNORECASE) or
-                        len(line_skills) == len(line.split())): # If all words in line are skills, treat as skill line
-                    current_description_lines.append(line)
-
-            # Join technologies and description
-            final_technologies = ", ".join(sorted(list(set(technologies_used)))) # Remove duplicates and sort
-            final_description = " ".join(current_description_lines).strip()
-
-            if project_title or final_technologies or final_description:
-                projects.append({
-                    "Project Title": project_title or "Untitled Project", # Default if title not found
-                    "Technologies Used": final_technologies or "Not Specified",
-                    "Description": final_description or "No description provided."
-                })
-    
-    return projects
 
 def format_project_details(proj_list):
     """Formats a list of project dictionaries into a readable string."""
@@ -890,84 +1002,14 @@ def format_project_details(proj_list):
         parts = []
         if entry.get("Project Title"):
             parts.append(f"**{entry['Project Title']}**")
-        if entry.get("Technologies Used") and entry["Technologies Used"] != "Not Specified":
+        if entry.get("Technologies Used"):
             parts.append(f"({entry['Technologies Used']})")
         # Description can be long, so maybe just a snippet or indicate presence
-        if entry.get("Description") and entry["Description"] != "No description provided.":
-            desc_snippet = entry["Description"].split('\n')[0][:100] # Take first 100 chars
-            if len(entry["Description"]) > 100:
-                desc_snippet += "..."
+        if entry.get("Description") and entry["Description"].strip():
+            desc_snippet = entry["Description"].split('\n')[0][:50] + "..." if len(entry["Description"]) > 50 else entry["Description"]
             parts.append(f'"{desc_snippet}"')
         formatted_entries.append(" ".join(parts).strip())
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
-
-
-def extract_languages(text):
-    """
-    Extracts languages from the text based on common language names.
-    This is a heuristic and may not be exhaustive.
-    """
-    text_lower = text.lower()
-    found_languages = set()
-
-    # Common languages and their variations
-    language_keywords = {
-        "english": ["english", "fluent in english"],
-        "hindi": ["hindi"],
-        "spanish": ["spanish", "español"],
-        "french": ["french", "français"],
-        "german": ["german", "deutsch"],
-        "mandarin": ["mandarin", "chinese"],
-        "japanese": ["japanese", "nihongo"],
-        "korean": ["korean", "hangul"],
-        "arabic": ["arabic"],
-        "portuguese": ["portuguese", "português"],
-        "russian": ["russian", "русский"],
-        "italian": ["italian", "italiano"],
-        "bengali": ["bengali", "bangla"],
-        "punjabi": ["punjabi"],
-        "marathi": ["marathi"],
-        "telugu": ["telugu"],
-        "tamil": ["tamil"],
-        "gujarati": ["gujarati"],
-        "urdu": ["urdu"],
-        "kannada": ["kannada"],
-        "malayalam": ["malayalam"],
-        "odia": ["odia", "oriya"],
-        "assamese": ["assamese"],
-        "sanskrit": ["sanskrit"],
-        "nepali": ["nepali"],
-        "sinhala": ["sinhala"],
-        "dutch": ["dutch"],
-        "swedish": ["swedish"],
-        "norwegian": ["norwegian"],
-        "danish": ["danish"],
-        "finnish": ["finnish"],
-        "greek": ["greek"],
-        "hebrew": ["hebrew"],
-        "turkish": ["turkish"],
-        "vietnamese": ["vietnamese"],
-        "thai": ["thai"],
-        "indonesian": ["indonesian", "bahasa indonesia"],
-        "malay": ["malay", "bahasa melayu"],
-        "filipino": ["filipino", "tagalog"],
-        "swahili": ["swahili"],
-        "amharic": ["amharic"],
-        "yoruba": ["yoruba"],
-        "igbo": ["igbo"],
-        "zulu": ["zulu"],
-        "xhosa": ["xhosa"]
-    }
-
-    for lang, variations in language_keywords.items():
-        for var in variations:
-            if re.search(r'\b' + re.escape(var) + r'\b', text_lower):
-                found_languages.add(lang.title()) # Add the capitalized common name
-                break # Move to next language once found
-
-    if found_languages:
-        return ", ".join(sorted(list(found_languages)))
-    return "Not Found"
 
 
 # --- Concise AI Suggestion Function (for table display) ---
@@ -1273,7 +1315,7 @@ def resume_screener_page():
             "Work History", "Project Details", "AI Suggestion", "Detailed HR Assessment",
             "Matched Keywords", "Missing Skills", "Matched Keywords (Categorized)",
             "Missing Skills (Categorized)", "Semantic Similarity", "Resume Raw Text",
-            "JD Used", "Date Screened", "Certificate ID", "Certificate Rank", "Tag"
+            "JD Used", "Date Screened", "Certificate ID", "Certificate Rank", "Tag" # Added Certificate ID and Rank
         ])
     if 'resume_raw_texts' not in st.session_state:
         st.session_state['resume_raw_texts'] = {}
@@ -1412,7 +1454,7 @@ def resume_screener_page():
             # Extract structured details
             education_details_raw = extract_education_details(text)
             work_history_raw = extract_work_history(text)
-            project_details_raw = extract_project_details(text) # Call the improved function
+            project_details_raw = extract_project_details(text)
 
             # Format structured details for display in the DataFrame
             education_details_formatted = format_education_details(education_details_raw)
@@ -1663,7 +1705,7 @@ def resume_screener_page():
                 'Semantic Similarity',
                 'Email',
                 'AI Suggestion',
-                'Certificate Rank' 
+                'Certificate Rank' # Added Certificate Rank
             ]
             
             st.dataframe(
@@ -1701,7 +1743,7 @@ def resume_screener_page():
                         "AI Suggestion",
                         help="AI's concise overall assessment and recommendation"
                     ),
-                    "Certificate Rank": st.column_config.Column( 
+                    "Certificate Rank": st.column_config.Column( # Added Certificate Rank
                         "Certificate Rank",
                         help="ScreenerPro Certification Level"
                     )
@@ -1974,13 +2016,10 @@ def resume_screener_page():
                     if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
                         col_cert_view, col_cert_download = st.columns(2)
                         with col_cert_view:
-                            # Direct Python callback to control modal visibility
                             if st.button("👁️ View Certificate", key="view_cert_button"):
-                                # Directly render the certificate HTML below
                                 # Store the HTML content in session state
                                 st.session_state['certificate_html_content'] = generate_certificate_html(candidate_data_for_cert)
                                 # This will trigger a rerun and the HTML will be displayed below the button
-                                # No need for a modal state or JS interaction for closing
                                 
                         with col_cert_download:
                             certificate_html_content = generate_certificate_html(candidate_data_for_cert)
@@ -2005,8 +2044,6 @@ def resume_screener_page():
         # Use st.components.v1.html for better rendering control and isolation
         st.components.v1.html(st.session_state['certificate_html_content'], height=600, scrolling=True)
         st.markdown("---")
-        # Clear the certificate HTML after display if desired, or keep it for continuous viewing
-        # For now, let's keep it until another certificate is generated or app is reset.
 
 
     else:
