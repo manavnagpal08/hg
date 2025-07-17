@@ -24,15 +24,9 @@ from email import encoders
 import tempfile
 import shutil
 from weasyprint import HTML
-from concurrent.futures import ThreadPoolExecutor, as_completed # Reverted to ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
-import traceback # Import traceback for detailed error logging
-
-# --- OCR Specific Imports ---
-from PIL import Image
-import pytesseract
-import cv2
-from pdf2image import convert_from_bytes
+import traceback
 
 # Global NLTK download check (should run once)
 try:
@@ -40,7 +34,7 @@ try:
 except LookupError:
     nltk.download('stopwords')
 
-# Define global constants (these are fine as they are not large objects to be pickled)
+# Define global constants
 MASTER_CITIES = set([
     "Bengaluru", "Mumbai", "Delhi", "Chennai", "Hyderabad", "Kolkata", "Pune", "Ahmedabad", "Jaipur", "Lucknow",
     "Chandigarh", "Kochi", "Coimbatore", "Nagpur", "Bhopal", "Indore", "Gurgaon", "Noida", "Surat", "Visakhapatnam",
@@ -211,11 +205,8 @@ SKILL_CATEGORIES = {
 MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
 
 # IMPORTANT: REPLACE THESE WITH YOUR ACTUAL DEPLOYMENT URLs
-# This is the base URL of your Streamlit application (e.g., https://your-app-name.streamlit.app)
-APP_BASE_URL = "https://screenerpro-app.streamlit.app" # <--- REPLACE THIS WITH YOUR STREAMLIT APP URL
-# This is the base URL where your certificate.html is hosted (e.g., https://your-github-username.github.io/screenerpro-certs)
-# NOTE: This URL is no longer used for email content, but may be used if you still host a public verification page.
-CERTIFICATE_HOSTING_URL = "https://manav-jain.github.io/screenerpro-certs" # <--- REPLACE THIS WITH YOUR CERTIFICATE HOSTING URL
+APP_BASE_URL = "https://screenerpro-app.streamlit.app"
+CERTIFICATE_HOSTING_URL = "https://manav-jain.github.io/screenerpro-certs"
 
 
 @st.cache_resource
@@ -238,10 +229,11 @@ def load_ml_model():
         return None, None
 
 # Load models globally (once per app run)
-model, ml_model = load_ml_model()
+global_sentence_model, global_ml_model = load_ml_model()
 
 
 def preprocess_image_for_ocr(image):
+    import cv2 # Import here for multiprocessing compatibility if needed, though better to pass processed images
     img_cv = np.array(image)
     img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
     img_processed = cv2.adaptiveThreshold(img_cv, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -303,21 +295,13 @@ def extract_relevant_keywords(text, filter_set):
     return extracted_keywords, dict(categorized_keywords)
 
 
-def extract_text_from_file(uploaded_file):
-    # Ensure uploaded_file is a BytesIO object with a name and type attribute
-    if isinstance(uploaded_file, BytesIO):
-        file_bytes = uploaded_file.getvalue()
-        file_name = uploaded_file.name
-        file_type = uploaded_file.type
-    else: # Assume it's a Streamlit UploadedFile object
-        file_bytes = uploaded_file.read()
-        file_name = uploaded_file.name
-        file_type = uploaded_file.type
+def extract_text_from_file(file_bytes, file_name, file_type):
+    import pytesseract # Import here for multiprocessing compatibility
+    from PIL import Image
+    from pdf2image import convert_from_bytes
+    import cv2 # Import here for multiprocessing compatibility
 
     full_text = ""
-
-    # Tesseract command should be set globally via @st.cache_resource in the main thread
-    # No need to call _get_tesseract_cmd_for_process() here anymore.
 
     if "pdf" in file_type:
         try:
@@ -325,7 +309,6 @@ def extract_text_from_file(uploaded_file):
                 pdf_text = ''.join(page.extract_text() or '' for page in pdf.pages)
             
             if len(pdf_text.strip()) < 50: # Heuristic for potentially scanned PDF
-                # print(f"DEBUG: Low text extracted from PDF {file_name} using pdfplumber. Attempting OCR...")
                 images = convert_from_bytes(file_bytes)
                 for img in images:
                     processed_img = preprocess_image_for_ocr(img)
@@ -334,8 +317,6 @@ def extract_text_from_file(uploaded_file):
                 full_text = pdf_text
 
         except Exception as e:
-            # Fallback to OCR directly if pdfplumber fails or for any other PDF error
-            # print(f"DEBUG: Error processing PDF {file_name} with pdfplumber: {e}. Trying OCR fallback directly.")
             try:
                 images = convert_from_bytes(file_bytes)
                 for img in images:
@@ -964,44 +945,16 @@ def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_s
 
     return final_assessment
 
-@st.cache_data(show_spinner="Calculating Semantic Score...")
-def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills, model, ml_model):
-    jd_clean = clean_text(jd_text)
-    resume_clean = clean_text(resume_text)
-
+# Modified semantic_score to accept pre-computed embeddings
+# Removed @st.cache_data as it will be called differently
+def semantic_score_calculation(jd_embedding, resume_embedding, years_exp, cgpa, weighted_keyword_overlap_score, _ml_model):
     score = 0.0
-    semantic_similarity = 0.0
+    semantic_similarity = cosine_similarity(jd_embedding.reshape(1, -1), resume_embedding.reshape(1, -1))[0][0]
+    semantic_similarity = float(np.clip(semantic_similarity, 0, 1))
 
-    resume_raw_skills, _ = extract_relevant_keywords(resume_clean, MASTER_SKILLS)
-    jd_raw_skills, _ = extract_relevant_keywords(jd_clean, MASTER_SKILLS)
-
-    weighted_keyword_overlap_score = 0
-    total_jd_skill_weight = 0
-
-    WEIGHT_HIGH = 3
-    WEIGHT_MEDIUM = 2
-    WEIGHT_BASE = 1
-
-    for jd_skill in jd_raw_skills:
-        current_weight = WEIGHT_BASE
-        if jd_skill in [s.lower() for s in high_priority_skills]:
-            current_weight = WEIGHT_HIGH
-        elif jd_skill in [s.lower() for s in medium_priority_skills]:
-            current_weight = WEIGHT_MEDIUM
-        
-        total_jd_skill_weight += current_weight
-        
-        if jd_skill in resume_raw_skills:
-            weighted_keyword_overlap_score += current_weight
-
-    if total_jd_skill_weight > 0:
-        weighted_jd_coverage_percentage = (weighted_keyword_overlap_score / total_jd_skill_weight) * 100
-    else:
-        weighted_jd_coverage_percentage = 0.0
-
-    if ml_model is None or model is None:
-        # print("DEBUG: ML models not loaded in semantic_score. Providing basic score and generic feedback.")
-        basic_score = (weighted_jd_coverage_percentage * 0.7)
+    if _ml_model is None:
+        print("DEBUG: ML model not loaded in semantic_score_calculation. Providing basic score and generic feedback.")
+        basic_score = (weighted_keyword_overlap_score * 0.7)
         basic_score += min(years_exp * 5, 30)
         
         if cgpa is not None:
@@ -1015,20 +968,12 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
         return score, round(semantic_similarity, 2)
 
     try:
-        jd_embed = model.encode(jd_clean)
-        resume_embed = model.encode(resume_clean)
-
-        semantic_similarity = cosine_similarity(jd_embed.reshape(1, -1), resume_embed.reshape(1, -1))[0][0]
-        semantic_similarity = float(np.clip(semantic_similarity, 0, 1))
-
         years_exp_for_model = float(years_exp) if years_exp is not None else 0.0
-
-        features = np.concatenate([jd_embed, resume_embed, [years_exp_for_model], [weighted_keyword_overlap_score]])
-
-        predicted_score = ml_model.predict([features])[0]
+        features = np.concatenate([jd_embedding, resume_embedding, [years_exp_for_model], [weighted_keyword_overlap_score]])
+        predicted_score = _ml_model.predict([features])[0]
 
         blended_score = (predicted_score * 0.6) + \
-                        (weighted_jd_coverage_percentage * 0.1) + \
+                        (weighted_keyword_overlap_score * 0.1) + \
                         (semantic_similarity * 100 * 0.3)
 
         if semantic_similarity > 0.7 and years_exp >= 3:
@@ -1047,9 +992,9 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
         return round(score, 2), round(semantic_similarity, 2)
 
     except Exception as e:
-        print(f"ERROR: Error during semantic scoring: {e}")
+        print(f"ERROR: Error during semantic score calculation: {e}")
         traceback.print_exc()
-        basic_score = (weighted_jd_coverage_percentage * 0.7)
+        basic_score = (weighted_keyword_overlap_score * 0.7)
         basic_score += min(years_exp * 5, 30)
         
         if cgpa is not None:
@@ -1154,24 +1099,24 @@ Have questions? Contact us at support@screenerpro.in
         st.error(f"❌ Failed to send email: {e}")
     return False
 
-# Helper function to process a single resume for the main screener page
-def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_type, jd_text, jd_name_for_results,
+# Wrapper for extract_text_from_file to be used with ThreadPoolExecutor
+def _extract_text_wrapper(file_info):
+    file_data_bytes, file_name, file_type = file_info
+    text = extract_text_from_file(file_data_bytes, file_name, file_type)
+    return file_name, text
+
+# Modified _process_single_resume_for_screener_page
+def _process_single_resume_for_screener_page(file_name, text, jd_text, jd_embedding, 
+                                             resume_embedding, jd_name_for_results,
                                              high_priority_skills, medium_priority_skills, max_experience,
-                                             global_model, global_ml_model): # Pass models as arguments
+                                             _global_ml_model):
     """
-    Processes a single resume file (bytes content) for the main screener page
-    and returns a dictionary of results.
+    Processes a single resume (pre-extracted text and pre-computed embeddings)
+    for the main screener page and returns a dictionary of results.
     This function is designed to be run in a ThreadPoolExecutor.
     """
     print(f"DEBUG: Starting processing for {file_name}")
     try:
-        uploaded_file_mock = BytesIO(file_data_bytes)
-        uploaded_file_mock.name = file_name
-        uploaded_file_mock.type = file_type
-        
-        text = extract_text_from_file(uploaded_file_mock)
-        print(f"DEBUG: Text extraction result for {file_name}: {'SUCCESS' if not text.startswith('[ERROR]') else text}")
-
         if text.startswith("[ERROR]"):
             print(f"ERROR: Text extraction failed for {file_name}: {text}")
             return {
@@ -1214,8 +1159,29 @@ def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_ty
         matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
         missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
 
-        print(f"DEBUG: Calling semantic_score for {file_name} with models: {global_model is not None}, {global_ml_model is not None}")
-        score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills, global_model, global_ml_model)
+        # Calculate weighted keyword overlap score
+        weighted_keyword_overlap_score = 0
+        total_jd_skill_weight = 0
+        WEIGHT_HIGH = 3
+        WEIGHT_MEDIUM = 2
+        WEIGHT_BASE = 1
+
+        for jd_skill in jd_raw_skills_set:
+            current_weight = WEIGHT_BASE
+            if jd_skill in [s.lower() for s in high_priority_skills]:
+                current_weight = WEIGHT_HIGH
+            elif jd_skill in [s.lower() for s in medium_priority_skills]:
+                current_weight = WEIGHT_MEDIUM
+            
+            total_jd_skill_weight += current_weight
+            
+            if jd_skill in resume_raw_skills_set:
+                weighted_keyword_overlap_score += current_weight
+
+        # Call the semantic score calculation with pre-computed embeddings
+        score, semantic_similarity = semantic_score_calculation(
+            jd_embedding, resume_embedding, exp, cgpa, weighted_keyword_overlap_score, _global_ml_model
+        )
         print(f"DEBUG: Semantic score result for {file_name}: Score={score}, Semantic_Similarity={semantic_similarity}")
         
         concise_ai_suggestion = generate_concise_ai_suggestion(
@@ -1289,7 +1255,7 @@ def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_ty
         }
     except Exception as e:
         print(f"CRITICAL ERROR: Unhandled exception processing {file_name}: {e}")
-        traceback.print_exc() # Print full traceback for debugging
+        traceback.print_exc()
         return {
             "File Name": file_name,
             "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
@@ -1335,7 +1301,7 @@ def resume_screener_page():
         st.session_state['certificate_html_content'] = ""
 
     # Initial check for Tesseract (main process only)
-    tesseract_cmd_path = get_tesseract_cmd() # Use the cached version
+    tesseract_cmd_path = get_tesseract_cmd()
     if not tesseract_cmd_path:
         st.error("Tesseract OCR engine not found. Please ensure it's installed and in your system's PATH.")
         st.info("On Streamlit Community Cloud, ensure you have a `packages.txt` file in your repository's root with `tesseract-ocr` and `tesseract-ocr-eng` listed.")
@@ -1358,7 +1324,8 @@ def resume_screener_page():
         if jd_option == "Upload my own":
             jd_file = st.file_uploader("Upload Job Description (TXT, PDF)", type=["txt", "pdf"], help="Upload a .txt or .pdf file containing the job description.")
             if jd_file:
-                jd_text = extract_text_from_file(jd_file)
+                # For JD, we read and extract text directly as it's a single file
+                jd_text = extract_text_from_file(jd_file.read(), jd_file.name, jd_file.type)
                 jd_name_for_results = jd_file.name.replace('.pdf', '').replace('.txt', '')
             else:
                 jd_name_for_results = "Uploaded JD (No file selected)"
@@ -1436,40 +1403,103 @@ def resume_screener_page():
 
         total_resumes = len(resume_files)
         
-        # Use ThreadPoolExecutor for concurrent processing
-        st.info(f"Processing {total_resumes} resumes concurrently...")
-        # Max workers can be adjusted based on your server's capabilities and nature of tasks.
-        # For a mix of I/O and CPU, os.cpu_count() * 2 is a common heuristic.
+        # --- PHASE 1: Parallel Text Extraction ---
+        st.info(f"Step 1/3: Extracting text from {total_resumes} resumes concurrently...")
+        extracted_texts_info = [] # Stores (file_name, text) tuples
+        file_infos_for_extraction = []
+        for file in resume_files:
+            file_data_bytes = file.read() # Read file content into memory once
+            file_infos_for_extraction.append((file_data_bytes, file.name, file.type))
+
         with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
-            futures = []
-            for file in resume_files:
-                # Read file content into memory once to pass to the executor
-                file_data_bytes = file.read()
-                futures.append(executor.submit(
+            text_futures = [executor.submit(_extract_text_wrapper, info) for info in file_infos_for_extraction]
+            
+            for i, future in enumerate(as_completed(text_futures)):
+                status_text.text(f"Extracting text: {file_infos_for_extraction[i][1]} ({i+1}/{total_resumes})...")
+                extracted_texts_info.append(future.result())
+                progress_bar.progress((i + 1) / total_resumes)
+        
+        progress_bar.empty()
+        status_text.empty()
+
+        # Separate successfully extracted texts from failed ones
+        successfully_extracted_texts_map = {name: text for name, text in extracted_texts_info if not text.startswith("[ERROR]")}
+        failed_extraction_results = [{
+            "File Name": name,
+            "Candidate Name": name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
+            "Score (%)": 0, "Years Experience": 0, "CGPA (4.0 Scale)": None,
+            "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
+            "Languages": "Not Found", "Education Details": "Not Found",
+            "Work History": "Not Found", "Project Details": "Not Found",
+            "AI Suggestion": f"Error: {text.replace('[ERROR] ', '')}",
+            "Detailed HR Assessment": f"Error processing resume: {text.replace('[ERROR] ', '')}",
+            "Matched Keywords": "", "Missing Skills": "",
+            "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
+            "Semantic Similarity": 0.0, "Resume Raw Text": text,
+            "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
+            "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
+            "Tag": "❌ Text Extraction Error"
+        } for name, text in extracted_texts_info if text.startswith("[ERROR]")]
+
+        if not successfully_extracted_texts_map:
+            st.warning("No resumes had readable text extracted. Please check the files and try again.")
+            st.session_state['comprehensive_df'] = pd.DataFrame()
+            return
+        
+        # --- PHASE 2: Batch Embedding Generation ---
+        st.info(f"Step 2/3: Generating embeddings for {len(successfully_extracted_texts_map)} resumes and JD...")
+        jd_clean = clean_text(jd_text)
+        jd_embedding = global_sentence_model.encode([jd_clean])[0]
+
+        resume_names_for_embedding = list(successfully_extracted_texts_map.keys())
+        resume_texts_for_embedding = [successfully_extracted_texts_map[name] for name in resume_names_for_embedding]
+        
+        # Use batch_size for encoding all resume texts
+        resume_embeddings_array = global_sentence_model.encode(
+            resume_texts_for_embedding, 
+            batch_size=16, # Recommended batch size for SentenceTransformer
+            show_progress_bar=False # Streamlit handles progress bar
+        )
+        
+        # Create a mapping from file_name to its embedding
+        resume_embedding_map = {name: embed for name, embed in zip(resume_names_for_embedding, resume_embeddings_array)}
+        
+        progress_bar.empty()
+        status_text.empty()
+
+        # --- PHASE 3: Parallel Individual Resume Analysis ---
+        st.info(f"Step 3/3: Processing {len(successfully_extracted_texts_map)} resumes with AI models concurrently...")
+        main_processing_futures = []
+        with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
+            for file_name in resume_names_for_embedding:
+                text = successfully_extracted_texts_map[file_name]
+                resume_embedding = resume_embedding_map[file_name]
+
+                main_processing_futures.append(executor.submit(
                     _process_single_resume_for_screener_page,
-                    file_data_bytes, file.name, file.type, jd_text, jd_name_for_results,
-                    high_priority_skills, medium_priority_skills, max_experience,
-                    model, ml_model # Pass the globally loaded models
+                    file_name, text, jd_text, jd_embedding, resume_embedding,
+                    jd_name_for_results, high_priority_skills, medium_priority_skills, max_experience,
+                    global_ml_model
                 ))
             
-            for i, future in enumerate(as_completed(futures)):
-                status_text.text(f"Processing: {resume_files[i].name} ({i+1}/{total_resumes})...")
+            for i, future in enumerate(as_completed(main_processing_futures)):
+                status_text.text(f"Analyzing: {resume_names_for_embedding[i]} ({i+1}/{len(resume_names_for_embedding)})...")
                 try:
                     result = future.result()
                     results.append(result)
                 except Exception as exc:
-                    st.error(f"Resume processing generated an exception for {resume_files[i].name}: {exc}")
-                progress_bar.progress((i + 1) / total_resumes)
-            
+                    st.error(f"Resume processing generated an exception for {resume_names_for_embedding[i]}: {exc}")
+                progress_bar.progress((i + 1) / len(resume_names_for_embedding))
+        
+        # Add results from failed extractions back to the list
+        results.extend(failed_extraction_results)
+
         progress_bar.empty()
         status_text.empty()
         
-        # Filter out any error results before creating DataFrame
-        results = [r for r in results if r.get("Tag") not in ["❌ Processing Error", "❌ Text Extraction Error", "❌ Critical Processing Error"]]
-
         if not results:
             st.warning("No resumes were successfully processed. Please check the files and try again.")
-            st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure DF is empty
+            st.session_state['comprehensive_df'] = pd.DataFrame()
             return
 
         st.session_state['comprehensive_df'] = pd.DataFrame(results).sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
@@ -1934,7 +1964,6 @@ def resume_screener_page():
                         # Automatically send email if certificate PDF is generated and email is available
                         if candidate_data_for_cert.get('Email') and candidate_data_for_cert['Email'] != "Not Found":
                             if certificate_pdf_content:
-                                # Pass secrets to the email function as it runs in the main thread
                                 gmail_address = st.secrets.get("GMAIL_ADDRESS")
                                 gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD")
                                 send_certificate_email(
@@ -1969,7 +1998,6 @@ def resume_screener_page():
 
 @st.cache_data
 def generate_certificate_html(candidate_data):
-    # Hardcoded HTML template from the 'beautiful-certificate-html' immersive
     html_template = """
 <!DOCTYPE html>
 <html lang="en">
@@ -2127,6 +2155,5 @@ def generate_certificate_html(candidate_data):
 
     return html_content
 
-# This line ensures the Streamlit app runs
 if __name__ == "__main__":
     resume_screener_page()
