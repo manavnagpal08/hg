@@ -28,6 +28,8 @@ from io import BytesIO
 import traceback
 import time
 import pandas as pd # Ensure pandas is imported
+import requests # For Firestore REST API calls
+import json # For JSON parsing/dumping
 
 # CRITICAL: Disable Hugging Face tokenizers parallelism to avoid deadlocks with ProcessPoolExecutor
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -201,7 +203,7 @@ SKILL_CATEGORIES = {
     "QuickBooks", "SAP FICO", "Oracle Financials", "Workday", "Microsoft Dynamics", "NetSuite", "Adobe Creative Suite", "Canva", "Mailchimp", "Hootsuite", "Buffer", "SEMrush", "Ahrefs", "Moz", "Screaming Frog",
     "JMeter", "Postman", "SoapUI", "SVN", "Perforce", "Asana", "Monday.com", "Miro", "Lucidchart", "Visio", "MS Project", "Primavera", "AutoCAD", "SolidWorks", "MATLAB", "LabVIEW", "Simulink", "ANSYS",
     "CATIA", "NX", "Revit", "ArcGIS", "QGIS", "OpenCV", "NLTK", "SpaCy", "Gensim", "Hugging Face Transformers",
-    "Docker Compose", "Helm", "Ansible Tower", "SaltStack", "Chef InSpec", "Terraform Cloud", "Vault",
+    ""Docker Compose", "Helm", "Ansible Tower", "SaltStack", "Chef InSpec", "Terraform Cloud", "Vault",
     "Consul", "Nomad", "Prometheus", "Grafana", "Alertmanager", "Loki", "Tempo", "Jaeger", "Zipkin",
     "Fluentd", "Logstash", "Kibana", "Grafana Loki", "Datadog", "New Relic", "AppDynamics", "Dynatrace",
     "Nagios", "Zabbix", "Icinga", "PRTG", "SolarWinds", "Wireshark", "Nmap", "Metasploit", "Burp Suite",
@@ -241,6 +243,14 @@ def load_ml_model():
 # Load models globally (once per app run)
 global_sentence_model, global_ml_model = load_ml_model()
 
+# Helper for Activity Logging (for screener.py's own activities)
+def log_activity_screener(message):
+    """Logs an activity with a timestamp to the session state for screener.py's activities."""
+    if 'activity_log_screener' not in st.session_state:
+        st.session_state.activity_log_screener = []
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state.activity_log_screener.insert(0, f"[{timestamp}] {message}") # Add to the beginning for most recent first
+    st.session_state.activity_log_screener = st.session_state.activity_log_screener[:50] # Keep last 50
 
 def preprocess_image_for_ocr(image):
     img_cv = np.array(image)
@@ -840,1360 +850,633 @@ def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_si
         key_strength_hint = "Strong technical and experience match, quick integration expected."
         review_focus_text = "Cultural fit, project contributions."
     elif score >= moderate_score and years_exp >= moderate_exp and semantic_similarity >= moderate_sem_sim:
-        overall_fit_description = "Moderate fit."
-        key_strength_hint = "Good foundational skills, potential for growth."
-        review_focus_text = "Depth of experience, skill application, learning agility."
+        overall_fit_description = "Good potential."
+        key_strength_hint = "Solid foundation, good growth prospects."
+        review_focus_text = "Specific skill gaps, long-term career goals."
     else:
-        overall_fit_description = "Limited alignment."
-        key_strength_hint = "May require significant development or a different role."
-        review_focus_text = "Foundational skills, transferable experience, long-term potential."
+        overall_fit_description = "Consider further review."
+        key_strength_hint = "May require development in key areas."
+        review_focus_text = "Fundamental skills, foundational knowledge."
 
-    cgpa_note = ""
     if cgpa is not None:
         if cgpa >= high_cgpa:
-            cgpa_note = "Excellent academic record. "
+            key_strength_hint += " Excellent academic record."
         elif cgpa >= moderate_cgpa:
-            cgpa_note = "Solid academic background. "
-        else:
-            cgpa_note = "Academic record may need review. "
-    else:
-        cgpa_note = "CGPA not found. "
+            key_strength_hint += " Strong academic background."
 
-    summary_text = f"**Fit:** {overall_fit_description} **Strengths:** {cgpa_note}{key_strength_hint} **Focus:** {review_focus_text}"
-    return summary_text
+    suggestion_text = (
+        f"**Candidate: {candidate_name}**\n\n"
+        f"**Overall Fit:** {overall_fit_description}\n"
+        f"**Key Strengths:** {key_strength_hint}\n"
+        f"**Focus for Review:** {review_focus_text}"
+    )
+    return suggestion_text
 
-@st.cache_data(show_spinner="Generating detailed HR Assessment...")
-def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_similarity, cgpa, jd_text, resume_text, matched_keywords, missing_skills, max_exp_cutoff):
-    assessment_parts = []
-    overall_assessment_title = ""
-    next_steps_focus = ""
-
-    matched_kws_str = ", ".join(matched_keywords) if isinstance(matched_keywords, list) else matched_keywords
-    missing_skills_str = ", ".join(missing_skills) if isinstance(missing_skills, list) else missing_skills
-
-    high_score = 90
-    strong_score = 80
-    promising_score = 60
-    high_exp = 5
-    strong_exp = 3
-    promising_exp = 1
-    high_sem_sim = 0.85
-    strong_sem_sim = 0.7
-    promising_sem_sim = 0.35
-    high_cgpa = 3.5
-    strong_cgpa = 3.0
-    promising_cgpa = 2.5
-
-    if score >= high_score and years_exp >= high_exp and years_exp <= max_exp_cutoff and semantic_similarity >= high_sem_sim and (cgpa is None or cgpa >= high_cgpa):
-        overall_assessment_title = "Exceptional Candidate: Highly Aligned with Strategic Needs"
-        assessment_parts.append(f"**{candidate_name}** presents an **exceptional profile** with a high score of {score:.2f}% and {years_exp:.1f} years of experience. This demonstrates a profound alignment with the job description's core requirements, further evidenced by a strong semantic similarity of {semantic_similarity:.2f}.")
-        if cgpa is not None:
-            assessment_parts.append(f"Their academic record, with a CGPA of {cgpa:.2f} (normalized to 4.0 scale), further solidifies their strong foundational knowledge.")
-        assessment_parts.append(f"**Key Strengths:** This candidate possesses a robust skill set directly matching critical keywords in the JD, including: *{matched_kws_str if matched_kws_str else 'No specific keywords listed, but overall strong match'}*. Their extensive experience indicates a capacity for leadership and handling complex challenges, suggesting immediate productivity and minimal ramp-up time. They are poised to make significant contributions from day one.")
-        assessment_parts.append("The resume highlights a clear career progression and a history of successful project delivery, often exceeding expectations. Their qualifications exceed expectations, making them a top-tier applicant for this role.")
-        assessment_parts.append("This individual's profile suggests they are not only capable of fulfilling the role's duties but also have the potential to mentor others, drive innovation, and take on strategic initiatives within the team. Their background indicates a strong fit for a high-impact position.")
-        next_steps_focus = "The next steps should focus on assessing cultural integration, exploring leadership potential, and delving into strategic contributions during the interview. Prepare for a deep dive into their most challenging projects, how they navigated complex scenarios, and their long-term vision. Consider fast-tracking this candidate through the interview process and potentially involving senior leadership early on."
-        assessment_parts.append(f"**Action:** Strongly recommend for immediate interview. Prioritize for hiring and consider for advanced roles if applicable.")
-
-    elif score >= strong_score and years_exp >= strong_exp and years_exp <= max_exp_cutoff and semantic_similarity >= strong_sem_sim and (cgpa is None or cgpa >= strong_cgpa):
-        overall_assessment_title = "Strong Candidate: Excellent Potential for Key Contributions"
-        assessment_parts.append(f"**{candidate_name}** is a **strong candidate** with a score of {score:.2f}% and {years_exp:.1f} years of experience. They show excellent alignment with the job description, supported by a solid semantic similarity of {semantic_similarity:.2f}.")
-        if cgpa is not None:
-            assessment_parts.append(f"Their academic performance, with a CGPA of {cgpa:.2f}, indicates a solid theoretical grounding.")
-        assessment_parts.append(f"**Key Strengths:** Significant overlap in required skills and practical experience that directly addresses the job's demands. Matched keywords include: *{matched_kws_str if matched_kws_str else 'No specific keywords listed, but overall strong match'}*. This individual is likely to integrate well and contribute effectively from an early stage, bringing valuable expertise to the team.")
-        assessment_parts.append("Their resume indicates a consistent track record of achieving results and adapting to new challenges. They demonstrate a solid understanding of the domain and could quickly become a valuable asset, requiring moderate onboarding.")
-        assessment_parts.append("This candidate is well-suited for the role and demonstrates the core competencies required. Their experience suggests they can handle typical challenges and contribute positively to team dynamics.")
-        next_steps_focus = "During the interview, explore specific project methodologies, problem-solving approaches, and long-term career aspirations to confirm alignment with team dynamics and growth opportunities within the company. Focus on behavioral questions to understand their collaboration style, initiative, and how they handle feedback. A technical assessment might be beneficial to confirm depth of skills."
-        assessment_parts.append(f"**Action:** Recommend for interview. Good fit for the role, with potential for growth.")
-
-    elif score >= promising_score and years_exp >= promising_exp and years_exp <= max_exp_cutoff and semantic_similarity >= promising_sem_sim and (cgpa is None or cgpa >= promising_cgpa):
-        overall_assessment_title = "Promising Candidate: Requires Focused Review on Specific Gaps"
-        assessment_parts.append(f"**{candidate_name}** is a **promising candidate** with a score of {score:.2f}% and {years_exp:.1f} years of experience. While demonstrating a foundational understanding (semantic similarity: {semantic_similarity:.2f}), there are areas that warrant deeper investigation to ensure a complete fit.")
-        
-        gaps_identified = []
-        if score < 70:
-            gaps_identified.append("The overall score suggests some core skill areas may need development or further clarification.")
-        if years_exp < promising_exp:
-            gaps_identified.append(f"Experience ({years_exp:.1f} yrs) is on the lower side; assess their ability to scale up quickly and take on more responsibility.")
-        if semantic_similarity < 0.5:
-            gaps_identified.append("Semantic understanding of the JD's nuances might be limited; probe their theoretical knowledge versus practical application in real-world scenarios.")
-        if cgpa is not None and cgpa < promising_cgpa:
-            gaps_identified.append(f"Academic record (CGPA: {cgpa:.2f}) is below preferred, consider its relevance to role demands.")
-        if missing_skills_str:
-            gaps_identified.append(f"**Potential Missing Skills:** *{missing_skills_str}*. Focus interview questions on these areas to assess their current proficiency or learning agility.")
-        
-        if years_exp > max_exp_cutoff:
-            gaps_identified.append(f"Experience ({years_exp:.1f} yrs) exceeds the maximum desired ({max_exp_cutoff} yrs). Evaluate if this indicates overqualification or a potential mismatch in role expectations.")
-
-        if gaps_identified:
-            assessment_parts.append("Areas for further exploration include: " + " ".join(gaps_identified))
-        
-        assessment_parts.append("The candidate shows potential, especially if they can demonstrate quick learning or relevant transferable skills. Their resume indicates a willingness to grow and take on new challenges, which is a positive sign for development opportunities.")
-        next_steps_focus = "The interview should focus on validating foundational skills, understanding their learning agility, and assessing their potential for growth within the role. Be prepared to discuss specific examples of how they've applied relevant skills and how they handle challenges, particularly in areas where skills are missing. Consider a skills assessment or a structured case study to gauge problem-solving abilities. Discuss their motivation for this role and long-term career goals."
-        assessment_parts.append(f"**Action:** Consider for initial phone screen or junior role. Requires careful evaluation and potentially a development plan.")
-
-    else:
-        overall_assessment_title = "Limited Match: Consider Only for Niche Needs or Pipeline Building"
-        assessment_parts.append(f"**{candidate_name}** shows a **limited match** with a score = {score:.2f}% and {years_exp:.1f} years of experience (semantic similarity: {semantic_similarity:.2f}). This profile indicates a significant deviation from the core requirements of the job description.")
-        if cgpa is not None:
-            assessment_parts.append(f"Their academic record (CGPA: {cgpa:.2f}) also indicates a potential mismatch.")
-        assessment_parts.append(f"**Key Concerns:** A low overlap in essential skills and potentially insufficient experience for the role's demands. Many key skills appear to be missing: *{missing_skills_str if missing_skills_str else 'No specific missing skills listed, but overall low match'}*. While some transferable skills may exist, a substantial investment in training or a re-evaluation of role fit would likely be required for this candidate to succeed.")
-        
-        if years_exp > max_exp_cutoff:
-            assessment_parts.append(f"Additionally, their experience ({years_exp:.1f} yrs) significantly exceeds the maximum desired ({max_exp_cutoff} yrs), which might indicate overqualification or a mismatch in career trajectory for this specific opening.")
-
-        assessment_parts.append("The resume does not strongly align with the technical or experience demands of this specific position. Their background may be more suited for a different type of role or industry, or an entry-level position if their core skills are strong but experience is lacking.")
-        assessment_parts.append("This candidate might not be able to meet immediate role requirements without extensive support. Their current profile suggests a mismatch with the current opening.")
-        next_steps_focus = "This candidate is generally not recommended for the current role unless there are specific, unforeseen niche requirements or a strategic need to broaden the candidate pool significantly. If proceeding, focus on understanding their fundamental capabilities, their motivation for this specific role despite the mismatch, and long-term career aspirations. It might be more beneficial to suggest other roles within the organization or provide feedback for future applications."
-        assessment_parts.append(f"**Action:** Not recommended for this role. Consider for other open positions or future pipeline, or politely decline.")
-
-    final_assessment = f"**Overall HR Assessment: {overall_assessment_title}**\n\n"
-    final_assessment += "\n".join(assessment_parts)
-
-    return final_assessment
-
-# Modified semantic_score to accept pre-computed embeddings
-# Removed @st.cache_data as it will be called differently
-def semantic_score_calculation(jd_embedding, resume_embedding, years_exp, cgpa, weighted_keyword_overlap_score, _ml_model):
-    score = 0.0
-    semantic_similarity = cosine_similarity(jd_embedding.reshape(1, -1), resume_embedding.reshape(1, -1))[0][0]
-    semantic_similarity = float(np.clip(semantic_similarity, 0, 1))
-
-    if _ml_model is None:
-        print("DEBUG: ML model not loaded in semantic_score_calculation. Providing basic score and generic feedback.")
-        basic_score = (weighted_keyword_overlap_score * 0.7)
-        basic_score += min(years_exp * 5, 30)
-        
-        if cgpa is not None:
-            if cgpa >= 3.5:
-                basic_score += 5
-            elif cgpa < 2.5:
-                basic_score -= 5
-        
-        score = round(min(basic_score, 100), 2)
-        
-        return score, round(semantic_similarity, 2)
-
-    try:
-        years_exp_for_model = float(years_exp) if years_exp is not None else 0.0
-        features = np.concatenate([jd_embedding, resume_embedding, [years_exp_for_model], [weighted_keyword_overlap_score]])
-        predicted_score = _ml_model.predict([features])[0]
-
-        blended_score = (predicted_score * 0.6) + \
-                        (weighted_keyword_overlap_score * 0.1) + \
-                        (semantic_similarity * 100 * 0.3)
-
-        if semantic_similarity > 0.7 and years_exp >= 3:
-            blended_score += 5
-        
-        if cgpa is not None:
-            if cgpa >= 3.5:
-                blended_score += 3
-            elif cgpa >= 3.0:
-                blended_score += 1
-            elif cgpa < 2.5:
-                blended_score -= 2
-
-        score = float(np.clip(blended_score, 0, 100))
-        
-        return round(score, 2), round(semantic_similarity, 2)
-
-    except Exception as e:
-        print(f"ERROR: Error during semantic score calculation: {e}")
-        traceback.print_exc()
-        basic_score = (weighted_keyword_overlap_score * 0.7)
-        basic_score += min(years_exp * 5, 30)
-        
-        if cgpa is not None:
-            basic_score += 5 if cgpa >= 3.5 else (-5 if cgpa < 2.5 else 0)
-
-        score = round(min(basic_score, 100), 2)
-
-        return score, 0.0
-
-def create_mailto_link(recipient_email, candidate_name, job_title="Job Opportunity", sender_name="Recruiting Team"):
-    subject = urllib.parse.quote(f"Invitation for Interview - {job_title} - {candidate_name}")
-    body = urllib.parse.quote(f"""Dear {candidate_name},
-
-We were very impressed with your profile and would like to invite you for an interview for the {job_title} position.
-
-Best regards,
-
-The {sender_name}""")
-    return f"mailto:{recipient_email}?subject={subject}&body={body}"
-
-@st.cache_data
-def generate_certificate_pdf(html_content):
-    """Converts HTML content to PDF bytes."""
-    try:
-        pdf_bytes = HTML(string=html_content).write_pdf()
-        return pdf_bytes
-    except Exception as e:
-        st.error(f"❌ Failed to generate PDF certificate: {e}")
-        return None
-
-def send_certificate_email(recipient_email, candidate_name, score, certificate_pdf_content, gmail_address, gmail_app_password):
-    if not gmail_address or not gmail_app_password:
-        st.error("❌ Email sending is not configured. Please ensure your Gmail address and App Password secrets are set in Streamlit.")
+def save_certificate_to_firestore_rest(certificate_data, firestore_rest_api_base_url, firebase_web_api_key, app_id):
+    """
+    Saves certificate data to Firestore using the REST API.
+    Data is stored in a public collection: /artifacts/{appId}/public/data/certificates/{certificate_id}
+    """
+    certificate_id = certificate_data.get("certificate_id")
+    if not certificate_id:
+        log_activity_screener("❌ Error: Certificate ID missing for Firestore save.")
         return False
 
-    msg = MIMEMultipart('mixed')
-    msg['Subject'] = f"🎉 You've Earned It! Here's Your Certification from ScreenerPro"
-    msg['From'] = gmail_address
-    msg['To'] = recipient_email
+    collection_path = f"artifacts/{app_id}/public/data/certificates"
+    document_path = f"{collection_path}/{certificate_id}"
+    
+    # Firestore REST API URL for a specific document
+    url = f"{firestore_rest_api_base_url}/projects/{app_id}/databases/(default)/documents/{document_path}?key={firebase_web_api_key}"
 
-    plain_text_body = f"""Hi {candidate_name},
+    headers = {
+        "Content-Type": "application/json"
+    }
+    
+    # The data to send to Firestore
+    # Convert sets to lists for JSON serialization
+    data_to_save = {k: list(v) if isinstance(v, set) else v for k, v in certificate_data.items()}
 
-Congratulations on successfully clearing the ScreenerPro resume screening process with a score of {score:.1f}%!
+    try:
+        response = requests.patch(url, headers=headers, data=json.dumps({"fields": data_to_save}))
+        response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+        log_activity_screener(f"✅ Certificate {certificate_id} saved to Firestore successfully.")
+        return True
+    except requests.exceptions.RequestException as e:
+        log_activity_screener(f"❌ Error saving certificate {certificate_id} to Firestore: {e}")
+        log_activity_screener(f"Response content: {response.text if 'response' in locals() else 'N/A'}")
+        return False
 
-We’re proud to award you an official certificate recognizing your skills and employability.
 
-You can add this to your resume, LinkedIn, or share it with employers to stand out.
+def generate_certificate_html(candidate_name, score, rank, current_date, certificate_id):
+    certificate_date = current_date.strftime("%B %d, %Y")
+    
+    # Encode certificate_id for URL
+    encoded_cert_id = urllib.parse.quote_plus(certificate_id)
+    # Construct verification URL
+    verification_url = f"{CERTIFICATE_HOSTING_URL}/?id={encoded_cert_id}"
 
-Have questions? Contact us at support@screenerpro.in
+    # Generate QR code URL (using Google Charts API for simplicity, can be replaced with a local library if needed)
+    qr_code_url = f"https://chart.googleapis.com/chart?chs=150x150&cht=qr&chl={urllib.parse.quote_plus(verification_url)}"
 
-🚀 Keep striving. Keep growing.
-
-– Team ScreenerPro
-"""
-
-    html_body = f"""
+    html_content = f"""
+    <!DOCTYPE html>
     <html>
-        <body>
-            <p>Hi {candidate_name},</p>
-            <p>Congratulations on successfully clearing the ScreenerPro resume screening process with a score of <strong>{score:.1f}%</strong>!</p>
-            <p>We’re proud to award you an official certificate recognizing your skills and employability.</p>
-            <p>You can add this to your resume, LinkedIn, or share it with employers to stand out.</p>
-            <p>Have questions? Contact us at support@screenerpro.in</p>
-            <p>🚀 Keep striving. Keep growing.</p>
-            <p>– Team ScreenerPro</p>
-        </body>
+    <head>
+        <title>Certificate of Achievement</title>
+        <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+        <style>
+            body {{
+                font-family: 'Open Sans', sans-serif;
+                margin: 0;
+                padding: 0;
+                background-color: #f0f2f5;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+            }}
+            .certificate-container {{
+                width: 297mm; /* A4 width */
+                height: 210mm; /* A4 height */
+                padding: 20mm;
+                box-sizing: border-box;
+                background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
+                border: 15px solid #0056b3;
+                border-image: linear-gradient(45deg, #0056b3, #007bff, #0056b3) 1;
+                box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+                text-align: center;
+                position: relative;
+                overflow: hidden;
+            }}
+            .certificate-container::before {{
+                content: '';
+                position: absolute;
+                top: -50px;
+                left: -50px;
+                right: -50px;
+                bottom: -50px;
+                background: url('https://www.transparenttextures.com/patterns/cubes.png') repeat; /* Subtle background pattern */
+                opacity: 0.05;
+                z-index: 0;
+            }}
+            .content {{
+                position: relative;
+                z-index: 1;
+            }}
+            h1 {{
+                font-family: 'Merriweather', serif;
+                font-size: 3.5em;
+                color: #0056b3;
+                margin-bottom: 10px;
+                text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+            }}
+            h2 {{
+                font-family: 'Merriweather', serif;
+                font-size: 2.5em;
+                color: #333;
+                margin-top: 5px;
+                margin-bottom: 20px;
+            }}
+            p {{
+                font-size: 1.2em;
+                color: #555;
+                line-height: 1.6;
+                margin-bottom: 15px;
+            }}
+            .name {{
+                font-family: 'Merriweather', serif;
+                font-size: 3em;
+                color: #007bff;
+                margin: 20px 0;
+                padding-bottom: 5px;
+                border-bottom: 3px dashed #bbb;
+                display: inline-block;
+                text-transform: capitalize;
+            }}
+            .score-rank {{
+                font-size: 1.8em;
+                color: #0056b3;
+                margin-top: 20px;
+                font-weight: 600;
+            }}
+            .date {{
+                font-size: 1.1em;
+                color: #777;
+                margin-top: 30px;
+            }}
+            .signature-section {{
+                display: flex;
+                justify-content: space-around;
+                align-items: flex-end;
+                margin-top: 50px;
+            }}
+            .signature-box {{
+                text-align: center;
+                width: 45%;
+            }}
+            .signature-line {{
+                border-top: 1px solid #aaa;
+                margin-top: 40px;
+                margin-bottom: 5px;
+            }}
+            .signature-text {{
+                font-size: 0.9em;
+                color: #666;
+            }}
+            .footer-note {{
+                font-size: 0.8em;
+                color: #999;
+                margin-top: 40px;
+            }}
+            .qr-code {{
+                position: absolute;
+                bottom: 20mm;
+                right: 20mm;
+                text-align: center;
+            }}
+            .qr-code img {{
+                border: 2px solid #0056b3;
+            }}
+            .qr-code p {{
+                font-size: 0.7em;
+                color: #555;
+                margin-top: 5px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="certificate-container">
+            <div class="content">
+                <h1>CERTIFICATE OF ACHIEVEMENT</h1>
+                <p>This certifies that</p>
+                <div class="name">{candidate_name}</div>
+                <p>has successfully demonstrated outstanding performance in the</p>
+                <h2>ScreenerPro Assessment</h2>
+                <p>achieving an impressive score of</p>
+                <div class="score-rank">Score: {score}% | Rank: {rank}</div>
+                <p>This accomplishment reflects a high level of skill and dedication.</p>
+                <div class="date">Awarded on {certificate_date}</div>
+                <div class="signature-section">
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-text">ScreenerPro Team Lead</div>
+                    </div>
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-text">Head of Talent Acquisition</div>
+                    </div>
+                </div>
+                <p class="footer-note">Certificate ID: {certificate_id}</p>
+            </div>
+            <div class="qr-code">
+                <img src="{qr_code_url}" alt="QR Code" width="100" height="100">
+                <p>Scan to Verify</p>
+            </div>
+        </div>
+    </body>
     </html>
     """
-
-    msg_alternative = MIMEMultipart('alternative')
-    msg_alternative.attach(MIMEText(plain_text_body, 'plain'))
-    msg_alternative.attach(MIMEText(html_body, 'html'))
-    
-    msg.attach(msg_alternative)
-
-    if certificate_pdf_content:
-        try:
-            attachment = MIMEBase('application', 'pdf')
-            attachment.set_payload(certificate_pdf_content)
-            encoders.encode_base64(attachment)
-            attachment.add_header('Content-Disposition', 'attachment', filename=f'ScreenerPro_Certificate_{candidate_name.replace(" ", "_")}.pdf')
-            msg.attach(attachment)
-            st.info(f"Attached certificate PDF to email for {candidate_name}.")
-        except Exception as e:
-            st.error(f"Failed to attach certificate PDF: {e}")
-    else:
-        st.warning("No PDF content generated to attach to email.")
-
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(gmail_address, gmail_app_password)
-            smtp.send_message(msg)
-        st.success(f"✅ Certificate email sent to {recipient_email}!")
-        return True
-    except smtplib.SMTPAuthenticationError:
-        st.error("❌ Failed to send email: Authentication error. Please check your Gmail address and App Password.")
-        st.info("Ensure you have generated an App Password for your Gmail account and used it instead of your regular password.")
-    except Exception as e:
-        st.error(f"❌ Failed to send email: {e}")
-    return False
-
-# Wrapper for extract_text_from_file to be used with ProcessPoolExecutor
-def _extract_text_wrapper(file_info):
-    file_data_bytes, file_name, file_type = file_info
-    text = extract_text_from_file(file_data_bytes, file_name, file_type)
-    return file_name, text
-
-# Modified _process_single_resume_for_screener_page
-def _process_single_resume_for_screener_page(file_name, text, jd_text, jd_embedding, 
-                                             resume_embedding, jd_name_for_results,
-                                             high_priority_skills, medium_priority_skills, max_experience,
-                                             _global_ml_model):
-    """
-    Processes a single resume (pre-extracted text and pre-computed embeddings)
-    for the main screener page and returns a dictionary of results.
-    This function is designed to be run in a ProcessPoolExecutor.
-    """
-    try:
-        if text.startswith("[ERROR]"):
-            return {
-                "File Name": file_name,
-                "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
-                "Score (%)": 0, "Years Experience": 0, "CGPA (4.0 Scale)": None,
-                "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
-                "Languages": "Not Found", "Education Details": "Not Found",
-                "Work History": "Not Found", "Project Details": "Not Found",
-                "AI Suggestion": f"Error: {text.replace('[ERROR] ', '')}",
-                "Detailed HR Assessment": f"Error processing resume: {text.replace('[ERROR] ', '')}",
-                "Matched Keywords": "", "Missing Skills": "",
-                "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
-                "Semantic Similarity": 0.0, "Resume Raw Text": "",
-                "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
-                "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
-                "Tag": "❌ Text Extraction Error"
-            }
-
-        exp = extract_years_of_experience(text)
-        email = extract_email(text)
-        phone = extract_phone_number(text)
-        location = extract_location(text)
-        languages = extract_languages(text) 
-        
-        education_details_text = extract_education_text(text)
-        work_history_raw = extract_work_history(text)
-        project_details_raw = extract_project_details(text, MASTER_SKILLS)
-        
-        education_details_formatted = education_details_text
-        work_history_formatted = format_work_history(work_history_raw)
-        project_details_formatted = format_project_details(project_details_raw)
-
-        candidate_name = extract_name(text) or file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title()
-        cgpa = extract_cgpa(text)
-
-        resume_raw_skills_set, resume_categorized_skills = extract_relevant_keywords(text, MASTER_SKILLS)
-        jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, MASTER_SKILLS)
-
-        matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
-        missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
-
-        # Calculate weighted keyword overlap score
-        weighted_keyword_overlap_score = 0
-        total_jd_skill_weight = 0
-        WEIGHT_HIGH = 3
-        WEIGHT_MEDIUM = 2
-        WEIGHT_BASE = 1
-
-        for jd_skill in jd_raw_skills_set:
-            current_weight = WEIGHT_BASE
-            if jd_skill in [s.lower() for s in high_priority_skills]:
-                current_weight = WEIGHT_HIGH
-            elif jd_skill in [s.lower() for s in medium_priority_skills]:
-                current_weight = WEIGHT_MEDIUM
-            
-            total_jd_skill_weight += current_weight
-            
-            if jd_skill in resume_raw_skills_set:
-                weighted_keyword_overlap_score += current_weight
-
-        # Call the semantic score calculation with pre-computed embeddings
-        score, semantic_similarity = semantic_score_calculation(
-            jd_embedding, resume_embedding, exp, cgpa, weighted_keyword_overlap_score, _global_ml_model
-        )
-        
-        concise_ai_suggestion = generate_concise_ai_suggestion(
-            candidate_name=candidate_name,
-            score=score,
-            years_exp=exp,
-            semantic_similarity=semantic_similarity,
-            cgpa=cgpa
-        )
-
-        detailed_hr_assessment = generate_detailed_hr_assessment(
-            candidate_name=candidate_name,
-            score=score,
-            years_exp=exp,
-            semantic_similarity=semantic_similarity,
-            cgpa=cgpa,
-            jd_text=jd_text,
-            resume_text=text,
-            matched_keywords=matched_keywords,
-            missing_skills=missing_skills,
-            max_exp_cutoff=max_experience
-        )
-
-        certificate_id = str(uuid.uuid4())
-        certificate_rank = "Not Applicable"
-
-        if score >= 90:
-            certificate_rank = "🏅 Elite Match"
-        elif score >= 80:
-            certificate_rank = "⭐ Strong Match"
-        elif score >= 75:
-            certificate_rank = "✅ Good Fit"
-        
-        # Determine Tag
-        tag = "❌ Limited Match"
-        if score >= 90 and exp >= 5 and exp <= max_experience and semantic_similarity >= 0.85 and (cgpa is None or cgpa >= 3.5):
-            tag = "👑 Exceptional Match"
-        elif score >= 80 and exp >= 3 and exp <= max_experience and semantic_similarity >= 0.7 and (cgpa is None or cgpa >= 3.0):
-            tag = "🔥 Strong Candidate"
-        elif score >= 60 and exp >= 1 and exp <= max_experience and (cgpa is None or cgpa >= 2.5):
-            tag = "✨ Promising Fit"
-        elif score >= 40:
-            tag = "⚠️ Needs Review"
-
-        return {
-            "File Name": file_name,
-            "Candidate Name": candidate_name,
-            "Score (%)": score,
-            "Years Experience": exp,
-            "CGPA (4.0 Scale)": cgpa,
-            "Email": email or "Not Found",
-            "Phone Number": phone or "Not Found",
-            "Location": location or "Not Found",
-            "Languages": languages,
-            "Education Details": education_details_formatted,
-            "Work History": work_history_formatted,
-            "Project Details": project_details_formatted,
-            "AI Suggestion": concise_ai_suggestion,
-            "Detailed HR Assessment": detailed_hr_assessment,
-            "Matched Keywords": ", ".join(matched_keywords),
-            "Missing Skills": ", ".join(missing_skills),
-            "Matched Keywords (Categorized)": dict(resume_categorized_skills),
-            "Missing Skills (Categorized)": dict(jd_categorized_skills),
-            "Semantic Similarity": semantic_similarity,
-            "Resume Raw Text": text,
-            "JD Used": jd_name_for_results,
-            "Date Screened": datetime.now().date(),
-            "Certificate ID": str(uuid.uuid4()),
-            "Certificate Rank": certificate_rank,
-            "Tag": tag
-        }
-    except Exception as e:
-        print(f"CRITICAL ERROR: Unhandled exception processing {file_name}: {e}")
-        traceback.print_exc()
-        return {
-            "File Name": file_name,
-            "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
-            "Score (%)": 0, "Years Experience": 0, "CGPA (4.0 Scale)": None,
-            "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
-            "Languages": "Not Found", "Education Details": "Not Found",
-            "Work History": "Not Found", "Project Details": "Not Found",
-            "AI Suggestion": f"Critical Error: {e}",
-            "Detailed HR Assessment": f"Critical Error processing resume: {e}",
-            "Matched Keywords": "", "Missing Skills": "",
-            "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
-            "Semantic Similarity": 0.0, "Resume Raw Text": "",
-            "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
-            "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
-            "Tag": "❌ Critical Processing Error"
-        }
-
-
-def resume_screener_page():
-    st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
-
-    if 'screening_cutoff_score' not in st.session_state:
-        st.session_state['screening_cutoff_score'] = 75
-    if 'screening_min_experience' not in st.session_state:
-        st.session_state['screening_min_experience'] = 2
-    if 'screening_max_experience' not in st.session_state:
-        st.session_state['screening_max_experience'] = 10
-    if 'screening_min_cgpa' not in st.session_state:
-        st.session_state['screening_min_cgpa'] = 2.5
-    
-    if 'comprehensive_df' not in st.session_state:
-        st.session_state['comprehensive_df'] = pd.DataFrame(columns=[
-            "File Name", "Candidate Name", "Score (%)", "Years Experience", "CGPA (4.0 Scale)",
-            "Email", "Phone Number", "Location", "Languages", "Education Details",
-            "Work History", "Project Details", "AI Suggestion", "Detailed HR Assessment",
-            "Matched Keywords", "Missing Skills", "Matched Keywords (Categorized)",
-            "Missing Skills (Categorized)", "Semantic Similarity", "Resume Raw Text",
-            "JD Used", "Date Screened", "Certificate ID", "Certificate Rank", "Tag"
-        ])
-    if 'resume_raw_texts' not in st.session_state:
-        st.session_state['resume_raw_texts'] = {}
-    if 'certificate_html_content' not in st.session_state:
-        st.session_state['certificate_html_content'] = ""
-
-    # Initial check for Tesseract (main process only)
-    tesseract_cmd_path = get_tesseract_cmd()
-    if not tesseract_cmd_path:
-        st.error("Tesseract OCR engine not found. Please ensure it's installed and in your system's PATH.")
-        st.info("On Streamlit Community Cloud, ensure you have a `packages.txt` file in your repository's root with `tesseract-ocr` and `tesseract-ocr-eng` listed.")
-        st.stop()
-
-    st.markdown("## ⚙️ Define Job Requirements & Screening Criteria")
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        jd_text = ""
-        job_roles = {"Upload my own": None}
-        if os.path.exists("data"):
-            for fname in os.listdir("data"):
-                if fname.endswith(".txt"):
-                    job_roles[fname.replace(".txt", "").replace("_", " ").title()] = os.path.join("data", fname)
-
-        jd_option = st.selectbox("📌 **Select a Pre-Loaded Job Role or Upload Your Own Job Description**", list(job_roles.keys()))
-        
-        jd_name_for_results = ""
-        if jd_option == "Upload my own":
-            jd_file = st.file_uploader("Upload Job Description (TXT, PDF)", type=["txt", "pdf"], help="Upload a .txt or .pdf file containing the job description.")
-            if jd_file:
-                # For JD, we read and extract text directly as it's a single file
-                jd_text = extract_text_from_file(jd_file.read(), jd_file.name, jd_file.type)
-                jd_name_for_results = jd_file.name.replace('.pdf', '').replace('.txt', '')
-            else:
-                jd_name_for_results = "Uploaded JD (No file selected)"
-        else:
-            jd_path = job_roles[jd_option]
-            if jd_path and os.path.exists(jd_path):
-                with open(jd_path, "r", encoding="utf-8") as f:
-                    jd_text = f.read()
-            jd_name_for_results = jd_option
-
-        if jd_text:
-            with st.expander("📝 View Loaded Job Description"):
-                st.text_area("Job Description Content", jd_text, height=200, disabled=True, label_visibility="collapsed")
-
-    with col2:
-        cutoff = st.slider("📈 **Minimum Score Cutoff (%)**", 0, 100, 75, key="min_score_cutoff_slider", help="Candidates scoring below this percentage will be flagged for closer review or considered less suitable.")
-        st.session_state['screening_cutoff_score'] = cutoff
-
-        min_experience = st.slider("💼 **Minimum Experience Required (Years)**", 0, 15, 2, key="min_exp_slider", help="Candidates with less than this experience will be noted.")
-        st.session_state['screening_min_experience'] = min_experience
-
-        max_experience = st.slider("⬆️ **Maximum Experience Allowed (Years)**", 0, 20, 10, key="max_exp_slider", help="Candidates with more than this experience might be considered overqualified or outside the target range.")
-        st.session_state['screening_max_experience'] = max_experience
-
-        min_cgpa = st.slider("🎓 **Minimum CGPA Required (4.0 Scale)**", 0.0, 4.0, 2.5, 0.1, key="min_cgpa_slider", help="Candidates with CGPA below this value (normalized to 4.0) will be noted.")
-        st.session_state['screening_min_cgpa'] = min_cgpa
-
-        st.markdown("---")
-        st.info("Once criteria are set, upload resumes below to begin screening.")
-
-    st.markdown("## 🎯 Skill Prioritization (Optional)")
-    st.caption("Assign higher importance to specific skills in the Job Description.")
-    
-    all_master_skills = sorted(list(MASTER_SKILLS))
-
-    col_weights_1, col_weights_2 = st.columns(2)
-    with col_weights_1:
-        high_priority_skills = st.multiselect(
-            "🌟 **High Priority Skills (Weight x3)**",
-            options=all_master_skills,
-            help="Select skills that are absolutely critical for this role. These will significantly boost the score if found."
-        )
-    with col_weights_2:
-        medium_priority_skills = st.multiselect(
-            "✨ **Medium Priority Skills (Weight x2)**",
-            options=[s for s in all_master_skills if s not in high_priority_skills],
-            help="Select skills that are very important, but not as critical as high priority ones."
-        )
-
-    resume_files = st.file_uploader("📄 **Upload Resumes (PDF, JPG, PNG)**", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, help="Upload one or more PDF or image resumes for screening.")
-
-    if jd_text and resume_files:
-        # Start overall timer
-        total_screening_start_time = time.time()
-
-        st.markdown("---")
-        st.markdown("## ☁️ Job Description Keyword Cloud")
-        st.caption("Visualizing the most frequent and important keywords from the Job Description.")
-        st.info("💡 To filter candidates by these skills, use the 'Filter Candidates by Skill' section below the main results table.")
-        
-        jd_words_for_cloud_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
-        jd_words_for_cloud = " ".join(list(jd_words_for_cloud_set))
-
-        if jd_words_for_cloud:
-            wordcloud = WordCloud(width=800, height=400, background_color='white', collocations=False).generate(jd_words_for_cloud)
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.imshow(wordcloud, interpolation='bilinear')
-            ax.axis('off')
-            st.pyplot(fig)
-            plt.close(fig)
-        else:
-            st.info("No significant keywords to display for the Job Description. Please ensure your JD has sufficient content or adjust your SKILL_CATEGORIES list.")
-        st.markdown("---")
-
-        results = []
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        total_resumes = len(resume_files)
-        
-        # --- PHASE 1: Parallel Text Extraction ---
-        start_time_extraction = time.time()
-        st.info(f"Step 1/3: Extracting text from {total_resumes} resumes concurrently...")
-        extracted_texts_info = [] # Stores (file_name, text) tuples
-        file_infos_for_extraction = []
-        for file in resume_files:
-            file_data_bytes = file.read() # Read file content into memory once
-            file_infos_for_extraction.append((file_data_bytes, file.name, file.type))
-
-        # Define a chunk size for processing
-        CHUNK_SIZE = 10 # Process 10 resumes at a time to manage memory and CPU usage
-
-        # Use ProcessPoolExecutor for CPU-bound text extraction
-        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor: 
-            for i in range(0, total_resumes, CHUNK_SIZE):
-                chunk_files_info = file_infos_for_extraction[i:i + CHUNK_SIZE]
-                text_futures = [executor.submit(_extract_text_wrapper, info) for info in chunk_files_info]
-                
-                for j, future in enumerate(as_completed(text_futures)):
-                    current_processed = i + j + 1
-                    status_text.text(f"Extracting text: Processing resume {current_processed} of {total_resumes}...")
-                    try:
-                        extracted_texts_info.append(future.result())
-                    except Exception as e:
-                        st.error(f"Error extracting text for {chunk_files_info[j][1]}: {e}")
-                        extracted_texts_info.append((chunk_files_info[j][1], f"[ERROR] {e}")) # Mark as error
-                    progress_bar.progress(current_processed / total_resumes)
-        
-        end_time_extraction = time.time()
-        print(f"Time taken for Text Extraction: {end_time_extraction - start_time_extraction:.2f} seconds")
-
-        progress_bar.empty()
-        status_text.empty()
-
-        # Separate successfully extracted texts from failed ones
-        successfully_extracted_texts_map = {name: text for name, text in extracted_texts_info if not text.startswith("[ERROR]")}
-        failed_extraction_results = [{
-            "File Name": name,
-            "Candidate Name": name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
-            "Score (%)": 0, "Years Experience": 0, "CGPA (4.0 Scale)": None,
-            "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
-            "Languages": "Not Found", "Education Details": "Not Found",
-            "Work History": "Not Found", "Project Details": "Not Found",
-            "AI Suggestion": f"Error: {text.replace('[ERROR] ', '')}",
-            "Detailed HR Assessment": f"Error processing resume: {text.replace('[ERROR] ', '')}",
-            "Matched Keywords": "", "Missing Skills": "",
-            "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
-            "Semantic Similarity": 0.0, "Resume Raw Text": "",
-            "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
-            "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
-            "Tag": "❌ Text Extraction Error"
-        } for name, text in extracted_texts_info if text.startswith("[ERROR]")]
-
-        if not successfully_extracted_texts_map:
-            st.warning("No resumes had readable text extracted. Please check the files and try again.")
-            st.session_state['comprehensive_df'] = pd.DataFrame()
-            return
-        
-        # --- PHASE 2: Batch Embedding Generation ---
-        start_time_embedding = time.time()
-        st.info(f"Step 2/3: Generating embeddings for {len(successfully_extracted_texts_map)} resumes and JD...")
-        jd_clean = clean_text(jd_text)
-        jd_embedding = global_sentence_model.encode([jd_clean])[0]
-
-        resume_names_for_embedding = list(successfully_extracted_texts_map.keys())
-        resume_texts_for_embedding = [successfully_extracted_texts_map[name] for name in resume_names_for_embedding]
-        
-        # Use batch_size for encoding all resume texts
-        # Increased batch_size from 64 to 128 for better performance
-        resume_embeddings_array = global_sentence_model.encode(
-            resume_texts_for_embedding, 
-            batch_size=128, # Optimized batch size
-            show_progress_bar=False # Streamlit handles progress bar
-        )
-        
-        # Create a mapping from file_name to its embedding
-        resume_embedding_map = {name: embed for name, embed in zip(resume_names_for_embedding, resume_embeddings_array)}
-        
-        end_time_embedding = time.time()
-        print(f"Time taken for Embedding Generation: {end_time_embedding - start_time_embedding:.2f} seconds")
-
-        progress_bar.empty()
-        status_text.empty()
-
-        # --- PHASE 3: Parallel Individual Resume Analysis ---
-        start_time_analysis = time.time()
-        st.info(f"Step 3/3: Processing {len(successfully_extracted_texts_map)} resumes with AI models concurrently...")
-        
-        # Prepare arguments for the process pool
-        processing_args = []
-        for file_name in resume_names_for_embedding:
-            text = successfully_extracted_texts_map[file_name]
-            resume_embedding = resume_embedding_map[file_name]
-            processing_args.append((
-                file_name, text, jd_text, jd_embedding, resume_embedding,
-                jd_name_for_results, high_priority_skills, medium_priority_skills, max_experience,
-                global_ml_model
-            ))
-        
-        total_successful_resumes = len(processing_args)
-        current_analysis_processed = 0
-
-        # Use ProcessPoolExecutor for CPU-bound analysis
-        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor: 
-            for i in range(0, total_successful_resumes, CHUNK_SIZE):
-                chunk_processing_args = processing_args[i:i + CHUNK_SIZE]
-                analysis_futures = [executor.submit(_process_single_resume_for_screener_page, *args) for args in chunk_processing_args]
-                
-                for j, future in enumerate(as_completed(analysis_futures)):
-                    current_analysis_processed = i + j + 1
-                    status_text.text(f"Analyzing resumes: Processing candidate {current_analysis_processed} of {total_successful_resumes}...")
-                    try:
-                        result = future.result()
-                        results.append(result)
-                    except Exception as exc:
-                        st.error(f"Resume processing generated an exception for {chunk_processing_args[j][0]}: {exc}")
-                    progress_bar.progress(current_analysis_processed / total_successful_resumes)
-        
-        # Add results from failed extractions back to the list
-        results.extend(failed_extraction_results)
-
-        end_time_analysis = time.time()
-        print(f"Time taken for Individual Resume Analysis: {end_time_analysis - start_time_analysis:.2f} seconds")
-
-        progress_bar.empty()
-        status_text.empty()
-        
-        if not results:
-            st.warning("No resumes were successfully processed. Please check the files and try again.")
-            st.session_state['comprehensive_df'] = pd.DataFrame()
-            return
-
-        st.session_state['comprehensive_df'] = pd.DataFrame(results).sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
-        
-        st.session_state['comprehensive_df'].to_csv("results.csv", index=False)
-
-        total_screening_end_time = time.time()
-        print(f"Total time for entire screening process: {total_screening_end_time - total_screening_start_time:.2f} seconds")
-
-
-        st.markdown("---")
-        st.markdown("## 📊 Candidate Score Comparison")
-        st.caption("Visual overview of how each candidate ranks against the job requirements.")
-        dark_mode = st.session_state.get("dark_mode_main", False)
-
-        if not st.session_state['comprehensive_df'].empty:
-            fig, ax = plt.subplots(figsize=(12, 7))
-            colors = ['#4CAF50' if s >= cutoff else '#FFC107' if s >= (cutoff * 0.75) else '#F44346' for s in st.session_state['comprehensive_df']['Score (%)']]
-            bars = ax.bar(st.session_state['comprehensive_df']['Candidate Name'], st.session_state['comprehensive_df']['Score (%)'], color=colors)
-            ax.set_xlabel("Candidate", fontsize=14, color='white' if dark_mode else 'black')
-            ax.set_ylabel("Score (%)", fontsize=14, color='white' if dark_mode else 'black')
-            ax.set_title("Resume Screening Scores Across Candidates", fontsize=16, fontweight='bold', color='white' if dark_mode else 'black')
-            ax.set_ylim(0, 100)
-            plt.xticks(rotation=60, ha='right', fontsize=10, color='white' if dark_mode else 'black')
-            plt.yticks(fontsize=10, color='white' if dark_mode else 'black')
-            ax.tick_params(axis='x', colors='white' if dark_mode else 'black')
-            ax.tick_params(axis='y', colors='white' if dark_mode else 'black')
-
-            if dark_mode:
-                fig.patch.set_facecolor('#1E1E1E')
-                ax.set_facecolor('#2D2D2D')
-                ax.spines['bottom'].set_color('white')
-                ax.spines['top'].set_color('white')
-                ax.spines['left'].set_color('white')
-                ax.spines['right'].set_color('white')
-            
-            for bar in bars:
-                yval = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f"{yval:.1f}", ha='center', va='bottom', fontsize=9, color='white' if dark_mode else 'black')
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-        else:
-            st.info("Upload resumes to see a comparison chart.")
-
-        st.markdown("---")
-
-        st.markdown("## 👑 Top Candidate AI Assessment")
-        st.caption("A concise, AI-powered assessment for the most suitable candidate.")
-        
-        if not st.session_state['comprehensive_df'].empty:
-            top_candidate = st.session_state['comprehensive_df'].iloc[0]
-            
-            cgpa_display = f"{top_candidate['CGPA (4.0 Scale)']:.2f}" if pd.notna(top_candidate['CGPA (4.0 Scale)']) else "N/A"
-            semantic_sim_display = f"{top_candidate['Semantic Similarity']:.2f}" if pd.notna(top_candidate['Semantic Similarity']) else "N/A"
-
-            st.markdown(f"### **{top_candidate['Candidate Name']}**")
-            st.markdown(f"**Score:** {top_candidate['Score (%)']:.2f}% | **Experience:** {top_candidate['Years Experience']:.1f} years | **CGPA:** {cgpa_display} (4.0 Scale) | **Semantic Similarity:** {semantic_sim_display}")
-            
-            if top_candidate['Certificate Rank'] != "Not Applicable":
-                st.markdown(f"**ScreenerPro Certification:** {top_candidate['Certificate Rank']}")
-
-            st.markdown(f"**AI Assessment:**")
-            st.markdown(top_candidate['Detailed HR Assessment'])
-            
-            st.markdown("#### Matched Skills Breakdown:")
-            if top_candidate['Matched Keywords (Categorized)']:
-                if isinstance(top_candidate['Matched Keywords (Categorized)'], dict):
-                    for category, skills in top_candidate['Matched Keywords (Categorized)'].items():
-                        st.write(f"**{category}:** {', '.join(skills)}")
-                else:
-                    st.write(f"Raw Matched Keywords: {top_candidate['Matched Keywords']}")
-            else:
-                st.write("No categorized matched skills found.")
-
-            st.markdown("#### Missing Skills Breakdown (from JD):")
-            jd_raw_skills_set, jd_categorized_skills_for_top = extract_relevant_keywords(jd_text, all_master_skills)
-            resume_raw_skills_set_for_top, _ = extract_relevant_keywords(top_candidate['Resume Raw Text'], all_master_skills)
-            
-            missing_skills_for_top = jd_raw_skills_set.difference(resume_raw_skills_set_for_top)
-            
-            if missing_skills_for_top:
-                missing_categorized = collections.defaultdict(list)
-                for skill in missing_skills_for_top:
-                    found_category = False
-                    for category, skills_in_category in SKILL_CATEGORIES.items():
-                        if skill.lower() in [s.lower() for s in skills_in_category]:
-                            missing_categorized[category].append(skill)
-                            found_category = True
-                            break
-                    if not found_category:
-                        missing_categorized["Uncategorized"].append(skill)
-                
-                if missing_categorized:
-                    for category, skills in missing_categorized.items():
-                        st.write(f"**{category}:** {', '.join(skills)}")
-                else:
-                    st.write("No categorized missing skills found for this candidate relative to the JD.")
-            else:
-                st.write("No missing skills found for this candidate relative to the JD.")
-
-
-            if top_candidate['Email'] != "Not Found":
-                mailto_link_top = create_mailto_link(
-                    recipient_email=top_candidate['Email'],
-                    candidate_name=top_candidate['Candidate Name'],
-                    job_title=jd_name_for_results if jd_name_for_results != "Uploaded JD (No file selected)" else "Job Opportunity"
-                )
-                st.markdown(f'<a href="{mailto_link_top}" target="_blank"><button style="background-color:#00cec9;color:white;border:none;padding:10px 20px;text-align:center;text-decoration:none;display:inline-block;font-size:16px;margin:4px 2px;cursor:pointer;border-radius:8px;">📧 Invite Top Candidate for Interview</button></a>', unsafe_allow_html=True)
-            else:
-                st.info(f"Email address not found for {top_candidate['Candidate Name']}. Cannot send automated invitation.")
-            
-            st.markdown("---")
-            st.info("For detailed analytics, matched keywords, and missing skills for ALL candidates, please navigate to the **Analytics Dashboard**.")
-
-        else:
-            st.info("No candidates processed yet to determine the top candidate.")
-
-
-        st.markdown("## 🌟 Candidates Meeting Criteria Overview")
-        st.caption("Candidates automatically identified as meeting your defined score, experience, and CGPA criteria.")
-
-        auto_shortlisted_candidates = st.session_state['comprehensive_df'][
-            (st.session_state['comprehensive_df']['Score (%)'] >= cutoff) & 
-            (st.session_state['comprehensive_df']['Years Experience'] >= min_experience) &
-            (st.session_state['comprehensive_df']['Years Experience'] <= max_experience)
-        ].copy()
-
-        if 'CGPA (4.0 Scale)' in auto_shortlisted_candidates.columns and auto_shortlisted_candidates['CGPA (4.0 Scale)'].notnull().any():
-            auto_shortlisted_candidates = auto_shortlisted_candidates[
-                (auto_shortlisted_candidates['CGPA (4.0 Scale)'].isnull()) | (auto_shortlisted_candidates['CGPA (4.0 Scale)'] >= min_cgpa)
-            ]
-
-        if not auto_shortlisted_candidates.empty:
-            st.success(f"**{len(auto_shortlisted_candidates)}** candidate(s) meet your specified criteria (Score ≥ {cutoff}%, Experience {min_experience}-{max_experience} years, and minimum CGPA ≥ {min_cgpa} or N/A).")
-            
-            display_auto_shortlisted_cols = [
-                'Candidate Name',
-                'Score (%)',
-                'Years Experience',
-                'CGPA (4.0 Scale)',
-                'Semantic Similarity',
-                'Email',
-                'AI Suggestion',
-                'Certificate Rank'
-            ]
-            
-            st.dataframe(
-                auto_shortlisted_candidates[display_auto_shortlisted_cols],
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Score (%)": st.column_config.ProgressColumn(
-                        "Score (%)",
-                        help="Matching score against job requirements",
-                        format="%.1f", 
-                        min_value=0,
-                        max_value=100,
-                    ),
-                    "Years Experience": st.column_config.NumberColumn(
-                        "Years Experience",
-                        help="Total years of professional experience",
-                        format="%.1f years",
-                    ),
-                    "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                        "CGPA (4.0 Scale)",
-                        help="Candidate's CGPA normalized to a 4.0 scale",
-                        format="%.2f",
-                        min_value=0.0,
-                        max_value=4.0
-                    ),
-                    "Semantic Similarity": st.column_config.NumberColumn(
-                        "Semantic Similarity",
-                        help="Conceptual similarity between JD and Resume (higher is better)",
-                        format="%.2f",
-                        min_value=0,
-                        max_value=1
-                    ),
-                    "AI Suggestion": st.column_config.Column(
-                        "AI Suggestion",
-                        help="AI's concise overall assessment and recommendation"
-                    ),
-                    "Certificate Rank": st.column_config.Column(
-                        "Certificate Rank",
-                        help="ScreenerPro Certification Level"
-                    )
-                }
-            )
-            st.info("For individual detailed AI assessments and action steps, please refer to the table below.")
-
-        else:
-            st.warning(f"No candidates met the defined screening criteria (score cutoff, experience between {min_experience}-{max_experience} years, and minimum CGPA). You might consider adjusting the sliders or reviewing the uploaded resumes/JD.")
-
-        st.markdown("---")
-
-        st.markdown("## 📋 Comprehensive Candidate Results Table")
-        st.caption("Full details for all processed resumes. Use the filters below to refine the view.")
-        
-        st.markdown("### 🔍 Filter Candidates")
-        filter_col1, filter_col2, filter_col3 = st.columns(3)
-        filter_col4, filter_col5, filter_col6 = st.columns(3)
-
-        with filter_col1:
-            jd_raw_skills_set, _ = extract_relevant_keywords(jd_text, all_master_skills)
-            all_unique_jd_skills = sorted(list(jd_raw_skills_set))
-            selected_filter_skills = st.multiselect(
-                "**Skills (AND logic):**",
-                options=all_unique_jd_skills,
-                help="Only candidates possessing ALL selected skills will be shown."
-            )
-        with filter_col2:
-            search_query = st.text_input(
-                "**Keyword Search:**",
-                placeholder="Name, Email, Location, Raw Text...",
-                help="Search for text across Candidate Name, Email, Location, and Resume Raw Text."
-            )
-        with filter_col3:
-            selected_tags = st.multiselect(
-                "**AI Tag:**",
-                options=["👑 Exceptional Match", "🔥 Strong Candidate", "✨ Promising Fit", "⚠️ Needs Review", "❌ Limited Match"],
-                help="Filter by AI-generated assessment tags."
-            )
-        
-        with filter_col4:
-            min_score_filter, max_score_filter = st.slider(
-                "**Score Range (%):**",
-                0, 100, (0, 100), key="score_range_filter", help="Filter candidates by their overall score range."
-            )
-        with filter_col5:
-            min_exp_filter, max_exp_filter = st.slider(
-                "**Experience Range (Years):**",
-                0, 20, (0, 20), key="exp_range_filter", help="Filter candidates by their years of experience range."
-            )
-        with filter_col6:
-            min_cgpa_filter, max_cgpa_filter = st.slider(
-                "**CGPA Range (4.0 Scale):**",
-                0.0, 4.0, (0.0, 4.0), 0.1, key="cgpa_range_filter", help="Filter candidates by their CGPA range (normalized to 4.0)."
-            )
-        
-        filter_col_loc, filter_col_lang = st.columns(2)
-        with filter_col_loc:
-            all_locations = sorted(st.session_state['comprehensive_df']['Location'].unique())
-            selected_locations = st.multiselect(
-                "**Location:**",
-                options=all_locations,
-                help="Filter by candidate location."
-            )
-        with filter_col_lang:
-            all_languages_from_df = sorted(list(set(
-                lang.strip() for langs_str in st.session_state['comprehensive_df']['Languages'] if langs_str != "Not Found" for lang in langs_str.split(',')
-            )))
-            selected_languages = st.multiselect(
-                "**Languages:**",
-                options=all_languages_from_df,
-                help="Filter by languages spoken by the candidate."
-            )
-
-
-        filtered_display_df = st.session_state['comprehensive_df'].copy()
-
-        if selected_filter_skills:
-            for skill in selected_filter_skills:
-                filtered_display_df = filtered_display_df[filtered_display_df['Matched Keywords'].str.contains(r'\b' + re.escape(skill) + r'\b', case=False, na=False)]
-
-        if search_query:
-            search_query_lower = search_query.lower()
-            filtered_display_df = filtered_display_df[
-                filtered_display_df['Candidate Name'].str.lower().str.contains(search_query_lower, na=False) |
-                filtered_display_df['Email'].str.lower().str.contains(search_query_lower, na=False) |
-                filtered_display_df['Phone Number'].str.lower().str.contains(search_query_lower, na=False) |
-                filtered_display_df['Location'].str.lower().str.contains(search_query_lower, na=False) |
-                filtered_display_df['Resume Raw Text'].str.lower().str.contains(search_query_lower, na=False)
-            ]
-        
-        if selected_tags:
-            filtered_display_df = filtered_display_df[filtered_display_df['Tag'].isin(selected_tags)]
-        
-        filtered_display_df = filtered_display_df[
-            (filtered_display_df['Score (%)'] >= min_score_filter) & (filtered_display_df['Score (%)'] <= max_score_filter)
-        ]
-        filtered_display_df = filtered_display_df[
-            (filtered_display_df['Years Experience'] >= min_exp_filter) & (filtered_display_df['Years Experience'] <= max_exp_filter)
-        ]
-        if not filtered_display_df.empty and 'CGPA (4.0 Scale)' in filtered_display_df.columns:
-            if not (min_cgpa_filter == 0.0 and max_cgpa_filter == 4.0):
-                filtered_display_df = filtered_display_df[
-                    ((filtered_display_df['CGPA (4.0 Scale)'].notnull()) & 
-                     (filtered_display_df['CGPA (4.0 Scale)'] >= min_cgpa_filter) & 
-                     (filtered_display_df['CGPA (4.0 Scale)'] <= max_cgpa_filter))
-                ]
-        
-        if selected_locations:
-            location_pattern = '|'.join([re.escape(loc) for loc in selected_locations])
-            filtered_display_df = filtered_display_df[
-                filtered_display_df['Location'].str.contains(location_pattern, case=False, na=False)
-            ]
-        
-        if selected_languages:
-            language_pattern = '|'.join([re.escape(lang) for lang in selected_languages])
-            filtered_display_df = filtered_display_df[
-                filtered_display_df['Languages'].str.contains(language_pattern, case=False, na=False)
-            ]
-
-        comprehensive_cols = [
-            'Candidate Name',
-            'Score (%)',
-            'Years Experience',
-            'CGPA (4.0 Scale)',
-            'Email',
-            'Phone Number',
-            'Location',
-            'Languages',
-            'Education Details',
-            'Work History',
-            'Project Details',
-            'Semantic Similarity',
-            'Tag',
-            'AI Suggestion',
-            'Certificate Rank',
-            'Matched Keywords',
-            'Missing Skills',
-            'JD Used',
-            'Date Screened',
-            'Certificate ID'
-        ]
-        
-        final_display_cols = [col for col in comprehensive_cols if col in filtered_display_df.columns]
-
-        st.dataframe(
-            filtered_display_df[final_display_cols],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Score (%)": st.column_config.ProgressColumn(
-                    "Score (%)",
-                    help="Matching score against job requirements",
-                    format="%.1f",
-                    min_value=0,
-                    max_value=100,
-                ),
-                "Years Experience": st.column_config.NumberColumn(
-                    "Years Experience",
-                    help="Total years of professional experience",
-                    format="%.1f years",
-                ),
-                "CGPA (4.0 Scale)": st.column_config.NumberColumn(
-                    "CGPA (4.0 Scale)",
-                    help="Candidate's CGPA normalized to a 4.0 scale",
-                    format="%.2f",
-                    min_value=0.0,
-                    max_value=4.0
-                ),
-                "Semantic Similarity": st.column_config.NumberColumn(
-                    "Semantic Similarity",
-                    help="Conceptual similarity between JD and Resume (higher is better)",
-                    format="%.2f",
-                    min_value=0,
-                    max_value=1
-                ),
-                "AI Suggestion": st.column_config.Column(
-                    "AI Suggestion",
-                    help="AI's concise overall assessment and recommendation"
-                ),
-                "Certificate Rank": st.column_config.Column(
-                    "Certificate Rank",
-                    help="ScreenerPro Certification Level",
-                    width="small"
-                ),
-                "Matched Keywords": st.column_config.Column(
-                    "Matched Keywords",
-                    help="Keywords found in both JD and Resume"
-                ),
-                "Missing Skills": st.column_config.Column(
-                    "Missing Skills",
-                    help="Key skills from JD not found in Resume"
-                ),
-                "JD Used": st.column_config.Column(
-                    "JD Used",
-                    help="Job Description used for this screening"
-                ),
-                "Date Screened": st.column_config.DateColumn(
-                    "Date Screened",
-                    help="Date when the resume was screened",
-                    format="YYYY-MM-DD"
-                ),
-                "Phone Number": st.column_config.Column(
-                    "Phone Number",
-                    help="Candidate's phone number extracted from resume"
-                ),
-                "Location": st.column_config.Column(
-                    "Location",
-                    help="Candidate's location extracted from resume"
-                ),
-                "Languages": st.column_config.Column(
-                    "Languages",
-                    help="Languages spoken by the candidate"
-                ),
-                "Education Details": st.column_config.Column(
-                    "Education Details",
-                    help="Structured education history (University, Degree, Major, Year)"
-                ),
-                "Work History": st.column_config.Column(
-                    "Work History",
-                    help="Structured work experience (Company, Title, Dates)"
-                ),
-                "Project Details": st.column_config.Column(
-                    "Project Details",
-                    help="Structured project experience (Title, Description, Technologies)"
-                ),
-                "Certificate ID": st.column_config.Column(
-                    "Certificate ID",
-                    help="Unique ID for the certificate",
-                    disabled=True,
-                    width="hidden"
-                )
-            }
-        )
-        
-        st.markdown("---")
-        st.markdown("## 🏆 Generate Candidate Certificates")
-        st.caption("Select a candidate to view or download their ScreenerPro Certification.")
-
-        if not st.session_state['comprehensive_df'].empty:
-            candidate_names_for_cert = st.session_state['comprehensive_df']['Candidate Name'].tolist()
-            selected_candidate_name_for_cert = st.selectbox(
-                "**Select Candidate for Certificate:**",
-                options=candidate_names_for_cert,
-                key="certificate_candidate_select"
-            )
-
-            if selected_candidate_name_for_cert:
-                candidate_rows = st.session_state['comprehensive_df'][
-                    st.session_state['comprehensive_df']['Candidate Name'] == selected_candidate_name_for_cert
-                ]
-                
-                if not candidate_rows.empty:
-                    candidate_data_for_cert = candidate_rows.iloc[0].to_dict()
-
-                    if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
-                        # Generate HTML content for the certificate (for preview and PDF conversion)
-                        certificate_html_content = generate_certificate_html(candidate_data_for_cert)
-                        st.session_state['certificate_html_content'] = certificate_html_content # Store for preview
-
-                        # Generate PDF content
-                        certificate_pdf_content = generate_certificate_pdf(certificate_html_content)
-
-                        col_cert_view, col_cert_download = st.columns(2)
-                        with col_cert_view:
-                            if st.button("👁️ View Certificate (HTML Preview)", key="view_cert_button"):
-                                # This button just triggers the preview, content is already generated
-                                pass 
-                                
-                        with col_cert_download:
-                            if certificate_pdf_content:
-                                st.download_button(
-                                    label="⬇️ Download Certificate (PDF)",
-                                    data=certificate_pdf_content,
-                                    file_name=f"ScreenerPro_Certificate_{candidate_data_for_cert['Candidate Name'].replace(' ', '_')}.pdf",
-                                    mime="application/pdf",
-                                    key="download_cert_pdf_button"
-                                )
-                            else:
-                                st.warning("PDF generation failed, cannot provide download.")
-                        
-                        # Automatically send email if certificate PDF is generated and email is available
-                        if candidate_data_for_cert.get('Email') and candidate_data_for_cert['Email'] != "Not Found":
-                            if certificate_pdf_content:
-                                gmail_address = st.secrets.get("GMAIL_ADDRESS")
-                                gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD")
-                                send_certificate_email(
-                                    recipient_email=candidate_data_for_cert['Email'],
-                                    candidate_name=candidate_data_for_cert['Candidate Name'],
-                                    score=candidate_data_for_cert['Score (%)'],
-                                    certificate_pdf_content=certificate_pdf_content,
-                                    gmail_address=gmail_address,
-                                    gmail_app_password=gmail_app_password
-                                )
-                            else:
-                                st.error("PDF certificate could not be generated, so email could not be sent.")
-                        else:
-                            st.info(f"No email address found for {candidate_data_for_cert['Candidate Name']}. Certificate could not be sent automatically.")
-
-                    else:
-                        st.info(f"{selected_candidate_name_for_cert} does not qualify for a ScreenerPro Certificate at this time.")
-                else:
-                    st.warning(f"Selected candidate '{selected_candidate_name_for_cert}' not found in the processed results. Please re-select or re-process resumes.")
-        else:
-            st.info("No candidates available to generate certificates for. Please screen resumes first.")
-
-    if st.session_state['certificate_html_content']:
-        st.markdown("---")
-        st.markdown("### Generated Certificate Preview (HTML)")
-        st.components.v1.html(st.session_state['certificate_html_content'], height=600, scrolling=True)
-        st.markdown("---")
-
-
-    else:
-        st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
-
-@st.cache_data
-def generate_certificate_html(candidate_data):
-    html_template = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ScreenerPro Certification - Candidate Name</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f8f9fa; /* Light background for print compatibility */
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 20px;
-            box-sizing: border-box;
-        }
-        .certificate-container {
-            width: 100%;
-            max-width: 800px;
-            background: linear-gradient(145deg, #ffffff, #e6e6e6);
-            border: 10px solid #00cec9; /* Main border color */
-            border-radius: 20px;
-            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
-            padding: 40px;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-        }
-        .logo-text {
-            font-family: 'Playfair Display', serif; /* A more elegant font for the logo */
-            font-size: 2.8em; /* Larger logo text */
-            color: #00cec9;
-            font-weight: 700;
-            margin-bottom: 15px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-        }
-        .certificate-header {
-            font-family: 'Playfair Display', serif;
-            font-size: 2.5em;
-            color: #34495e; /* Darker text for header */
-            margin-bottom: 20px;
-            font-weight: 700;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.05);
-        }
-        .certificate-subheader {
-            font-size: 1.2em;
-            color: #555;
-            margin-bottom: 30px;
-        }
-        .certificate-body {
-            margin-bottom: 40px;
-        }
-        .certificate-body p {
-            font-size: 1.1em;
-            line-height: 1.6;
-            color: #333;
-        }
-        .candidate-name {
-            font-family: 'Playfair Display', serif;
-            font-size: 3.2em; /* Even larger name */
-            color: #00cec9; /* Teal for the name */
-            margin: 25px 0;
-            font-weight: 700;
-            border-bottom: 3px dashed #b0e0e6; /* Lighter dashed line */
-            display: inline-block;
-            padding-bottom: 8px;
-            animation: pulse 1.5s infinite alternate; /* Subtle animation */
-        }
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            100% { transform: scale(1.02); }
-        }
-        .score-rank {
-            font-size: 1.6em; /* Larger score/rank */
-            color: #28a745; /* Green for success */
-            font-weight: 700;
-            margin-top: 20px;
-            padding: 5px 15px;
-            background-color: #e6ffe6; /* Light green background */
-            border-radius: 10px;
-            display: inline-block;
-        }
-        .date-id {
-            font-size: 0.95em;
-            color: #777;
-            margin-top: 35px;
-        }
-        .footer-text {
-            font-size: 0.85em;
-            color: #999;
-            margin-top: 40px;
-        }
-        /* Print styles */
-        @media print {
-            body {
-                background-color: #fff;
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-            }
-            .certificate-container {
-                border: 5px solid #00cec9;
-                box-shadow: none;
-            }
-            .logo-text, .certificate-header, .candidate-name, .score-rank {
-                color: #00cec9 !important; /* Ensure colors are printed */
-                text-shadow: none !important;
-            }
-            .candidate-name {
-                animation: none !important; /* Disable animation for print */
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="certificate-container">
-        <div class="logo-text">ScreenerPro</div>
-        <div class="certificate-header">Certification of Excellence</div>
-        <div class="certificate-subheader">This is to proudly certify that</div>
-        <div class="candidate-name">{{CANDIDATE_NAME}}</div>
-        <div class="certificate-body">
-            <p>has successfully completed the comprehensive AI-powered screening process by ScreenerPro and achieved a distinguished ranking of</p>
-            <div class="score-rank">
-                {{CERTIFICATE_RANK}}
-            </div>
-            <p>demonstrating an outstanding Screener Score of **{{SCORE}}%**.</p>
-            <p>This certification attests to their highly relevant skills, extensive experience, and strong alignment with the demanding requirements of modern professional roles. It signifies their readiness to excel in challenging environments and contribute significantly to organizational success.</p>
-        </div>
-        <div class="date-id">
-            Awarded on: {{DATE_SCREENED}}<br>
-            Certificate ID: {{CERTIFICATE_ID}}
-        </div>
-        <div class="footer-text">
-            This certificate is digitally verified by ScreenerPro.
-        </div>
-    </div>
-</body>
-</html>
-    """
-
-    candidate_name = candidate_data.get('Candidate Name', 'Candidate Name')
-    score = candidate_data.get('Score (%)', 0.0)
-    certificate_rank = candidate_data.get('Certificate Rank', 'Not Applicable')
-    date_screened = candidate_data.get('Date Screened', datetime.now().date()).strftime("%B %d, %Y")
-    certificate_id = candidate_data.get('Certificate ID', 'N/A')
-    
-    html_content = html_template.replace("{{CANDIDATE_NAME}}", candidate_name)
-    html_content = html_content.replace("{{SCORE}}", f"{score:.1f}")
-    html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
-    html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
-    html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
-
     return html_content
 
-if __name__ == "__main__":
-    resume_screener_page()
+def send_email_with_certificate(recipient_email, candidate_name, certificate_pdf_bytes):
+    sender_email = os.environ.get("EMAIL_SENDER_ADDRESS")
+    sender_password = os.environ.get("EMAIL_SENDER_PASSWORD")
+
+    if not sender_email or not sender_password:
+        log_activity_screener("❌ Email sender credentials not configured. Skipping email.")
+        st.warning("Email sender credentials not configured. Certificate email will not be sent.")
+        return False
+
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = recipient_email
+    msg['Subject'] = f"ScreenerPro Certificate for {candidate_name}"
+
+    body = f"""
+    Dear {candidate_name},
+
+    Congratulations on successfully completing the ScreenerPro assessment!
+
+    Please find your Certificate of Achievement attached.
+
+    You can also verify your certificate online by scanning the QR code on the certificate or by visiting the verification page.
+
+    Best regards,
+    The ScreenerPro Team
+    """
+    msg.attach(MIMEText(body, 'plain'))
+
+    part = MIMEBase('application', 'octet-stream')
+    part.set_payload(certificate_pdf_bytes)
+    encoders.encode_base64(part)
+    part.add_header('Content-Disposition', f"attachment; filename=ScreenerPro_Certificate_{candidate_name.replace(' ', '_')}.pdf")
+    msg.attach(part)
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        text = msg.as_string()
+        server.sendmail(sender_email, recipient_email, text)
+        server.quit()
+        log_activity_screener(f"✅ Certificate email sent to {recipient_email}")
+        return True
+    except Exception as e:
+        log_activity_screener(f"❌ Failed to send email to {recipient_email}: {e}")
+        st.error(f"Failed to send email to {recipient_email}: {e}")
+        return False
+
+# Function to run in parallel for text extraction
+def _parallel_extract_text(file_data):
+    file_bytes, file_name, file_type = file_data
+    try:
+        extracted_text = extract_text_from_file(file_bytes, file_name, file_type)
+        return file_name, extracted_text, None # Return None for error if successful
+    except Exception as e:
+        return file_name, None, str(e) # Return error message if extraction fails
+
+def resume_screener_page(job_description_embedding, firestore_rest_api_base_url, firebase_web_api_key, app_id):
+    st.title("📄 Resume Screener Pro")
+    st.markdown("Upload resumes (PDF or Image) and a job description to find the best candidates.")
+
+    if 'resume_data' not in st.session_state:
+        st.session_state.resume_data = []
+    if 'job_desc_text' not in st.session_state:
+        st.session_state.job_desc_text = ""
+    if 'job_desc_embedding' not in st.session_state:
+        st.session_state.job_desc_embedding = None
+
+    # Job Description Input
+    with st.expander("Job Description", expanded=True):
+        st.markdown("**Enter the Job Description:**")
+        new_job_desc_text = st.text_area("Job Description", height=200, label_visibility="collapsed", key="job_desc_input")
+        
+        if new_job_desc_text and new_job_desc_text != st.session_state.job_desc_text:
+            st.session_state.job_desc_text = new_job_desc_text
+            cleaned_jd = clean_text(new_job_desc_text)
+            if global_sentence_model:
+                st.session_state.job_desc_embedding = global_sentence_model.encode([cleaned_jd])[0]
+                st.success("Job Description processed and embedded!")
+            else:
+                st.error("SentenceTransformer model not loaded. Cannot process Job Description.")
+                st.session_state.job_desc_embedding = None
+        elif not new_job_desc_text:
+            st.session_state.job_desc_text = ""
+            st.session_state.job_desc_embedding = None
+            st.info("Please enter a job description to begin screening.")
+
+    # Resume Upload
+    st.markdown("---")
+    st.markdown("**Upload Resumes (PDF or Image files):**")
+    uploaded_files = st.file_uploader("Choose files", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True, label_visibility="collapsed")
+
+    if uploaded_files and st.session_state.job_desc_embedding is not None:
+        if st.button("🚀 Start Screening"):
+            st.session_state.resume_data = [] # Clear previous results
+            
+            total_files = len(uploaded_files)
+            progress_bar = st.progress(0, text="Starting resume processing...")
+            status_text = st.empty()
+            
+            all_file_data_for_extraction = []
+            for i, uploaded_file in enumerate(uploaded_files):
+                file_bytes = uploaded_file.read()
+                file_name = uploaded_file.name
+                file_type = uploaded_file.type
+                all_file_data_for_extraction.append((file_bytes, file_name, file_type))
+
+            extracted_results = []
+            extracted_texts_for_embedding = []
+            resume_metadata = [] # To store original file info and extracted text
+
+            start_time = time.time()
+
+            # Phase 1: Parallel Text Extraction
+            status_text.info(f"Phase 1/2: Extracting text from {total_files} resumes in parallel...")
+            log_activity_screener(f"Starting parallel text extraction for {total_files} resumes.")
+            
+            with ProcessPoolExecutor() as executor:
+                futures = {executor.submit(_parallel_extract_text, data): data[1] for data in all_file_data_for_extraction}
+                
+                for i, future in enumerate(as_completed(futures)):
+                    file_name_original = futures[future]
+                    try:
+                        file_name, extracted_text, error = future.result()
+                        if error:
+                            st.error(f"Error processing {file_name}: {error}")
+                            log_activity_screener(f"Error extracting text from {file_name}: {error}")
+                        else:
+                            extracted_results.append((file_name, extracted_text))
+                            extracted_texts_for_embedding.append(clean_text(extracted_text))
+                            log_activity_screener(f"Text extracted from {file_name}.")
+                    except Exception as e:
+                        st.error(f"Unexpected error during text extraction for {file_name_original}: {e}")
+                        log_activity_screener(f"Unexpected error during text extraction for {file_name_original}: {e}")
+                    
+                    progress = (i + 1) / total_files
+                    progress_bar.progress(progress, text=f"Extracted text from {i+1}/{total_files} resumes...")
+
+            extraction_end_time = time.time()
+            log_activity_screener(f"Text extraction phase completed in {extraction_end_time - start_time:.2f} seconds.")
+
+            # Phase 2: Batch Embedding and Further Processing
+            if extracted_texts_for_embedding:
+                status_text.info(f"Phase 2/2: Generating embeddings and analyzing {len(extracted_texts_for_embedding)} resumes...")
+                log_activity_screener(f"Starting batch embedding for {len(extracted_texts_for_embedding)} resumes.")
+                
+                # Generate all embeddings in one batch
+                all_resume_embeddings = global_sentence_model.encode(extracted_texts_for_embedding, show_progress_bar=True)
+                
+                log_activity_screener("Batch embedding completed.")
+
+                # Process each resume sequentially after getting its embedding
+                for i, (file_name, full_text) in enumerate(extracted_results):
+                    if "[ERROR]" in full_text:
+                        st.error(f"Skipping {file_name} due to prior text extraction error.")
+                        st.session_state.resume_data.append({
+                            "File Name": file_name,
+                            "Status": "Error: Text extraction failed",
+                            "Score": 0,
+                            "Semantic Similarity": 0,
+                            "AI Suggestion": "N/A",
+                            "Extracted Skills": "N/A",
+                            "Categorized Skills": {},
+                            "Years of Experience": 0,
+                            "Email": "N/A",
+                            "Phone": "N/A",
+                            "Location": "N/A",
+                            "Name": "N/A",
+                            "CGPA (4.0 Scale)": "N/A",
+                            "Education": "N/A",
+                            "Work History": "N/A",
+                            "Projects": "N/A",
+                            "Languages": "N/A"
+                        })
+                        continue
+
+                    try:
+                        cleaned_text = clean_text(full_text)
+                        resume_embedding = all_resume_embeddings[i] # Get the pre-calculated embedding
+
+                        # Calculate semantic similarity
+                        semantic_similarity = cosine_similarity([resume_embedding], [st.session_state.job_desc_embedding])[0][0]
+
+                        # Prepare features for ML model
+                        years_exp = extract_years_of_experience(full_text)
+                        
+                        # Use the trained ML model to predict a score
+                        # Ensure features are in the correct order and format (e.g., 2D array)
+                        features = np.array([[semantic_similarity, years_exp]])
+                        if global_ml_model:
+                            predicted_score_proba = global_ml_model.predict_proba(features)[0][1] * 100
+                            score = round(predicted_score_proba, 2)
+                        else:
+                            score = round(semantic_similarity * 100, 2) # Fallback if ML model not loaded
+
+                        extracted_skills, categorized_skills = extract_relevant_keywords(full_text, MASTER_SKILLS)
+                        email = extract_email(full_text)
+                        phone = extract_phone_number(full_text)
+                        location = extract_location(full_text)
+                        name = extract_name(full_text)
+                        cgpa = extract_cgpa(full_text)
+                        education = extract_education_text(full_text)
+                        work_history = extract_work_history(full_text)
+                        projects = extract_project_details(full_text, MASTER_SKILLS)
+                        languages = extract_languages(full_text)
+
+                        ai_suggestion = generate_concise_ai_suggestion(name if name else file_name, score, years_exp, semantic_similarity, cgpa)
+
+                        st.session_state.resume_data.append({
+                            "File Name": file_name,
+                            "Status": "Processed",
+                            "Score": score,
+                            "Semantic Similarity": round(semantic_similarity, 3),
+                            "AI Suggestion": ai_suggestion,
+                            "Extracted Skills": ", ".join(sorted(extracted_skills)),
+                            "Categorized Skills": categorized_skills,
+                            "Years of Experience": years_exp,
+                            "Email": email,
+                            "Phone": phone,
+                            "Location": location,
+                            "Name": name,
+                            "CGPA (4.0 Scale)": cgpa,
+                            "Education": education,
+                            "Work History": format_work_history(work_history),
+                            "Projects": format_project_details(projects),
+                            "Languages": languages,
+                            "Full Text": full_text # Store full text for detailed view
+                        })
+
+                        # Certificate Generation and Saving
+                        if score >= 75: # Example threshold for certificate
+                            certificate_id = str(uuid.uuid4())
+                            certificate_data = {
+                                "certificate_id": certificate_id,
+                                "candidate_name": name if name else file_name,
+                                "score": score,
+                                "rank": "Top Performer", # This would ideally come from ranking all candidates
+                                "date_issued": datetime.now().strftime("%Y-%m-%d"),
+                                "job_description_hash": hash(st.session_state.job_desc_text), # Hash of JD for uniqueness
+                                "semantic_similarity": semantic_similarity,
+                                "years_experience": years_exp,
+                                "skills": list(extracted_skills),
+                                "email": email,
+                                "education": education,
+                                "work_history_summary": format_work_history(work_history),
+                                "projects_summary": format_project_details(projects),
+                                "location": location
+                            }
+                            
+                            # Save to Firestore via REST API
+                            save_certificate_to_firestore_rest(certificate_data, firestore_rest_api_base_url, firebase_web_api_key, app_id)
+
+                            # Generate and optionally send PDF certificate
+                            certificate_html = generate_certificate_html(name if name else file_name, score, "Top Performer", date.today(), certificate_id)
+                            
+                            # Convert HTML to PDF
+                            pdf_bytes = BytesIO()
+                            HTML(string=certificate_html).write_pdf(pdf_bytes)
+                            pdf_bytes.seek(0)
+                            
+                            st.download_button(
+                                label=f"Download Certificate for {name if name else file_name}",
+                                data=pdf_bytes.getvalue(),
+                                file_name=f"ScreenerPro_Certificate_{name.replace(' ', '_')}.pdf",
+                                mime="application/pdf",
+                                key=f"download_cert_{file_name}"
+                            )
+                            
+                            if email and st.checkbox(f"Send certificate to {email} for {name if name else file_name}?", key=f"send_email_{file_name}"):
+                                send_email_with_certificate(email, name if name else file_name, pdf_bytes.getvalue())
+                                st.success(f"Email sent to {email} for {name if name else file_name}!")
+
+                    except Exception as e:
+                        st.error(f"Error processing {file_name}: {e}")
+                        traceback.print_exc()
+                        log_activity_screener(f"Error processing {file_name}: {e}")
+                        st.session_state.resume_data.append({
+                            "File Name": file_name,
+                            "Status": f"Error: {e}",
+                            "Score": 0,
+                            "Semantic Similarity": 0,
+                            "AI Suggestion": "N/A",
+                            "Extracted Skills": "N/A",
+                            "Categorized Skills": {},
+                            "Years of Experience": 0,
+                            "Email": "N/A",
+                            "Phone": "N/A",
+                            "Location": "N/A",
+                            "Name": "N/A",
+                            "CGPA (4.0 Scale)": "N/A",
+                            "Education": "N/A",
+                            "Work History": "N/A",
+                            "Projects": "N/A",
+                            "Languages": "N/A"
+                        })
+                    
+                    progress = (i + 1) / len(extracted_results)
+                    progress_bar.progress(progress, text=f"Analyzing {i+1}/{len(extracted_results)} resumes...")
+            else:
+                st.warning("No valid text extracted from uploaded resumes for embedding.")
+            
+            end_time = time.time()
+            total_processing_time = end_time - start_time
+            status_text.success(f"Processing complete! Total time: {total_processing_time:.2f} seconds for {len(st.session_state.resume_data)} resumes.")
+            log_activity_screener(f"Total processing time: {total_processing_time:.2f} seconds for {len(st.session_state.resume_data)} resumes.")
+            progress_bar.empty() # Clear the progress bar
+
+    if st.session_state.resume_data:
+        st.subheader("Screening Results")
+        
+        # Convert to DataFrame for better display and filtering
+        df = pd.DataFrame(st.session_state.resume_data)
+        
+        # Filter out error rows for main display, but keep them in raw data
+        display_df = df[df['Status'] == 'Processed'].copy()
+        
+        if not display_df.empty:
+            # Sort by score by default
+            display_df = display_df.sort_values(by="Score", ascending=False).reset_index(drop=True)
+            display_df["Rank"] = display_df.index + 1 # Add rank based on sorted order
+
+            st.dataframe(
+                display_df[[
+                    "Rank", "File Name", "Name", "Score", "Semantic Similarity", 
+                    "Years of Experience", "Location", "Email", "Phone", "AI Suggestion"
+                ]].style.format({
+                    "Score": "{:.2f}%",
+                    "Semantic Similarity": "{:.3f}"
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.subheader("Detailed Candidate Insights")
+            selected_candidate_name = st.selectbox("Select a candidate for detailed view:", display_df["Name"].tolist() if not display_df["Name"].isnull().all() else display_df["File Name"].tolist())
+
+            if selected_candidate_name:
+                # Find the selected candidate's full data
+                selected_candidate_data = display_df[(display_df["Name"] == selected_candidate_name) | (display_df["File Name"] == selected_candidate_name)].iloc[0]
+
+                st.markdown(f"### Details for {selected_candidate_data['Name'] if selected_candidate_data['Name'] else selected_candidate_data['File Name']}")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Overall Score", f"{selected_candidate_data['Score']:.2f}%")
+                    st.metric("Semantic Similarity", f"{selected_candidate_data['Semantic Similarity']:.3f}")
+                    st.metric("Years of Experience", f"{selected_candidate_data['Years of Experience']} years")
+                    st.metric("CGPA (4.0 Scale)", selected_candidate_data['CGPA (4.0 Scale)'] if selected_candidate_data['CGPA (4.0 Scale)'] else "N/A")
+                    st.metric("Location", selected_candidate_data['Location'])
+                with col2:
+                    st.metric("Email", selected_candidate_data['Email'] if selected_candidate_data['Email'] else "N/A")
+                    st.metric("Phone", selected_candidate_data['Phone'] if selected_candidate_data['Phone'] else "N/A")
+                    st.metric("Education", selected_candidate_data['Education'] if selected_candidate_data['Education'] else "N/A")
+                    st.metric("Languages", selected_candidate_data['Languages'])
+                
+                st.markdown("---")
+                st.subheader("AI Suggestion")
+                st.markdown(selected_candidate_data['AI Suggestion'])
+
+                st.subheader("Work History")
+                st.markdown(selected_candidate_data['Work History'] if selected_candidate_data['Work History'] else "Not Found")
+
+                st.subheader("Projects")
+                st.markdown(selected_candidate_data['Projects'] if selected_candidate_data['Projects'] else "Not Found")
+
+                st.subheader("Extracted Skills")
+                st.write(selected_candidate_data['Extracted Skills'] if selected_candidate_data['Extracted Skills'] else "No specific skills extracted.")
+                
+                st.subheader("Categorized Skills Breakdown")
+                categorized_skills = selected_candidate_data['Categorized Skills']
+                if categorized_skills:
+                    for category, skills_list in categorized_skills.items():
+                        if skills_list:
+                            st.markdown(f"**{category}:** {', '.join(sorted(set(skills_list)))}")
+                else:
+                    st.write("No categorized skills found.")
+
+                st.subheader("Raw Resume Text")
+                with st.expander("View Full Extracted Text"):
+                    st.text(selected_candidate_data['Full Text'])
+
+                # Skill Cloud Visualization
+                st.subheader("Skill Cloud")
+                extracted_skills_text = selected_candidate_data['Extracted Skills']
+                if extracted_skills_text and extracted_skills_text != "N/A":
+                    wordcloud = WordCloud(width=800, height=400, background_color='white', colormap='viridis').generate(extracted_skills_text)
+                    fig, ax = plt.subplots(figsize=(10, 5))
+                    ax.imshow(wordcloud, interpolation='bilinear')
+                    ax.axis('off')
+                    st.pyplot(fig)
+                else:
+                    st.info("Upload resumes and screen to see the skill cloud.")
+        else:
+            st.info("No resumes were successfully processed. Please check for errors above.")
+
+    st.markdown("---")
+    st.subheader("Activity Log (Screener.py)")
+    if 'activity_log_screener' in st.session_state:
+        for log_entry in st.session_state.activity_log_screener:
+            st.code(log_entry, language="text")
+    else:
+        st.info("No activities logged yet for Screener.py.")
+
