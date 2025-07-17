@@ -31,6 +31,7 @@ import pandas as pd # Ensure pandas is imported
 import requests # For Firestore REST API calls
 import json # For JSON parsing/dumping
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS # New, more efficient stop words
+import ntlk
 
 # CRITICAL: Disable Hugging Face tokenizers parallelism to avoid deadlocks with ProcessPoolExecutor
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
