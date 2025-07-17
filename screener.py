@@ -677,6 +677,25 @@ def extract_education_details(text):
     return education_details
 
 
+def format_education_details(edu_list):
+    """Formats a list of education dictionaries into a readable string."""
+    if not edu_list:
+        return "Not Found"
+    formatted_entries = []
+    for entry in edu_list:
+        parts = []
+        if entry.get("Degree"):
+            parts.append(entry["Degree"])
+        if entry.get("Major"):
+            parts.append(f"in {entry['Major']}")
+        if entry.get("University"):
+            parts.append(f"from {entry['University']}")
+        if entry.get("Year"):
+            parts.append(f"({entry['Year']})")
+        formatted_entries.append(" ".join(parts).strip())
+    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
+
+
 def extract_work_history(text):
     """
     Extracts work history details (Company, Title, Start Date, End Date) from text.
@@ -766,6 +785,46 @@ def extract_work_history(text):
                 })
     return work_details
 
+def format_work_history(work_list):
+    """Formats a list of work history dictionaries into a readable string."""
+    if not work_list:
+        return "Not Found"
+    formatted_entries = []
+    for entry in work_list:
+        parts = []
+        if entry.get("Title"):
+            parts.append(f"**{entry['Title']}**")
+        if entry.get("Company"):
+            parts.append(f"at {entry['Company']}")
+        if entry.get("Start Date") and entry.get("End Date"):
+            parts.append(f"({entry['Start Date']} - {entry['End Date']})")
+        formatted_entries.append(" ".join(parts).strip())
+    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
+
+def extract_project_details(text):
+    """
+    Placeholder function to extract project details.
+    Returns a list of dicts with Project Title, Technologies Used, and Description.
+    """
+    # This is a very basic placeholder. Real extraction would involve more complex NLP.
+    projects = []
+    project_keywords = ["project", "capstone", "portfolio", "personal project"]
+    
+    # Simple heuristic: look for "Projects" section
+    project_section_match = re.search(r'(?:projects|portfolio|personal projects)\s*\n', text, re.IGNORECASE)
+    if project_section_match:
+        project_section_text = text[project_section_match.end():]
+        # Further split this section into individual projects
+        # This is highly dependent on resume formatting.
+        # For a basic example, let's just return a dummy project if the section is found.
+        projects.append({
+            "Project Title": "Sample Project (Extracted)",
+            "Technologies Used": "Python, SQL, AWS",
+            "Description": "Developed a scalable data pipeline for real-time analytics. (Placeholder)"
+        })
+    
+    return projects
+
 def format_project_details(proj_list):
     """Formats a list of project dictionaries into a readable string."""
     if not proj_list:
@@ -783,6 +842,74 @@ def format_project_details(proj_list):
             parts.append(f'"{desc_snippet}"')
         formatted_entries.append(" ".join(parts).strip())
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
+
+
+def extract_languages(text):
+    """
+    Extracts languages from the text based on common language names.
+    This is a heuristic and may not be exhaustive.
+    """
+    text_lower = text.lower()
+    found_languages = set()
+
+    # Common languages and their variations
+    language_keywords = {
+        "english": ["english", "fluent in english"],
+        "hindi": ["hindi"],
+        "spanish": ["spanish", "español"],
+        "french": ["french", "français"],
+        "german": ["german", "deutsch"],
+        "mandarin": ["mandarin", "chinese"],
+        "japanese": ["japanese", "nihongo"],
+        "korean": ["korean", "hangul"],
+        "arabic": ["arabic"],
+        "portuguese": ["portuguese", "português"],
+        "russian": ["russian", "русский"],
+        "italian": ["italian", "italiano"],
+        "bengali": ["bengali", "bangla"],
+        "punjabi": ["punjabi"],
+        "marathi": ["marathi"],
+        "telugu": ["telugu"],
+        "tamil": ["tamil"],
+        "gujarati": ["gujarati"],
+        "urdu": ["urdu"],
+        "kannada": ["kannada"],
+        "malayalam": ["malayalam"],
+        "odia": ["odia", "oriya"],
+        "assamese": ["assamese"],
+        "sanskrit": ["sanskrit"],
+        "nepali": ["nepali"],
+        "sinhala": ["sinhala"],
+        "dutch": ["dutch"],
+        "swedish": ["swedish"],
+        "norwegian": ["norwegian"],
+        "danish": ["danish"],
+        "finnish": ["finnish"],
+        "greek": ["greek"],
+        "hebrew": ["hebrew"],
+        "turkish": ["turkish"],
+        "vietnamese": ["vietnamese"],
+        "thai": ["thai"],
+        "indonesian": ["indonesian", "bahasa indonesia"],
+        "malay": ["malay", "bahasa melayu"],
+        "filipino": ["filipino", "tagalog"],
+        "swahili": ["swahili"],
+        "amharic": ["amharic"],
+        "yoruba": ["yoruba"],
+        "igbo": ["igbo"],
+        "zulu": ["zulu"],
+        "xhosa": ["xhosa"]
+    }
+
+    for lang, variations in language_keywords.items():
+        for var in variations:
+            if re.search(r'\b' + re.escape(var) + r'\b', text_lower):
+                found_languages.add(lang.title()) # Add the capitalized common name
+                break # Move to next language once found
+
+    if found_languages:
+        return ", ".join(sorted(list(found_languages)))
+    return "Not Found"
 
 
 # --- Concise AI Suggestion Function (for table display) ---
@@ -1248,7 +1375,7 @@ def resume_screener_page():
             email = extract_email(text)
             phone = extract_phone_number(text)
             location = extract_location(text)
-            languages = extract_languages(text)
+            languages = extract_languages(text) # Call the new function
             
             # Extract structured details
             education_details_raw = extract_education_details(text)
