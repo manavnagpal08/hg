@@ -6,7 +6,7 @@ import os
 import sklearn
 import joblib
 import numpy as np
-from datetime import datetime
+from datetime import datetime, date # Import date as well
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
@@ -19,10 +19,11 @@ import uuid
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.base import MIMEBase # New import for attachments
-from email import encoders # New import for attachments
-import tempfile # New import for temporary files
+from email.mime.base import MIMEBase
+from email import encoders
+import tempfile
 import shutil
+import json # New import for parsing JSON secrets
 
 # --- OCR Specific Imports ---
 from PIL import Image
@@ -30,6 +31,23 @@ import pytesseract
 import cv2
 from pdf2image import convert_from_bytes
 
+# Firebase Imports (for saving certificate data)
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+# Initialize Firebase if not already initialized
+if not firebase_admin._apps:
+    try:
+        # Use Streamlit secrets for Firebase service account key
+        firebase_service_account_key_str = st.secrets["FIREBASE_SERVICE_ACCOUNT_KEY"]
+        cred = credentials.Certificate(json.loads(firebase_service_account_key_str))
+        firebase_admin.initialize_app(cred)
+        st.success("Firebase Admin SDK initialized successfully!")
+    except Exception as e:
+        st.error(f"❌ Firebase Admin SDK initialization error: {e}. Please ensure your Firebase service account key secret is correctly configured in Streamlit.")
+        st.stop()
+
+db = firestore.client()
 
 try:
     nltk.data.find('corpora/stopwords')
@@ -216,10 +234,12 @@ SKILL_CATEGORIES = {
 
 MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
 
-# IMPORTANT: REPLACE THIS WITH THE ACTUAL BASE URL OF YOUR DEPLOYED STREAMLIT APP.
-# This is used for constructing the certificate verification link in the email.
-# If your certificate.html is hosted on a different domain, adjust `verification_link` in `send_certificate_email` accordingly.
-APP_BASE_URL = "YOUR_APP_BASE_URL" # <--- REPLACE THIS
+# IMPORTANT: REPLACE THESE WITH YOUR ACTUAL DEPLOYMENT URLs
+# This is the base URL of your Streamlit application (e.g., https://your-app-name.streamlit.app)
+APP_BASE_URL = "YOUR_APP_BASE_URL"
+# This is the base URL where your certificate.html is hosted (e.g., https://your-github-username.github.io/screenerpro-certs)
+CERTIFICATE_HOSTING_URL = "YOUR_CERTIFICATE_HOSTING_URL"
+
 
 @st.cache_resource
 def get_tesseract_cmd():
@@ -1042,23 +1062,42 @@ Best regards,
 The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
-def send_certificate_email(recipient_email, candidate_name, certificate_id, certificate_rank, score, certificate_html_content, attach_html_file=False):
-    # --- IMPORTANT: REPLACE THESE PLACEHOLDERS WITH YOUR ACTUAL GMAIL CREDENTIALS ---
-    # To enable email sending, you MUST replace "screenerpro.ai@gmail.com" with your
-    # Gmail address and "hcss uefd gaae wrse" with the 16-character App Password
-    # you generated from your Google Account Security settings.
-    # Learn more: https://support.google.com/accounts/answer/185833?hl=en
-    gmail_address = "screenerpro.ai@gmail.com"  # <--- REPLACE THIS WITH YOUR GMAIL ADDRESS
-    gmail_app_password = "hcss uefd gaae wrse"  # <--- REPLACE THIS WITH YOUR 16-CHARACTER APP PASSWORD
-    # --- END IMPORTANT ---
-
-    if not gmail_address or not gmail_app_password:
-        st.error("Email sending is not configured. Please replace the placeholder Gmail credentials in `screener.py` to enable this feature.")
+def save_certificate_data_to_firestore(certificate_data):
+    try:
+        # A consistent ID for the public collection path for certificates
+        app_id_for_firestore_collection = "screenerpro-certs-public" 
+        
+        certs_ref = db.collection(f"artifacts/{app_id_for_firestore_collection}/public/data/certificates")
+        
+        # Prepare data for Firestore
+        data_to_save = {
+            "name": certificate_data.get("Candidate Name"),
+            "score": certificate_data.get("Score (%)"),
+            "rank": certificate_data.get("Certificate Rank"),
+            "date": certificate_data.get("Date Screened").isoformat() if isinstance(certificate_data.get("Date Screened"), (datetime, date)) else str(certificate_data.get("Date Screened")),
+            "certificate_id": certificate_data.get("Certificate ID"),
+            # Add any other relevant data you want to store and retrieve
+        }
+        
+        # Use the certificate_id as the document ID for easy retrieval
+        certs_ref.document(certificate_data["Certificate ID"]).set(data_to_save)
+        st.success(f"Certificate data for {certificate_data['Candidate Name']} saved to Firestore!")
+        return True
+    except Exception as e:
+        st.error(f"Failed to save certificate data to Firestore: {e}")
         return False
 
-    # The verification link will point to your hosted certificate.html page.
-    # Adjust this URL if your certificate.html is hosted on a different domain/path.
-    verification_link = f"{APP_BASE_URL}/certificate/{certificate_id}" # Assuming Streamlit routing or a dedicated route
+def send_certificate_email(recipient_email, candidate_name, certificate_id, score, certificate_html_content, attach_html_file=False):
+    # Retrieve Gmail credentials from Streamlit secrets
+    gmail_address = st.secrets["GMAIL_ADDRESS"]
+    gmail_app_password = st.secrets["GMAIL_APP_PASSWORD"]
+
+    if not gmail_address or not gmail_app_password:
+        st.error("Email sending is not configured. Please ensure your Gmail address and App Password secrets are set in Streamlit.")
+        return False
+
+    # The verification link will point to your externally hosted certificate.html page.
+    verification_link = f"{CERTIFICATE_HOSTING_URL}/certificate.html?id={certificate_id}"
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = f"🎉 You've Earned It! Here's Your Certification from ScreenerPro"
@@ -1799,8 +1838,11 @@ def resume_screener_page():
                     candidate_data_for_cert = candidate_rows.iloc[0].to_dict()
 
                     if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
-                        # Pass APP_BASE_URL to generate_certificate_html
-                        certificate_html_content = generate_certificate_html(candidate_data_for_cert, APP_BASE_URL)
+                        # Save certificate data to Firestore
+                        save_certificate_data_to_firestore(candidate_data_for_cert)
+
+                        # Generate HTML content for the certificate
+                        certificate_html_content = generate_certificate_html(candidate_data_for_cert, CERTIFICATE_HOSTING_URL)
                         st.session_state['certificate_html_content'] = certificate_html_content # Store for preview
 
                         col_cert_view, col_cert_download, col_cert_email_option = st.columns(3)
@@ -1827,7 +1869,6 @@ def resume_screener_page():
                                 recipient_email=candidate_data_for_cert['Email'],
                                 candidate_name=candidate_data_for_cert['Candidate Name'],
                                 certificate_id=candidate_data_for_cert['Certificate ID'], # Pass ID
-                                certificate_rank=candidate_data_for_cert['Certificate Rank'], # Pass Rank
                                 score=candidate_data_for_cert['Score (%)'], # Pass Score
                                 certificate_html_content=certificate_html_content, # Pass generated HTML
                                 attach_html_file=attach_html # Pass attachment preference
@@ -1853,19 +1894,93 @@ def resume_screener_page():
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
 
 @st.cache_data
-def generate_certificate_html(candidate_data, app_base_url):
-    certificate_template_path = "certification.html"
-    
-    if not os.path.exists(certificate_template_path):
-        st.error(f"Error: Certificate template file '{certificate_template_path}' not found.")
-        return "<h1>Certificate Template Not Found</h1><p>Please ensure 'certification.html' is in the root directory.</p>"
+def generate_certificate_html(candidate_data, certificate_hosting_url):
+    # This function now generates the HTML content for the certificate,
+    # including the correct URL for the QR code and verification link.
+    certificate_template_path = "certification.html" # Assuming this is in the main app directory for generation
 
-    try:
-        with open(certificate_template_path, "r", encoding="utf-8") as f:
-            html_template = f.read()
-    except Exception as e:
-        st.error(f"Error reading certificate template: {e}")
-        return f"<h1>Error Loading Certificate Template</h1><p>{e}</p>"
+    # For the purpose of generating the HTML string to be embedded/downloaded,
+    # we'll use a simplified template or construct the HTML directly.
+    # The actual certificate.html file in the separate repo will be used for live verification.
+
+    # Let's assume a simplified template structure for the Python side
+    # that matches the structure of the external certificate.html
+    
+    # Read the template from the file system
+    if not os.path.exists(certificate_template_path):
+        # Fallback if the template isn't found locally (e.g., in a development environment)
+        # In a deployed Streamlit app, this file should be present.
+        st.error(f"Error: Certificate template file '{certificate_template_path}' not found. Using a basic template.")
+        html_template = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>ScreenerPro Certification</title>
+            <style>
+                body { font-family: sans-serif; text-align: center; padding: 20px; }
+                .certificate-container { border: 5px solid #00cec9; padding: 30px; margin: 20px auto; max-width: 600px; }
+                .candidate-name { font-size: 2em; margin: 15px 0; }
+                .score-rank { font-size: 1.2em; color: #00cec9; }
+                .date-id { font-size: 0.8em; color: #777; margin-top: 20px; }
+                .qr-code-section { margin-top: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="certificate-container">
+                <h1>ScreenerPro Certification</h1>
+                <p>This certifies that</p>
+                <div class="candidate-name">{{CANDIDATE_NAME}}</div>
+                <p>has achieved a score of <strong>{{SCORE}}%</strong> and a rank of <strong>{{CERTIFICATE_RANK}}</strong>.</p>
+                <p>Date: {{DATE_SCREENED}}</p>
+                <p>Certificate ID: {{CERTIFICATE_ID}}</p>
+                <div class="qr-code-section">
+                    <p>Verify at: <a href="{{VERIFICATION_LINK}}">{{VERIFICATION_LINK}}</a></p>
+                    <!-- QR code would be generated by JS in the actual hosted page -->
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+    else:
+        try:
+            with open(certificate_template_path, "r", encoding="utf-8") as f:
+                html_template = f.read()
+        except Exception as e:
+            st.error(f"Error reading certificate template file: {e}. Using basic template.")
+            html_template = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>ScreenerPro Certification</title>
+                <style>
+                    body { font-family: sans-serif; text-align: center; padding: 20px; }
+                    .certificate-container { border: 5px solid #00cec9; padding: 30px; margin: 20px auto; max-width: 600px; }
+                    .candidate-name { font-size: 2em; margin: 15px 0; }
+                    .score-rank { font-size: 1.2em; color: #00cec9; }
+                    .date-id { font-size: 0.8em; color: #777; margin-top: 20px; }
+                    .qr-code-section { margin-top: 20px; }
+                </style>
+            </head>
+            <body>
+                <div class="certificate-container">
+                    <h1>ScreenerPro Certification</h1>
+                    <p>This certifies that</p>
+                    <div class="candidate-name">{{CANDIDATE_NAME}}</div>
+                    <p>has achieved a score of <strong>{{SCORE}}%</strong> and a rank of <strong>{{CERTIFICATE_RANK}}</strong>.</p>
+                    <p>Date: {{DATE_SCREENED}}</p>
+                    <p>Certificate ID: {{CERTIFICATE_ID}}</p>
+                    <div class="qr-code-section">
+                        <p>Verify at: <a href="{{VERIFICATION_LINK}}">{{VERIFICATION_LINK}}</a></p>
+                        <!-- QR code would be generated by JS in the actual hosted page -->
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
 
     candidate_name = candidate_data.get('Candidate Name', 'Candidate Name')
     score = candidate_data.get('Score (%)', 0.0)
@@ -1873,13 +1988,18 @@ def generate_certificate_html(candidate_data, app_base_url):
     date_screened = candidate_data.get('Date Screened', datetime.now().date()).strftime("%B %d, %Y")
     certificate_id = candidate_data.get('Certificate ID', 'N/A')
     
+    # Construct the verification link using the external hosting URL
+    verification_link = f"{certificate_hosting_url}/certificate.html?id={certificate_id}"
+
     html_content = html_template.replace("{{CANDIDATE_NAME}}", candidate_name)
     html_content = html_content.replace("{{SCORE}}", f"{score:.1f}")
     html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
     html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
     html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
-    html_content = html_content.replace("{{APP_BASE_URL}}", app_base_url) # New replacement
-    
+    # Pass the external hosting URL to the template for the QR code and verification link
+    html_content = html_content.replace("{{VERIFICATION_LINK}}", verification_link)
+    html_content = html_content.replace("{{APP_BASE_URL}}", certificate_hosting_url) # This is for the QR code in certificate.html
+
     return html_content
 
 # This line ensures the Streamlit app runs
