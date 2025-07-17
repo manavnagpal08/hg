@@ -803,25 +803,105 @@ def format_work_history(work_list):
 
 def extract_project_details(text):
     """
-    Placeholder function to extract project details.
-    Returns a list of dicts with Project Title, Technologies Used, and Description.
+    Extracts project details (Project Title, Technologies Used, Description) from text.
+    This uses heuristics and may require refinement based on resume formats.
+    Returns a list of dicts.
     """
-    # This is a very basic placeholder. Real extraction would involve more complex NLP.
     projects = []
-    project_keywords = ["project", "capstone", "portfolio", "personal project"]
+    text_lower = text.lower()
+
+    # Define common project section headers
+    project_section_keywords = [
+        r'\bprojects\b', r'\bpersonal projects\b', r'\bportfolio\b', r'\bkey projects\b',
+        r'\bacademic projects\b', r'\brelevant projects\b'
+    ]
     
-    # Simple heuristic: look for "Projects" section
-    project_section_match = re.search(r'(?:projects|portfolio|personal projects)\s*\n', text, re.IGNORECASE)
-    if project_section_match:
-        project_section_text = text[project_section_match.end():]
-        # Further split this section into individual projects
-        # This is highly dependent on resume formatting.
-        # For a basic example, let's just return a dummy project if the section is found.
-        projects.append({
-            "Project Title": "Sample Project (Extracted)",
-            "Technologies Used": "Python, SQL, AWS",
-            "Description": "Developed a scalable data pipeline for real-time analytics. (Placeholder)"
-        })
+    # Find the start of the projects section
+    project_section_start_index = -1
+    for keyword in project_section_keywords:
+        match = re.search(keyword, text_lower)
+        if match:
+            project_section_start_index = match.end()
+            break
+
+    if project_section_start_index != -1:
+        # Define common section headers that might follow projects (to mark the end)
+        following_sections = [
+            r'\beducation\b', r'\bwork history\b', r'\bexperience\b', r'\bskills\b',
+            r'\bcertifications\b', r'\bawards\b', r'\bpublications\b', r'\binterests\b'
+        ]
+        
+        project_section_end_index = len(text)
+        for keyword in following_sections:
+            match = re.search(keyword, text_lower[project_section_start_index:])
+            if match:
+                project_section_end_index = project_section_start_index + match.start()
+                break
+        
+        projects_text = text[project_section_start_index:project_section_end_index].strip()
+        
+        # Split the projects text into individual project blocks
+        # Heuristic: projects often start with a bolded title, or a line with a year/date, or a bullet point.
+        # This regex tries to split by lines that look like new project titles (capitalized words, maybe a year)
+        project_blocks = re.split(r'\n(?=\s*[\*-]?\s*[A-Z][a-zA-Z\s\d,\-&()\/]+\b(?:project|tool|system|application|platform)?\b(?: \(\d{4}(?:-\d{4}|-present)?\))?)', projects_text, flags=re.IGNORECASE)
+        
+        for block in project_blocks:
+            block = block.strip()
+            if not block:
+                continue
+
+            project_title = None
+            technologies_used = []
+            description = []
+
+            lines = block.split('\n')
+            
+            # First line is often the title
+            if lines:
+                potential_title_line = lines[0].strip()
+                # Try to clean up common prefixes/suffixes
+                project_title = re.sub(r'^\s*[\*-]?\s*project\s*:\s*|\s*project\s*$', '', potential_title_line, flags=re.IGNORECASE).strip()
+                if project_title:
+                    # Remove years from title if present
+                    project_title = re.sub(r'\(\d{4}(?:-\d{4}|-present)?\)', '', project_title).strip()
+                    # Remove common bullet points
+                    project_title = re.sub(r'^[\*-]\s*', '', project_title).strip()
+                    
+                    # Heuristic: if the title is too short or looks like just a year, it's probably not a title
+                    if len(project_title.split()) < 2 or re.fullmatch(r'\d{4}', project_title):
+                        project_title = None # Invalidate if it doesn't look like a real title
+                    else:
+                        # Remove the title line from the block for further parsing
+                        lines.pop(0)
+
+            # Process remaining lines for technologies and description
+            current_description_lines = []
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Extract technologies from the line
+                line_skills, _ = extract_relevant_keywords(line, MASTER_SKILLS)
+                if line_skills:
+                    technologies_used.extend(list(line_skills))
+                
+                # Add line to description if it's not just a skill list or a date
+                if not (re.fullmatch(r'(\d{4})\s*[-–]\s*(\d{4}|present)', line) or
+                        re.fullmatch(r'((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})\s*[-–]\s*(present|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})', line, re.IGNORECASE) or
+                        len(line_skills) == len(line.split())): # If all words in line are skills, treat as skill line
+                    current_description_lines.append(line)
+
+            # Join technologies and description
+            final_technologies = ", ".join(sorted(list(set(technologies_used)))) # Remove duplicates and sort
+            final_description = " ".join(current_description_lines).strip()
+
+            if project_title or final_technologies or final_description:
+                projects.append({
+                    "Project Title": project_title or "Untitled Project", # Default if title not found
+                    "Technologies Used": final_technologies or "Not Specified",
+                    "Description": final_description or "No description provided."
+                })
     
     return projects
 
@@ -834,11 +914,13 @@ def format_project_details(proj_list):
         parts = []
         if entry.get("Project Title"):
             parts.append(f"**{entry['Project Title']}**")
-        if entry.get("Technologies Used"):
+        if entry.get("Technologies Used") and entry["Technologies Used"] != "Not Specified":
             parts.append(f"({entry['Technologies Used']})")
         # Description can be long, so maybe just a snippet or indicate presence
-        if entry.get("Description") and entry["Description"].strip():
-            desc_snippet = entry["Description"].split('\n')[0][:50] + "..." if len(entry["Description"]) > 50 else entry["Description"]
+        if entry.get("Description") and entry["Description"] != "No description provided.":
+            desc_snippet = entry["Description"].split('\n')[0][:100] # Take first 100 chars
+            if len(entry["Description"]) > 100:
+                desc_snippet += "..."
             parts.append(f'"{desc_snippet}"')
         formatted_entries.append(" ".join(parts).strip())
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
@@ -1219,7 +1301,9 @@ def resume_screener_page():
         ])
     if 'resume_raw_texts' not in st.session_state:
         st.session_state['resume_raw_texts'] = {}
-    # Removed 'certificate_to_display_data' and 'show_certificate_modal' as they are no longer needed for the modal
+    # New session state for certificate HTML content
+    if 'certificate_html_content' not in st.session_state:
+        st.session_state['certificate_html_content'] = ""
 
     # --- Initial Tesseract Check ---
     tesseract_cmd_path = get_tesseract_cmd()
@@ -1227,8 +1311,6 @@ def resume_screener_page():
         st.error("Tesseract OCR engine not found. Please ensure it's installed and in your system's PATH.")
         st.info("On Streamlit Community Cloud, ensure you have a `packages.txt` file in your repository's root with `tesseract-ocr` and `tesseract-ocr-eng` listed.")
         st.stop() # Stop the app if Tesseract is not found
-
-    # No longer injecting Streamlit component for JS communication related to modal close
 
     # --- Job Description and Controls Section ---
     st.markdown("## ⚙️ Define Job Requirements & Screening Criteria")
@@ -1354,7 +1436,7 @@ def resume_screener_page():
             # Extract structured details
             education_details_raw = extract_education_details(text)
             work_history_raw = extract_work_history(text)
-            project_details_raw = extract_project_details(text)
+            project_details_raw = extract_project_details(text) # Call the improved function
 
             # Format structured details for display in the DataFrame
             education_details_formatted = format_education_details(education_details_raw)
@@ -1919,10 +2001,10 @@ def resume_screener_page():
                             # Direct Python callback to control modal visibility
                             if st.button("👁️ View Certificate", key="view_cert_button"):
                                 # Directly render the certificate HTML below
-                                st.markdown("---")
-                                st.markdown(f"### ScreenerPro Certificate for {candidate_data_for_cert['Candidate Name']}")
-                                st.markdown(generate_certificate_html(candidate_data_for_cert), unsafe_allow_html=True)
-                                st.markdown("---")
+                                # Store the HTML content in session state
+                                st.session_state['certificate_html_content'] = generate_certificate_html(candidate_data_for_cert)
+                                # This will trigger a rerun and the HTML will be displayed below the button
+                                # No need for a modal state or JS interaction for closing
                                 
                         with col_cert_download:
                             certificate_html_content = generate_certificate_html(candidate_data_for_cert)
@@ -1940,7 +2022,16 @@ def resume_screener_page():
         else:
             st.info("No candidates available to generate certificates for. Please screen resumes first.")
 
-    # Removed the entire certificate modal rendering block as it's no longer needed
+    # Display the certificate HTML if it's in session state
+    if st.session_state['certificate_html_content']:
+        st.markdown("---")
+        st.markdown("### Generated Certificate Preview")
+        # Use st.components.v1.html for better rendering control and isolation
+        st.components.v1.html(st.session_state['certificate_html_content'], height=600, scrolling=True)
+        st.markdown("---")
+        # Clear the certificate HTML after display if desired, or keep it for continuous viewing
+        # For now, let's keep it until another certificate is generated or app is reset.
+
 
     else:
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
@@ -1971,9 +2062,9 @@ def generate_certificate_html(candidate_data):
     
     # Replace placeholders in the HTML template
     html_content = html_template.replace("{{CANDIDATE_NAME}}", candidate_name)
-    html_content = html_template.replace("{{SCORE}}", f"{score:.1f}")
-    html_content = html_template.replace("{{CERTIFICATE_RANK}}", certificate_rank)
-    html_content = html_template.replace("{{DATE_SCREENED}}", date_screened)
-    html_content = html_template.replace("{{CERTIFICATE_ID}}", certificate_id)
+    html_content = html_content.replace("{{SCORE}}", f"{score:.1f}")
+    html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
+    html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
+    html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
     
     return html_content
