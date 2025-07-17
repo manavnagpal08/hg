@@ -1969,4 +1969,35 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
 
     else:
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
+# --- Certificate HTML Generation Function ---
+def generate_certificate_html(candidate_data):
+    """
+    Generates the HTML content for a ScreenerPro Certification by reading a template file.
+    """
+    certificate_template_path = "certification.html"
+    
+    if not os.path.exists(certificate_template_path):
+        st.error(f"Error: Certificate template file '{certificate_template_path}' not found.")
+        return "<h1>Certificate Template Not Found</h1><p>Please ensure 'certification.html' is in the root directory.</p>"
+
+    try:
+        with open(certificate_template_path, "r", encoding="utf-8") as f:
+            html_template = f.read()
+    except Exception as e:
+        st.error(f"Error reading certificate template: {e}")
+        return f"<h1>Error Loading Certificate Template</h1><p>{e}</p>"
+
+    candidate_name = candidate_data.get('Candidate Name', 'Candidate Name')
+    score = candidate_data.get('Score (%)', 0.0)
+    certificate_rank = candidate_data.get('Certificate Rank', 'Not Applicable')
+    date_screened = candidate_data.get('Date Screened', datetime.now().date()).strftime("%B %d, %Y")
+    certificate_id = candidate_data.get('Certificate ID', 'N/A')
+    
+    html_content = html_template.replace("{{CANDIDATE_NAME}}", candidate_name)
+    html_content = html_content.replace("{{SCORE}}", f"{score:.1f}")
+    html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
+    html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
+    html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
+    
+    return html_content
 
