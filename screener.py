@@ -1307,6 +1307,8 @@ def resume_screener_page():
         st.session_state['resume_raw_texts'] = {}
     if 'certificate_to_display_data' not in st.session_state:
         st.session_state['certificate_to_display_data'] = None
+    if 'show_certificate_modal' not in st.session_state: # New state variable for modal control
+        st.session_state['show_certificate_modal'] = False
 
     # --- Initial Tesseract Check ---
     tesseract_cmd_path = get_tesseract_cmd()
@@ -1314,23 +1316,6 @@ def resume_screener_page():
         st.error("Tesseract OCR engine not found. Please ensure it's installed and in your system's PATH.")
         st.info("On Streamlit Community Cloud, ensure you have a `packages.txt` file in your repository's root with `tesseract-ocr` and `tesseract-ocr-eng` listed.")
         st.stop() # Stop the app if Tesseract is not found
-
-    # Hidden button for closing the certificate modal via JavaScript click
-    # This button is always rendered, but visually hidden by CSS.
-    # Its purpose is to trigger a Streamlit rerun when the modal's JS close button is clicked.
-    if st.button("Close Certificate Modal Trigger", key="hidden_cert_close_trigger", type="secondary"):
-        st.session_state['certificate_to_display_data'] = None
-        st.rerun()
-
-    # Apply custom CSS to hide the button.
-    st.markdown("""
-    <style>
-    /* Hide the specific Streamlit button used as a trigger */
-    button[data-testid="stButton-secondary-hidden_cert_close_trigger"] {
-        display: none !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
 
     # --- Job Description and Controls Section ---
     st.markdown("## ⚙️ Define Job Requirements & Screening Criteria")
@@ -1903,9 +1888,6 @@ def resume_screener_page():
         # Ensure all columns exist before trying to display them
         final_display_cols = [col for col in comprehensive_cols if col in filtered_display_df.columns]
 
-        # Add a placeholder for the certificate modal
-        certificate_modal_placeholder = st.empty()
-
         # Display the filtered DataFrame
         st.dataframe(
             filtered_display_df[final_display_cols],
@@ -2021,11 +2003,12 @@ def resume_screener_page():
                     if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
                         col_cert_view, col_cert_download = st.columns(2)
                         with col_cert_view:
+                            # Direct Python callback to control modal visibility
                             if st.button("👁️ View Certificate", key="view_cert_button"):
-                                # Store the entire candidate data for certificate display
                                 st.session_state['certificate_to_display_data'] = candidate_data_for_cert
-                                st.rerun()
-
+                                st.session_state['show_certificate_modal'] = True
+                                st.rerun() # Rerun to show the modal
+                                
                         with col_cert_download:
                             certificate_html_content = generate_certificate_html(candidate_data_for_cert)
                             st.download_button(
@@ -2042,88 +2025,110 @@ def resume_screener_page():
         else:
             st.info("No candidates available to generate certificates for. Please screen resumes first.")
 
-        # Handle certificate display when a button is clicked via session state
-        if 'certificate_to_display_data' in st.session_state and st.session_state.certificate_to_display_data:
-            candidate_data_for_cert = st.session_state.certificate_to_display_data
-            
-            if candidate_data_for_cert:
-                with certificate_modal_placeholder.container():
-                    st.markdown("""
-                    <style>
-                    .certificate-overlay {
-                        position: fixed;
-                        top: 0;
-                        left: 0;
-                        width: 100%;
-                        height: 100%;
-                        background-color: rgba(0, 0, 0, 0.7);
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        z-index: 1000;
-                    }
-                    .certificate-content {
-                        background: white;
-                        padding: 40px;
-                        border-radius: 15px;
-                        box-shadow: 0 10px 25px rgba(0,0,0,0.4);
-                        max-width: 850px;
-                        max-height: 90vh;
-                        overflow-y: auto;
-                        position: relative;
-                        border: 8px solid #00cec9;
-                    }
-                    .close-button {
-                        position: absolute;
-                        top: 15px;
-                        right: 15px;
-                        background: #f44336;
-                        color: white;
-                        border: none;
-                        border-radius: 50%;
-                        width: 35px;
-                        height: 35px;
-                        cursor: pointer;
-                        font-size: 20px;
-                        line-height: 1;
-                        text-align: center;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-                    }
-                    </style>
-                    """, unsafe_allow_html=True)
+    # --- Certificate Modal Rendering (Conditional) ---
+    # This block will only execute and render the modal if 'show_certificate_modal' is True
+    if st.session_state.get('show_certificate_modal') and st.session_state.get('certificate_to_display_data'):
+        candidate_data_for_cert = st.session_state.certificate_to_display_data
+        
+        # Use a container for the modal to ensure it overlays correctly
+        with st.container():
+            st.markdown("""
+            <style>
+            .certificate-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0, 0, 0, 0.7);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 1000; /* Ensure it's on top */
+            }
+            .certificate-content {
+                background: white;
+                padding: 40px;
+                border-radius: 15px;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+                max-width: 850px;
+                max-height: 90vh;
+                overflow-y: auto;
+                position: relative;
+                border: 8px solid #00cec9;
+            }
+            /* Style for the Streamlit close button within the modal */
+            .modal-close-button {
+                position: absolute;
+                top: 15px;
+                right: 15px;
+                background: #f44336; /* Red color for close */
+                color: white;
+                border: none;
+                border-radius: 50%;
+                width: 35px;
+                height: 35px;
+                cursor: pointer;
+                font-size: 20px;
+                line-height: 1;
+                text-align: center;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+                z-index: 1001; /* Ensure close button is above certificate content */
+            }
+            </style>
+            """, unsafe_allow_html=True)
 
-                    st.markdown(f"""
-                    <div class="certificate-overlay">
-                        <div class="certificate-content">
-                            <button class="close-button" onclick="
-                                console.log('Close button clicked.');
-                                var streamlitApp = document.querySelector('.stApp'); // Main Streamlit app container
-                                if (streamlitApp) {{
-                                    var hiddenButtonContainer = streamlitApp.querySelector('[data-testid=\"stButton-secondary-hidden_cert_close_trigger\"]');
-                                    if (hiddenButtonContainer) {{
-                                        var hiddenButton = hiddenButtonContainer.querySelector('button');
-                                        if (hiddenButton) {{
-                                            console.log('Hidden Streamlit button found, attempting click.');
-                                            hiddenButton.click();
-                                        }} else {{
-                                            console.error('Actual button element inside data-testid container not found.');
-                                        }}
-                                    }} else {{
-                                        console.error('Hidden close button container (data-testid) not found.');
-                                    }}
-                                }} else {{
-                                    console.error('Streamlit app container (.stApp) not found.');
-                                }}
-                            ">&times;</button>
-                            {generate_certificate_html(candidate_data_for_cert)}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-            else:
-                st.warning("Certificate data could not be retrieved. Please try again.")
+            # The actual modal HTML structure
+            st.markdown(f"""
+            <div class="certificate-overlay">
+                <div class="certificate-content">
+                    {generate_certificate_html(candidate_data_for_cert)}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Place the Streamlit button for closing the modal
+            # This button will directly control the session state variable
+            def close_certificate_modal():
+                st.session_state['show_certificate_modal'] = False
+                st.session_state['certificate_to_display_data'] = None # Clear data
+                
+            # Using a fixed position for the button within the Streamlit app
+            # This is a workaround as Streamlit buttons don't naturally float on custom HTML overlays
+            # We'll place it outside the markdown block, and rely on Streamlit's rendering.
+            # The user will click this button to close the modal.
+            st.button("Close Certificate", key="modal_close_button", on_click=close_certificate_modal, help="Click to close the certificate view.")
+            
+            # Apply custom CSS to position the Streamlit button for closing the modal
+            # This CSS will target the Streamlit button generated above.
+            st.markdown("""
+            <style>
+            /* This targets the Streamlit button and positions it on top of the overlay */
+            div[data-testid="stButton"] > button[kind="secondary"] { /* Adjust selector if button kind changes */
+                position: fixed;
+                top: 20px; /* Adjust as needed */
+                right: 20px; /* Adjust as needed */
+                background: #f44336; /* Red color for close */
+                color: white;
+                border: none;
+                border-radius: 50%;
+                width: 40px;
+                height: 40px;
+                cursor: pointer;
+                font-size: 22px;
+                line-height: 1;
+                text-align: center;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+                z-index: 1002; /* Higher z-index than modal content */
+            }
+            </style>
+            """, unsafe_allow_html=True)
 
     else:
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
