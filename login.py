@@ -441,14 +441,29 @@ if __name__ == "__main__":
             st.info(f"Created default admin user: {admin_user} with password '{default_admin_password}'")
     save_users(users) # Save after potentially adding new admin users
 
-    # Top-level portal selection
-    portal_selection = st.radio(
-        "Select Portal:",
-        ("HR Portal", "Candidate Portal"),
-        key="main_portal_selector"
-    )
+    # Top-level portal selection - now using buttons
+    st.subheader("Select Your Portal:")
+    col_hr_portal, col_candidate_portal = st.columns(2)
 
-    if portal_selection == "HR Portal":
+    with col_hr_portal:
+        if st.button("🏢 Go to HR Portal", key="go_to_hr_portal_btn"):
+            st.session_state.current_portal = "HR"
+            st.session_state.hr_authenticated = False # Reset HR auth state
+            st.session_state.candidate_authenticated = False # Ensure candidate is logged out
+            st.rerun()
+    with col_candidate_portal:
+        if st.button("🧑‍💻 Go to Candidate Portal", key="go_to_candidate_portal_btn"):
+            st.session_state.current_portal = "Candidate"
+            st.session_state.candidate_authenticated = False # Reset Candidate auth state
+            st.session_state.hr_authenticated = False # Ensure HR is logged out
+            st.rerun()
+
+    # Initialize current_portal if not set (first load)
+    if "current_portal" not in st.session_state:
+        st.session_state.current_portal = None # No portal selected initially
+
+    # Display content based on selected portal
+    if st.session_state.current_portal == "HR":
         if hr_login_section():
             st.markdown("---")
             st.header(f"HR Dashboard - Welcome, {st.session_state.hr_username}!")
@@ -485,11 +500,12 @@ if __name__ == "__main__":
                 st.session_state.hr_authenticated = False
                 st.session_state.pop('hr_username', None)
                 st.session_state.pop('hr_user_company', None)
+                st.session_state.current_portal = None # Go back to portal selection
                 st.rerun()
         else:
             st.info("Please login or register for the HR Portal.")
 
-    elif portal_selection == "Candidate Portal":
+    elif st.session_state.current_portal == "Candidate":
         if candidate_login_section():
             st.markdown("---")
             if st.button("Logout from Candidate Portal"):
@@ -502,6 +518,10 @@ if __name__ == "__main__":
                 st.session_state.pop('show_candidate_certificate', None)
                 st.session_state.pop('is_screening', None)
                 st.session_state.pop('last_simulated_score', None)
+                st.session_state.current_portal = None # Go back to portal selection
                 st.rerun()
         else:
             st.info("Please login or register for the Candidate Portal.")
+    else:
+        st.info("Please select a portal to begin.")
+
