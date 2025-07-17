@@ -995,7 +995,7 @@ def format_project_details(proj_list):
             desc_snippet = entry["Description"].split('\n')[0][:50] + "..." if len(entry["Description"]) > 50 else entry["Description"]
             parts.append(f'"{desc_snippet}"')
         formatted_entries.append(" ".join(parts).strip())
-    return "; ".ाइयोंthought
+    return "; ".इयोंthought
 The user wants to resolve the "Certificate data not found" error and wants to send emails directly using a Gmail app password, not the `mailto` link.
 
 **Part 1: "Certificate data not found" error and closing the certificate.**
