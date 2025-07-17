@@ -252,7 +252,7 @@ MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for sk
 # This is the base URL of your Streamlit application (e.g., https://your-app-name.streamlit.app)
 APP_BASE_URL = "https://screenerpro-app.streamlit.app" # <--- REPLACE THIS WITH YOUR STREAMLIT APP URL
 # This is the base URL where your certificate.html is hosted (e.g., https://your-github-username.github.io/screenerpro-certs)
-CERTIFICATE_HOSTING_URL = "https://manav-jain.github.io/screenerpro-certs" # <--- REPLACE THIS WITH YOUR CERTIFICATE HOSTING URL
+CERTIFICATE_HOSTING_URL = "https://manavnagpal08.github.io/screenerpro-certs" # <--- REPLACE THIS WITH YOUR CERTIFICATE HOSTING URL
 
 
 @st.cache_resource
@@ -1103,8 +1103,8 @@ def save_certificate_data_to_firestore(certificate_data):
 
 def send_certificate_email(recipient_email, candidate_name, certificate_id, score, certificate_html_content, attach_html_file=False):
     # Retrieve Gmail credentials from Streamlit secrets
-    gmail_address = st.secrets["GMAIL_ADDRESS"]
-    gmail_app_password = st.secrets["GMAIL_APP_PASSWORD"]
+    gmail_address = "screenerpro.ai@gmail.com"
+    gmail_app_password = "udwi life nbdv kgdt"
 
     if not gmail_address or not gmail_app_password:
         st.error("Email sending is not configured. Please ensure your Gmail address and App Password secrets are set in Streamlit.")
