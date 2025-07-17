@@ -1022,7 +1022,7 @@ The {sender_name}""")
 
 def send_certificate_email(recipient_email, candidate_name, certificate_html_content):
     gmail_address = "screenerpro.ai@gmail.com"
-    gmail_app_password = "hcss uefd gaae wrse"
+    gmail_app_password = "kxgr bpdc yavo deoo"
 
     if not gmail_address or not gmail_app_password or gmail_address == "screenerpro.ai@gmail.com":
         st.error("Email sending is not configured. Please replace the placeholder Gmail credentials in `screener.py` to enable this feature.")
