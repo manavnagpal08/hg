@@ -78,7 +78,8 @@ def register_section():
                     save_users(users)
                     st.success("✅ Registration successful! You can now switch to the 'Login' option.")
                     # Manually set the session state to switch to Login option
-                    st.session_state.active_login_tab_selection = "Login"
+                    # This is for the radio button in login_section, not needed if using tabs directly
+                    # st.session_state.active_login_tab_selection = "Login"
 
 def admin_registration_section():
     """Admin-driven user creation form."""
@@ -183,7 +184,7 @@ def admin_change_user_role_section():
 
 
 def login_section():
-    """Handles user login and public registration."""
+    """Handles user login for HR and Candidate, and public registration."""
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
     if "username" not in st.session_state:
@@ -191,53 +192,70 @@ def login_section():
     if "user_role" not in st.session_state: # Initialize user_role
         st.session_state.user_role = None
     
-    # Initialize active_login_tab_selection if not present
-    if "active_login_tab_selection" not in st.session_state:
-        # Default to 'Register' if no users, otherwise 'Login'
-        if not os.path.exists(USER_DB_FILE) or len(load_users()) == 0:
-            st.session_state.active_login_tab_selection = "Register"
-        else:
-            st.session_state.active_login_tab_selection = "Login"
-
-
+    # If already authenticated, just return True and don't render the form
     if st.session_state.authenticated:
         return True
 
-    # Use st.radio to simulate tabs if st.tabs() default_index is not supported
-    tab_selection = st.radio(
-        "Select an option:",
-        ("Login", "Register"),
-        key="login_register_radio",
-        index=0 if st.session_state.active_login_tab_selection == "Login" else 1
-    )
+    # Use st.tabs for a cleaner UI for login types and registration
+    hr_tab, candidate_tab, register_tab = st.tabs(["HR Login", "Candidate Login", "Register"])
 
-    if tab_selection == "Login":
+    with hr_tab:
         st.subheader("🔐 HR Login")
-        st.info("If you don't have an account, please go to the 'Register' option first.") # Added instructional message
-        with st.form("login_form", clear_on_submit=False):
-            username = st.text_input("Username", key="username_login")
-            password = st.text_input("Password", type="password", key="password_login")
-            submitted = st.form_submit_button("Login")
+        st.info("Login here if you are an HR professional or Administrator.")
+        with st.form("hr_login_form", clear_on_submit=False):
+            username = st.text_input("HR Username (Email)", key="username_hr_login")
+            password = st.text_input("HR Password", type="password", key="password_hr_login")
+            submitted = st.form_submit_button("Login as HR")
 
             if submitted:
                 users = load_users()
                 if username not in users:
-                    st.error("❌ Invalid username or password. Please register if you don't have an account.")
+                    st.error("❌ Invalid username or password.")
                 else:
                     user_data = users[username]
                     if user_data["status"] == "disabled":
-                        st.error("❌ Your account has been disabled. Please contact an administrator.")
-                    elif check_password(password, user_data["password"]):
+                        st.error("❌ Your HR account has been disabled. Please contact an administrator.")
+                    elif not check_password(password, user_data["password"]):
+                        st.error("❌ Invalid username or password.")
+                    elif user_data.get("role") == "Candidate": # Specific check for HR login
+                        st.error("❌ This is a Candidate account. Please use the 'Candidate Login' tab.")
+                    else: # HR or Admin role
                         st.session_state.authenticated = True
                         st.session_state.username = username
-                        st.session_state.user_company = user_data.get("company", "N/A") # Store company name
-                        st.session_state.user_role = user_data.get("role", "HR") # Store user role
-                        st.success("✅ Login successful!")
+                        st.session_state.user_company = user_data.get("company", "N/A")
+                        st.session_state.user_role = user_data.get("role", "HR") # Should be HR or Admin
+                        st.success("✅ HR Login successful! Redirecting...")
                         st.rerun()
-                    else:
+
+    with candidate_tab:
+        st.subheader("👤 Candidate Login")
+        st.info("Login here if you are a candidate.")
+        with st.form("candidate_login_form", clear_on_submit=False):
+            username = st.text_input("Candidate Username (Email)", key="username_candidate_login")
+            password = st.text_input("Candidate Password", type="password", key="password_candidate_login")
+            submitted = st.form_submit_button("Login as Candidate")
+
+            if submitted:
+                users = load_users()
+                if username not in users:
+                    st.error("❌ Invalid username or password.")
+                else:
+                    user_data = users[username]
+                    if user_data["status"] == "disabled":
+                        st.error("❌ Your Candidate account has been disabled. Please contact an administrator.")
+                    elif not check_password(password, user_data["password"]):
                         st.error("❌ Invalid username or password.")
+                    elif user_data.get("role") != "Candidate": # Specific check for Candidate login
+                        st.error("❌ This is an HR/Admin account. Please use the 'HR Login' tab.")
+                    else: # Candidate role
+                        st.session_state.authenticated = True
+                        st.session_state.username = username
+                        st.session_state.user_company = user_data.get("company", "N/A")
+                        st.session_state.user_role = "Candidate"
+                        st.success("✅ Candidate Login successful! Redirecting...")
+                        st.rerun()
     
-    elif tab_selection == "Register": # This will be the initially selected option for new users
+    with register_tab: # Register tab
         register_section()
 
     return st.session_state.authenticated
@@ -260,7 +278,18 @@ if __name__ == "__main__":
         if admin_user not in users:
             users[admin_user] = {"password": hash_password(default_admin_password), "status": "active", "company": "AdminCo", "role": "HR"} # Admins are HR by default
             st.info(f"Created default admin user: {admin_user} with password '{default_admin_password}'")
-    save_users(users) # Save after potentially adding new admin users
+    
+    # Ensure default HR user exists
+    if "hr@forscreenerpro" not in users:
+        users["hr@forscreenerpro"] = {"password": hash_password("hrpass"), "status": "active", "company": "HRTeam", "role": "HR"}
+        st.info("Created default HR user: hr@forscreenerpro with password 'hrpass'")
+
+    # Ensure default Candidate user exists
+    if "candidate@forscreenerpro" not in users:
+        users["candidate@forscreenerpro"] = {"password": hash_password("candpass"), "status": "active", "company": "ApplicantCo", "role": "Candidate"}
+        st.info("Created default Candidate user: candidate@forscreenerpro with password 'candpass'")
+
+    save_users(users) # Save after potentially adding new users
 
     if login_section():
         st.write(f"Welcome, {st.session_state.username}! Your role is: {st.session_state.user_role}")
@@ -302,6 +331,8 @@ if __name__ == "__main__":
         if st.button("Logout"):
             st.session_state.authenticated = False
             st.session_state.pop('username', None)
+            st.session_state.pop('user_role', None) # Clear role on logout
+            st.session_state.pop('user_company', None) # Clear company on logout
             st.rerun()
     else:
         st.info("Please login or register to continue.")
