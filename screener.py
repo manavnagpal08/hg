@@ -6,7 +6,7 @@ import os
 import sklearn
 import joblib
 import numpy as np
-from datetime import datetime, date # Import date as well
+from datetime import datetime, date
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
@@ -23,9 +23,9 @@ from email.mime.base import MIMEBase
 from email import encoders
 import tempfile
 import shutil
-from weasyprint import HTML # New import for PDF generation
-from concurrent.futures import ThreadPoolExecutor, as_completed # Import for parallel processing
-from io import BytesIO # Needed for simulating uploaded files from zip
+from weasyprint import HTML
+from concurrent.futures import ProcessPoolExecutor, as_completed # Changed to ProcessPoolExecutor
+from io import BytesIO
 
 # --- OCR Specific Imports ---
 from PIL import Image
@@ -33,23 +33,13 @@ import pytesseract
 import cv2
 from pdf2image import convert_from_bytes
 
+# Global NLTK download check (should run once)
 try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
     nltk.download('stopwords')
 
-@st.cache_resource
-def load_ml_model():
-    try:
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-        ml_model = joblib.load("ml_screening_model.pkl")
-        return model, ml_model
-    except Exception as e:
-        st.error(f"❌ Error loading ML models: {e}. Please ensure 'ml_screening_model.pkl' is in the same directory.")
-        return None, None
-
-model, ml_model = load_ml_model()
-
+# Define global constants (these are fine as they are not large objects to be pickled)
 MASTER_CITIES = set([
     "Bengaluru", "Mumbai", "Delhi", "Chennai", "Hyderabad", "Kolkata", "Pune", "Ahmedabad", "Jaipur", "Lucknow",
     "Chandigarh", "Kochi", "Coimbatore", "Nagpur", "Bhopal", "Indore", "Gurgaon", "Noida", "Surat", "Visakhapatnam",
@@ -226,8 +216,8 @@ APP_BASE_URL = "https://screenerpro-app.streamlit.app" # <--- REPLACE THIS WITH 
 CERTIFICATE_HOSTING_URL = "https://manav-jain.github.io/screenerpro-certs" # <--- REPLACE THIS WITH YOUR CERTIFICATE HOSTING URL
 
 
-@st.cache_resource
-def get_tesseract_cmd():
+# This function needs to be called in each process.
+def _get_tesseract_cmd_for_process():
     tesseract_path = shutil.which("tesseract")
     if tesseract_path:
         pytesseract.pytesseract.tesseract_cmd = tesseract_path
@@ -309,13 +299,16 @@ def extract_text_from_file(uploaded_file):
 
     full_text = ""
 
+    # Ensure tesseract command is set for this process
+    _get_tesseract_cmd_for_process()
+
     if "pdf" in file_type:
         try:
             with pdfplumber.open(BytesIO(file_bytes)) as pdf:
                 pdf_text = ''.join(page.extract_text() or '' for page in pdf.pages)
             
             if len(pdf_text.strip()) < 50: # Heuristic for potentially scanned PDF
-                st.warning(f"Low text extracted from PDF {file_name} using pdfplumber. Attempting OCR...")
+                # st.warning(f"Low text extracted from PDF {file_name} using pdfplumber. Attempting OCR...") # Cannot use st.warning in child process
                 images = convert_from_bytes(file_bytes)
                 for img in images:
                     processed_img = preprocess_image_for_ocr(img)
@@ -325,7 +318,7 @@ def extract_text_from_file(uploaded_file):
 
         except Exception as e:
             # Fallback to OCR directly if pdfplumber fails or for any other PDF error
-            st.error(f"Error processing PDF {file_name} with pdfplumber: {e}. Trying OCR fallback directly.")
+            # st.error(f"Error processing PDF {file_name} with pdfplumber: {e}. Trying OCR fallback directly.") # Cannot use st.error in child process
             try:
                 images = convert_from_bytes(file_bytes)
                 for img in images:
@@ -818,7 +811,7 @@ def format_project_details(proj_list):
         formatted_entries.append(" ".join(parts).strip())
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
 
-@st.cache_data(show_spinner="Generating concise AI Suggestion...")
+# Removed @st.cache_data as this function will be called in child processes
 def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_similarity, cgpa):
     overall_fit_description = ""
     review_focus_text = ""
@@ -860,7 +853,7 @@ def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_si
     summary_text = f"**Fit:** {overall_fit_description} **Strengths:** {cgpa_note}{key_strength_hint} **Focus:** {review_focus_text}"
     return summary_text
 
-@st.cache_data(show_spinner="Generating detailed HR Assessment...")
+# Removed @st.cache_data as this function will be called in child processes
 def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_similarity, cgpa, jd_text, resume_text, matched_keywords, missing_skills, max_exp_cutoff):
     assessment_parts = []
     overall_assessment_title = ""
@@ -950,7 +943,18 @@ def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_s
 
     return final_assessment
 
-def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills):
+# This function will now load models within each process
+def _load_ml_models_for_process():
+    try:
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        ml_model = joblib.load("ml_screening_model.pkl")
+        return model, ml_model
+    except Exception as e:
+        # In a child process, cannot use st.error directly
+        print(f"Error loading ML models in child process: {e}")
+        return None, None
+
+def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills, model, ml_model):
     jd_clean = clean_text(jd_text)
     resume_clean = clean_text(resume_text)
 
@@ -985,7 +989,7 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
         weighted_jd_coverage_percentage = 0.0
 
     if ml_model is None or model is None:
-        st.warning("ML models not loaded. Providing basic score and generic feedback.")
+        # print("ML models not loaded in semantic_score. Providing basic score and generic feedback.") # For debugging child process
         basic_score = (weighted_jd_coverage_percentage * 0.7)
         basic_score += min(years_exp * 5, 30)
         
@@ -1032,7 +1036,7 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
         return round(score, 2), round(semantic_similarity, 2)
 
     except Exception as e:
-        st.warning(f"Error during semantic scoring, falling back to basic: {e}")
+        # print(f"Error during semantic scoring in child process, falling back to basic: {e}") # For debugging child process
         basic_score = (weighted_jd_coverage_percentage * 0.7)
         basic_score += min(years_exp * 5, 30)
         
@@ -1066,10 +1070,10 @@ def generate_certificate_pdf(html_content):
         st.error(f"❌ Failed to generate PDF certificate: {e}")
         return None
 
-def send_certificate_email(recipient_email, candidate_name, score, certificate_pdf_content):
-    # Retrieve Gmail credentials from Streamlit secrets
-    gmail_address = st.secrets.get("GMAIL_ADDRESS")
-    gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD")
+def send_certificate_email(recipient_email, candidate_name, score, certificate_pdf_content, gmail_address, gmail_app_password):
+    # Retrieve Gmail credentials from Streamlit secrets - these are passed now
+    # gmail_address = st.secrets.get("GMAIL_ADDRESS")
+    # gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD")
 
     if not gmail_address or not gmail_app_password:
         st.error("❌ Email sending is not configured. Please ensure your Gmail address and App Password secrets are set in Streamlit.")
@@ -1154,8 +1158,28 @@ def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_ty
     """
     Processes a single resume file (bytes content) for the main screener page
     and returns a dictionary of results.
-    This function is designed to be run in a ThreadPoolExecutor.
+    This function is designed to be run in a ProcessPoolExecutor.
     """
+    # Load models within the child process to ensure picklability and isolation
+    model, ml_model = _load_ml_models_for_process()
+    if model is None or ml_model is None:
+        return {
+            "File Name": file_name,
+            "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
+            "Score (%)": 0, "Years Experience": 0, "CGPA (4.0 Scale)": None,
+            "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
+            "Languages": "Not Found", "Education Details": "Not Found",
+            "Work History": "Not Found", "Project Details": "Not Found",
+            "AI Suggestion": "Error: ML models could not be loaded.",
+            "Detailed HR Assessment": "Error: ML models could not be loaded.",
+            "Matched Keywords": "", "Missing Skills": "",
+            "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
+            "Semantic Similarity": 0.0, "Resume Raw Text": "",
+            "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
+            "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
+            "Tag": "❌ Processing Error"
+        }
+
     try:
         # Create a BytesIO object to simulate an uploaded file for extract_text_from_file
         uploaded_file_mock = BytesIO(file_data_bytes)
@@ -1205,7 +1229,7 @@ def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_ty
         matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
         missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
 
-        score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills)
+        score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills, model, ml_model)
         
         concise_ai_suggestion = generate_concise_ai_suggestion(
             candidate_name=candidate_name,
@@ -1272,12 +1296,12 @@ def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_ty
             "Resume Raw Text": text,
             "JD Used": jd_name_for_results,
             "Date Screened": datetime.now().date(),
-            "Certificate ID": certificate_id,
+            "Certificate ID": str(uuid.uuid4()),
             "Certificate Rank": certificate_rank,
             "Tag": tag
         }
     except Exception as e:
-        st.error(f"Error processing {file_name}: {e}")
+        # print(f"Error processing {file_name} in child process: {e}") # For debugging child process
         return {
             "File Name": file_name,
             "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
@@ -1322,7 +1346,8 @@ def resume_screener_page():
     if 'certificate_html_content' not in st.session_state:
         st.session_state['certificate_html_content'] = ""
 
-    tesseract_cmd_path = get_tesseract_cmd()
+    # Initial check for Tesseract (main process only)
+    tesseract_cmd_path = _get_tesseract_cmd_for_process()
     if not tesseract_cmd_path:
         st.error("Tesseract OCR engine not found. Please ensure it's installed and in your system's PATH.")
         st.info("On Streamlit Community Cloud, ensure you have a `packages.txt` file in your repository's root with `tesseract-ocr` and `tesseract-ocr-eng` listed.")
@@ -1423,41 +1448,28 @@ def resume_screener_page():
 
         total_resumes = len(resume_files)
         
-        # Use ThreadPoolExecutor for parallel processing if multiple files are uploaded
-        if total_resumes > 1:
-            st.info(f"Processing {total_resumes} resumes in parallel...")
-            with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
-                futures = []
-                for file in resume_files:
-                    # Read file content into memory once to pass to the executor
-                    file_data_bytes = file.read()
-                    futures.append(executor.submit(
-                        _process_single_resume_for_screener_page,
-                        file_data_bytes, file.name, file.type, jd_text, jd_name_for_results,
-                        high_priority_skills, medium_priority_skills, max_experience
-                    ))
-                
-                for i, future in enumerate(as_completed(futures)):
-                    status_text.text(f"Processing: {resume_files[i].name} ({i+1}/{total_resumes})...")
-                    try:
-                        result = future.result()
-                        results.append(result)
-                    except Exception as exc:
-                        st.error(f"Resume processing generated an exception for {resume_files[i].name}: {exc}")
-                    progress_bar.progress((i + 1) / total_resumes)
-        else: # For single file upload, process sequentially
-            file = resume_files[0]
-            status_text.text(f"Processing {file.name} (1/1)...")
-            progress_bar.progress(0)
-            file_data_bytes = file.read() # Read file content
-            result = _process_single_resume_for_screener_page(
-                file_data_bytes, file.name, file.type, jd_text, jd_name_for_results,
-                high_priority_skills, medium_priority_skills, max_experience
-            )
-            results.append(result)
-            progress_bar.progress(100)
-
-
+        # Use ProcessPoolExecutor for true parallel processing
+        st.info(f"Processing {total_resumes} resumes in parallel using multiple CPU cores...")
+        # Max workers can be set to os.cpu_count() for optimal CPU utilization
+        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+            futures = []
+            for file in resume_files:
+                # Read file content into memory once to pass to the executor
+                file_data_bytes = file.read()
+                futures.append(executor.submit(
+                    _process_single_resume_for_screener_page,
+                    file_data_bytes, file.name, file.type, jd_text, jd_name_for_results,
+                    high_priority_skills, medium_priority_skills, max_experience
+                ))
+            
+            for i, future in enumerate(as_completed(futures)):
+                status_text.text(f"Processing: {resume_files[i].name} ({i+1}/{total_resumes})...")
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as exc:
+                    st.error(f"Resume processing generated an exception for {resume_files[i].name}: {exc}")
+                progress_bar.progress((i + 1) / total_resumes)
             
         progress_bar.empty()
         status_text.empty()
@@ -1472,15 +1484,6 @@ def resume_screener_page():
 
         st.session_state['comprehensive_df'] = pd.DataFrame(results).sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
         
-        # The 'Tag' calculation is now done inside _process_single_resume_for_screener_page
-        # so this block is no longer needed here.
-        # st.session_state['comprehensive_df']['Tag'] = st.session_state['comprehensive_df'].apply(lambda row: 
-        #     "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.85 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.5) else (
-        #     "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.7 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.0) else (
-        #     "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 and row['Years Experience'] <= max_experience and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 2.5) else (
-        #     "⚠️ Needs Review" if row['Score (%)'] >= 40 else 
-        #     "❌ Limited Match"))), axis=1)
-
         st.session_state['comprehensive_df'].to_csv("results.csv", index=False)
 
 
@@ -1941,11 +1944,16 @@ def resume_screener_page():
                         # Automatically send email if certificate PDF is generated and email is available
                         if candidate_data_for_cert.get('Email') and candidate_data_for_cert['Email'] != "Not Found":
                             if certificate_pdf_content:
+                                # Pass secrets to the email function as it runs in the main thread
+                                gmail_address = st.secrets.get("GMAIL_ADDRESS")
+                                gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD")
                                 send_certificate_email(
                                     recipient_email=candidate_data_for_cert['Email'],
                                     candidate_name=candidate_data_for_cert['Candidate Name'],
                                     score=candidate_data_for_cert['Score (%)'],
-                                    certificate_pdf_content=certificate_pdf_content
+                                    certificate_pdf_content=certificate_pdf_content,
+                                    gmail_address=gmail_address,
+                                    gmail_app_password=gmail_app_password
                                 )
                             else:
                                 st.error("PDF certificate could not be generated, so email could not be sent.")
