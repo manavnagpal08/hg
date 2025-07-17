@@ -1984,8 +1984,8 @@ def resume_screener_page():
         st.markdown("## 🏆 Generate Candidate Certificates")
         st.caption("Select a candidate to view or download their ScreenerPro Certification.")
 
-        if not filtered_display_df.empty:
-            candidate_names_for_cert = filtered_display_df['Candidate Name'].tolist()
+        if not st.session_state['comprehensive_df'].empty: # Use comprehensive_df here
+            candidate_names_for_cert = st.session_state['comprehensive_df']['Candidate Name'].tolist() # Use comprehensive_df for options
             selected_candidate_name_for_cert = st.selectbox(
                 "**Select Candidate for Certificate:**",
                 options=candidate_names_for_cert,
@@ -1993,9 +1993,9 @@ def resume_screener_page():
             )
 
             if selected_candidate_name_for_cert:
-                # Ensure the selected candidate still exists in the filtered DataFrame
-                candidate_rows = filtered_display_df[
-                    filtered_display_df['Candidate Name'] == selected_candidate_name_for_cert
+                # Ensure the selected candidate still exists in the comprehensive DataFrame
+                candidate_rows = st.session_state['comprehensive_df'][ # Use comprehensive_df for lookup
+                    st.session_state['comprehensive_df']['Candidate Name'] == selected_candidate_name_for_cert
                 ]
                 
                 if not candidate_rows.empty:
@@ -2020,7 +2020,7 @@ def resume_screener_page():
                     else:
                         st.info(f"{selected_candidate_name_for_cert} does not qualify for a ScreenerPro Certificate at this time.")
                 else:
-                    st.warning(f"Selected candidate '{selected_candidate_name_for_cert}' not found in the current filtered results. Please re-select or adjust filters.")
+                    st.warning(f"Selected candidate '{selected_candidate_name_for_cert}' not found in the processed results. Please re-select or re-process resumes.")
         else:
             st.info("No candidates available to generate certificates for. Please screen resumes first.")
 
@@ -2028,7 +2028,7 @@ def resume_screener_page():
         if 'view_certificate_id' in st.session_state and st.session_state.view_certificate_id:
             cert_id_to_view = st.session_state.view_certificate_id
             
-            # Find the candidate data for this certificate ID
+            # Find the candidate data for this certificate ID from the comprehensive_df
             candidate_data_for_cert_row = st.session_state['comprehensive_df'][
                 st.session_state['comprehensive_df']['Certificate ID'] == cert_id_to_view
             ]
