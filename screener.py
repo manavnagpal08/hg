@@ -23,7 +23,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 import tempfile
 import shutil
-import json # New import for parsing JSON secrets
+# import json # New import for parsing JSON secrets (commented out)
 
 # --- OCR Specific Imports ---
 from PIL import Image
@@ -31,35 +31,35 @@ import pytesseract
 import cv2
 from pdf2image import convert_from_bytes
 
-# Firebase Imports (for saving certificate data)
-import firebase_admin
-from firebase_admin import credentials, firestore
+# Firebase Imports (for saving certificate data) - Commented out
+# import firebase_admin
+# from firebase_admin import credentials, firestore
 
-# Initialize Firebase if not already initialized
-if not firebase_admin._apps:
-    try:
-        # Define the path to your firebase-key.json file
-        firebase_key_path = os.path.join("config", "firebase-key.json")
+# Initialize Firebase if not already initialized - Commented out
+# if not firebase_admin._apps:
+#     try:
+#         # Define the path to your firebase-key.json file
+#         firebase_key_path = os.path.join("config", "firebase-key.json")
 
-        if os.path.exists(firebase_key_path):
-            with open(firebase_key_path, "r") as f:
-                firebase_service_account_key_json = json.load(f)
-            cred = credentials.Certificate(firebase_service_account_key_json)
-            firebase_admin.initialize_app(cred)
-            st.success("✅ Firebase Admin SDK initialized successfully from config file!")
-        else:
-            st.error(f"❌ Firebase Admin SDK initialization error: '{firebase_key_path}' not found. "
-                     "Please ensure your 'firebase-key.json' is in a 'config' folder in your repository, "
-                     "or use Streamlit Secrets for secure deployment. **Certificate saving will not work.**")
-            st.stop()
-    except Exception as e:
-        st.error(f"❌ Firebase Admin SDK initialization failed: {e}. "
-                 "This often means your `firebase-key.json` is invalid or corrupted. "
-                 "**Please regenerate your Firebase service account key and replace the file.** "
-                 "Certificate saving will not work.")
-        st.stop()
+#         if os.path.exists(firebase_key_path):
+#             with open(firebase_key_path, "r") as f:
+#                 firebase_service_account_key_json = json.load(f)
+#             cred = credentials.Certificate(firebase_service_account_key_json)
+#             firebase_admin.initialize_app(cred)
+#             st.success("✅ Firebase Admin SDK initialized successfully from config file!")
+#         else:
+#             st.error(f"❌ Firebase Admin SDK initialization error: '{firebase_key_path}' not found. "
+#                      "Please ensure your 'firebase-key.json' is in a 'config' folder in your repository, "
+#                      "or use Streamlit Secrets for secure deployment. **Certificate saving will not work.**")
+#             st.stop()
+#     except Exception as e:
+#         st.error(f"❌ Firebase Admin SDK initialization failed: {e}. "
+#                  "This often means your `firebase-key.json` is invalid or corrupted. "
+#                  "**Please regenerate your Firebase service account key and replace the file.** "
+#                  "Certificate saving will not work.")
+#         st.stop()
 
-db = firestore.client()
+# db = firestore.client() # Commented out
 
 try:
     nltk.data.find('corpora/stopwords')
@@ -1075,31 +1075,32 @@ Best regards,
 The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
-def save_certificate_data_to_firestore(certificate_data):
-    try:
-        # A consistent ID for the public collection path for certificates
-        app_id_for_firestore_collection = "screenerpro-certs-public" 
+# Commented out Firestore saving function
+# def save_certificate_data_to_firestore(certificate_data):
+#     try:
+#         # A consistent ID for the public collection path for certificates
+#         app_id_for_firestore_collection = "screenerpro-certs-public" 
         
-        certs_ref = db.collection(f"artifacts/{app_id_for_firestore_collection}/public/data/certificates")
+#         certs_ref = db.collection(f"artifacts/{app_id_for_firestore_collection}/public/data/certificates")
         
-        # Prepare data for Firestore
-        data_to_save = {
-            "name": certificate_data.get("Candidate Name"),
-            "score": certificate_data.get("Score (%)"),
-            "rank": certificate_data.get("Certificate Rank"),
-            "date": certificate_data.get("Date Screened").isoformat() if isinstance(certificate_data.get("Date Screened"), (datetime, date)) else str(certificate_data.get("Date Screened")),
-            "certificate_id": certificate_data.get("Certificate ID"),
-            # Add any other relevant data you want to store and retrieve
-        }
+#         # Prepare data for Firestore
+#         data_to_save = {
+#             "name": certificate_data.get("Candidate Name"),
+#             "score": certificate_data.get("Score (%)"),
+#             "rank": certificate_data.get("Certificate Rank"),
+#             "date": certificate_data.get("Date Screened").isoformat() if isinstance(certificate_data.get("Date Screened"), (datetime, date)) else str(certificate_data.get("Date Screened")),
+#             "certificate_id": certificate_data.get("Certificate ID"),
+#             # Add any other relevant data you want to store and retrieve
+#         }
         
-        # Use the certificate_id as the document ID for easy retrieval
-        certs_ref.document(certificate_data["Certificate ID"]).set(data_to_save)
-        st.success(f"✅ Certificate data for {certificate_data['Candidate Name']} saved to Firestore!")
-        return True
-    except Exception as e:
-        st.error(f"❌ Failed to save certificate data to Firestore: {e}. "
-                 "This usually means your Firebase service account key is invalid or Firestore rules prevent writing.")
-        return False
+#         # Use the certificate_id as the document ID for easy retrieval
+#         certs_ref.document(certificate_data["Certificate ID"]).set(data_to_save)
+#         st.success(f"✅ Certificate data for {certificate_data['Candidate Name']} saved to Firestore!")
+#         return True
+#     except Exception as e:
+#         st.error(f"❌ Failed to save certificate data to Firestore: {e}. "
+#                  "This usually means your Firebase service account key is invalid or Firestore rules prevent writing.")
+#         return False
 
 def send_certificate_email(recipient_email, candidate_name, score, certificate_html_content):
     # Retrieve Gmail credentials from Streamlit secrets
@@ -1852,8 +1853,8 @@ def resume_screener_page():
                     candidate_data_for_cert = candidate_rows.iloc[0].to_dict()
 
                     if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
-                        # Save certificate data to Firestore
-                        save_certificate_data_to_firestore(candidate_data_for_cert)
+                        # Save certificate data to Firestore - Commented out
+                        # save_certificate_data_to_firestore(candidate_data_for_cert)
 
                         # Generate HTML content for the certificate (simplified for email attachment)
                         certificate_html_content = generate_certificate_html(candidate_data_for_cert) # Removed CERTIFICATE_HOSTING_URL as it's not used in the attached HTML
