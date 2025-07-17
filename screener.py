@@ -250,9 +250,9 @@ MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for sk
 
 # IMPORTANT: REPLACE THESE WITH YOUR ACTUAL DEPLOYMENT URLs
 # This is the base URL of your Streamlit application (e.g., https://your-app-name.streamlit.app)
-APP_BASE_URL = "YOUR_APP_BASE_URL" # <--- REPLACE THIS
+APP_BASE_URL = "https://screenerpro-app.streamlit.app" # <--- REPLACE THIS WITH YOUR STREAMLIT APP URL
 # This is the base URL where your certificate.html is hosted (e.g., https://your-github-username.github.io/screenerpro-certs)
-CERTIFICATE_HOSTING_URL = "YOUR_CERTIFICATE_HOSTING_URL" # <--- REPLACE THIS
+CERTIFICATE_HOSTING_URL = "https://manav-jain.github.io/screenerpro-certs" # <--- REPLACE THIS WITH YOUR CERTIFICATE HOSTING URL
 
 
 @st.cache_resource
@@ -780,7 +780,7 @@ def extract_languages(text):
         start_index = section_match.end()
         # Optional: stop at next known section
         end_index = len(cleaned_full_text)
-        stop_words = ['education', 'experience', 'skills', 'certifications', 'projects', 'awards']
+        stop_words = ['education', 'experience', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
         for stop in stop_words:
             m = re.search(r'\b' + stop + r'\b', cleaned_full_text[start_index:], re.IGNORECASE)
             if m:
@@ -1103,8 +1103,8 @@ def save_certificate_data_to_firestore(certificate_data):
 
 def send_certificate_email(recipient_email, candidate_name, certificate_id, score, certificate_html_content, attach_html_file=False):
     # Retrieve Gmail credentials from Streamlit secrets
-    gmail_address = "screenerpro.ai@gmail.com"
-    gmail_app_password = "udwi life nbdv kgdt"
+    gmail_address = st.secrets["GMAIL_ADDRESS"]
+    gmail_app_password = st.secrets["GMAIL_APP_PASSWORD"]
 
     if not gmail_address or not gmail_app_password:
         st.error("Email sending is not configured. Please ensure your Gmail address and App Password secrets are set in Streamlit.")
@@ -1917,9 +1917,6 @@ def generate_certificate_html(candidate_data, certificate_hosting_url):
     # we'll use a simplified template or construct the HTML directly.
     # The actual certificate.html file in the separate repo will be used for live verification.
 
-    # Let's assume a simplified template structure for the Python side
-    # that matches the structure of the external certificate.html
-    
     # Read the template from the file system
     if not os.path.exists(certificate_template_path):
         # Fallback if the template isn't found locally (e.g., in a development environment)
@@ -2012,7 +2009,9 @@ def generate_certificate_html(candidate_data, certificate_hosting_url):
     html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
     # Pass the external hosting URL to the template for the QR code and verification link
     html_content = html_content.replace("{{VERIFICATION_LINK}}", verification_link)
-    html_content = html_content.replace("{{APP_BASE_URL}}", certificate_hosting_url) # This is for the QR code in certificate.html
+    # This APP_BASE_URL is used within the certificate.html for the QR code generation script.
+    # It should point to the base URL where certificate.html is hosted.
+    html_content = html_content.replace("{{APP_BASE_URL}}", certificate_hosting_url) 
 
     return html_content
 
