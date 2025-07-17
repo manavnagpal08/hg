@@ -1219,10 +1219,7 @@ def resume_screener_page():
         ])
     if 'resume_raw_texts' not in st.session_state:
         st.session_state['resume_raw_texts'] = {}
-    if 'certificate_to_display_data' not in st.session_state:
-        st.session_state['certificate_to_display_data'] = None
-    if 'show_certificate_modal' not in st.session_state: # New state variable for modal control
-        st.session_state['show_certificate_modal'] = False
+    # Removed 'certificate_to_display_data' and 'show_certificate_modal' as they are no longer needed for the modal
 
     # --- Initial Tesseract Check ---
     tesseract_cmd_path = get_tesseract_cmd()
@@ -1231,30 +1228,7 @@ def resume_screener_page():
         st.info("On Streamlit Community Cloud, ensure you have a `packages.txt` file in your repository's root with `tesseract-ocr` and `tesseract-ocr-eng` listed.")
         st.stop() # Stop the app if Tesseract is not found
 
-    # Inject Streamlit component for JS communication
-    # This is crucial for the JS to communicate back to Streamlit
-    st.components.v1.html("""
-        <script>
-            // This script is needed for the Streamlit.setComponentValue to work
-            // It listens for messages from the Streamlit backend
-            window.parent.addEventListener('message', event => {
-                if (event.data.type === 'streamlit:setComponentValue') {
-                    // This is where you would process messages from Streamlit if needed
-                }
-            });
-            // This function will be called by our JS close button
-            window.Streamlit = {
-                setComponentValue: function(key, value) {
-                    const message = {
-                        is_component_value: true,
-                        key: key,
-                        value: value,
-                    };
-                    window.parent.postMessage(message, '*');
-                },
-            };
-        </script>
-    """, height=0) # Set height to 0 to make it invisible
+    # No longer injecting Streamlit component for JS communication related to modal close
 
     # --- Job Description and Controls Section ---
     st.markdown("## ⚙️ Define Job Requirements & Screening Criteria")
@@ -1375,7 +1349,7 @@ def resume_screener_page():
             email = extract_email(text)
             phone = extract_phone_number(text)
             location = extract_location(text)
-            languages = extract_languages(text) # Call the new function
+            languages = extract_languages(text) 
             
             # Extract structured details
             education_details_raw = extract_education_details(text)
@@ -1944,9 +1918,11 @@ def resume_screener_page():
                         with col_cert_view:
                             # Direct Python callback to control modal visibility
                             if st.button("👁️ View Certificate", key="view_cert_button"):
-                                st.session_state['certificate_to_display_data'] = candidate_data_for_cert
-                                st.session_state['show_certificate_modal'] = True
-                                st.rerun() # Rerun to show the modal
+                                # Directly render the certificate HTML below
+                                st.markdown("---")
+                                st.markdown(f"### ScreenerPro Certificate for {candidate_data_for_cert['Candidate Name']}")
+                                st.markdown(generate_certificate_html(candidate_data_for_cert), unsafe_allow_html=True)
+                                st.markdown("---")
                                 
                         with col_cert_download:
                             certificate_html_content = generate_certificate_html(candidate_data_for_cert)
@@ -1964,85 +1940,7 @@ def resume_screener_page():
         else:
             st.info("No candidates available to generate certificates for. Please screen resumes first.")
 
-    # --- Certificate Modal Rendering (Conditional) ---
-    # This block will only execute and render the modal if 'show_certificate_modal' is True
-    if st.session_state.get('show_certificate_modal') and st.session_state.get('certificate_to_display_data'):
-        candidate_data_for_cert = st.session_state.certificate_to_display_data
-        
-        # Use a container for the modal to ensure it overlays correctly
-        with st.container():
-            st.markdown("""
-            <style>
-            .certificate-overlay {
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background-color: rgba(0, 0, 0, 0.7);
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                z-index: 1000; /* Ensure it's on top */
-            }
-            .certificate-content {
-                background: white;
-                padding: 40px;
-                border-radius: 15px;
-                box-shadow: 0 10px 25px rgba(0,0,0,0.4);
-                max-width: 850px;
-                max-height: 90vh;
-                overflow-y: auto;
-                position: relative;
-                border: 8px solid #00cec9;
-            }
-            .close-button-html { /* Renamed class to avoid conflict and clarify it's HTML button */
-                position: absolute;
-                top: 15px;
-                right: 15px;
-                background: #f44336; /* Red color for close */
-                color: white;
-                border: none;
-                border-radius: 50%;
-                width: 35px;
-                height: 35px;
-                cursor: pointer;
-                font-size: 20px;
-                line-height: 1;
-                text-align: center;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-                z-index: 1001; /* Ensure close button is above certificate content */
-            }
-            </style>
-            """, unsafe_allow_html=True)
-
-            # The actual modal HTML structure with the HTML close button
-            st.markdown(f"""
-            <div id="certificate-modal-overlay" class="certificate-overlay">
-                <div class="certificate-content">
-                    <button class="close-button-html" onclick="
-                        document.getElementById('certificate-modal-overlay').style.display = 'none';
-                        if (window.Streamlit) {{
-                            window.Streamlit.setComponentValue('close_certificate_modal', true);
-                        }}
-                    ">&times;</button>
-                    {generate_certificate_html(candidate_data_for_cert)}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # This is the Streamlit component that listens for the JS message
-            # It will receive 'true' when the JS button is clicked
-            close_modal_signal = st.components.v1.html("", height=0, key="close_modal_signal")
-            
-            # If the JS button sent a signal, update the session state to close the modal
-            if close_modal_signal: # This will be true if the JS component sends a value
-                st.session_state['show_certificate_modal'] = False
-                st.session_state['certificate_to_display_data'] = None # Clear data
-                st.rerun() # Rerun to hide the modal and clean up
+    # Removed the entire certificate modal rendering block as it's no longer needed
 
     else:
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
@@ -2073,9 +1971,9 @@ def generate_certificate_html(candidate_data):
     
     # Replace placeholders in the HTML template
     html_content = html_template.replace("{{CANDIDATE_NAME}}", candidate_name)
-    html_content = html_content.replace("{{SCORE}}", f"{score:.1f}")
-    html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
-    html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
-    html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
+    html_content = html_template.replace("{{SCORE}}", f"{score:.1f}")
+    html_content = html_template.replace("{{CERTIFICATE_RANK}}", certificate_rank)
+    html_content = html_template.replace("{{DATE_SCREENED}}", date_screened)
+    html_content = html_template.replace("{{CERTIFICATE_ID}}", certificate_id)
     
     return html_content
