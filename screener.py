@@ -23,43 +23,13 @@ from email.mime.base import MIMEBase
 from email import encoders
 import tempfile
 import shutil
-# import json # New import for parsing JSON secrets (commented out)
+from weasyprint import HTML # New import for PDF generation
 
 # --- OCR Specific Imports ---
 from PIL import Image
 import pytesseract
 import cv2
 from pdf2image import convert_from_bytes
-
-# Firebase Imports (for saving certificate data) - Commented out
-# import firebase_admin
-# from firebase_admin import credentials, firestore
-
-# Initialize Firebase if not already initialized - Commented out
-# if not firebase_admin._apps:
-#     try:
-#         # Define the path to your firebase-key.json file
-#         firebase_key_path = os.path.join("config", "firebase-key.json")
-
-#         if os.path.exists(firebase_key_path):
-#             with open(firebase_key_path, "r") as f:
-#                 firebase_service_account_key_json = json.load(f)
-#             cred = credentials.Certificate(firebase_service_account_key_json)
-#             firebase_admin.initialize_app(cred)
-#             st.success("✅ Firebase Admin SDK initialized successfully from config file!")
-#         else:
-#             st.error(f"❌ Firebase Admin SDK initialization error: '{firebase_key_path}' not found. "
-#                      "Please ensure your 'firebase-key.json' is in a 'config' folder in your repository, "
-#                      "or use Streamlit Secrets for secure deployment. **Certificate saving will not work.**")
-#             st.stop()
-#     except Exception as e:
-#         st.error(f"❌ Firebase Admin SDK initialization failed: {e}. "
-#                  "This often means your `firebase-key.json` is invalid or corrupted. "
-#                  "**Please regenerate your Firebase service account key and replace the file.** "
-#                  "Certificate saving will not work.")
-#         st.stop()
-
-# db = firestore.client() # Commented out
 
 try:
     nltk.data.find('corpora/stopwords')
@@ -1075,34 +1045,16 @@ Best regards,
 The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
-# Commented out Firestore saving function
-# def save_certificate_data_to_firestore(certificate_data):
-#     try:
-#         # A consistent ID for the public collection path for certificates
-#         app_id_for_firestore_collection = "screenerpro-certs-public" 
-        
-#         certs_ref = db.collection(f"artifacts/{app_id_for_firestore_collection}/public/data/certificates")
-        
-#         # Prepare data for Firestore
-#         data_to_save = {
-#             "name": certificate_data.get("Candidate Name"),
-#             "score": certificate_data.get("Score (%)"),
-#             "rank": certificate_data.get("Certificate Rank"),
-#             "date": certificate_data.get("Date Screened").isoformat() if isinstance(certificate_data.get("Date Screened"), (datetime, date)) else str(certificate_data.get("Date Screened")),
-#             "certificate_id": certificate_data.get("Certificate ID"),
-#             # Add any other relevant data you want to store and retrieve
-#         }
-        
-#         # Use the certificate_id as the document ID for easy retrieval
-#         certs_ref.document(certificate_data["Certificate ID"]).set(data_to_save)
-#         st.success(f"✅ Certificate data for {certificate_data['Candidate Name']} saved to Firestore!")
-#         return True
-#     except Exception as e:
-#         st.error(f"❌ Failed to save certificate data to Firestore: {e}. "
-#                  "This usually means your Firebase service account key is invalid or Firestore rules prevent writing.")
-#         return False
+def generate_certificate_pdf(html_content):
+    """Converts HTML content to PDF bytes."""
+    try:
+        pdf_bytes = HTML(string=html_content).write_pdf()
+        return pdf_bytes
+    except Exception as e:
+        st.error(f"❌ Failed to generate PDF certificate: {e}")
+        return None
 
-def send_certificate_email(recipient_email, candidate_name, score, certificate_html_content):
+def send_certificate_email(recipient_email, candidate_name, score, certificate_pdf_content):
     # Retrieve Gmail credentials from Streamlit secrets
     gmail_address = st.secrets.get("GMAIL_ADDRESS")
     gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD")
@@ -1157,25 +1109,19 @@ Have questions? Contact us at support@screenerpro.in
     # Attach the 'alternative' part to the main message
     msg.attach(msg_alternative)
 
-    # Attach the certificate HTML file
-    try:
-        # Create a temporary file for the HTML content
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html', encoding='utf-8') as tmp_file:
-            tmp_file.write(certificate_html_content)
-            temp_file_path = tmp_file.name
-
-        with open(temp_file_path, 'rb') as fp:
-            attachment = MIMEBase('application', 'octet-stream')
-            attachment.set_payload(fp.read())
-        encoders.encode_base64(attachment)
-        attachment.add_header('Content-Disposition', 'attachment', filename=f'ScreenerPro_Certificate_{candidate_name.replace(" ", "_")}.html')
-        msg.attach(attachment)
-        st.info(f"Attached certificate HTML to email for {candidate_name}.")
-    except Exception as e:
-        st.error(f"Failed to attach certificate HTML: {e}")
-    finally:
-        if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
-            os.unlink(temp_file_path) # Clean up the temporary file
+    # Attach the certificate PDF file
+    if certificate_pdf_content:
+        try:
+            attachment = MIMEBase('application', 'pdf')
+            attachment.set_payload(certificate_pdf_content)
+            encoders.encode_base64(attachment)
+            attachment.add_header('Content-Disposition', 'attachment', filename=f'ScreenerPro_Certificate_{candidate_name.replace(" ", "_")}.pdf')
+            msg.attach(attachment)
+            st.info(f"Attached certificate PDF to email for {candidate_name}.")
+        except Exception as e:
+            st.error(f"Failed to attach certificate PDF: {e}")
+    else:
+        st.warning("No PDF content generated to attach to email.")
 
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
@@ -1853,36 +1799,42 @@ def resume_screener_page():
                     candidate_data_for_cert = candidate_rows.iloc[0].to_dict()
 
                     if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
-                        # Save certificate data to Firestore - Commented out
-                        # save_certificate_data_to_firestore(candidate_data_for_cert)
-
-                        # Generate HTML content for the certificate (simplified for email attachment)
-                        certificate_html_content = generate_certificate_html(candidate_data_for_cert) # Removed CERTIFICATE_HOSTING_URL as it's not used in the attached HTML
+                        # Generate HTML content for the certificate (for preview and PDF conversion)
+                        certificate_html_content = generate_certificate_html(candidate_data_for_cert)
                         st.session_state['certificate_html_content'] = certificate_html_content # Store for preview
+
+                        # Generate PDF content
+                        certificate_pdf_content = generate_certificate_pdf(certificate_html_content)
 
                         col_cert_view, col_cert_download = st.columns(2)
                         with col_cert_view:
-                            if st.button("👁️ View Certificate", key="view_cert_button"):
+                            if st.button("👁️ View Certificate (HTML Preview)", key="view_cert_button"):
                                 # This button just triggers the preview, content is already generated
                                 pass 
                                 
                         with col_cert_download:
-                            st.download_button(
-                                label="⬇️ Download Certificate (HTML)",
-                                data=certificate_html_content,
-                                file_name=f"ScreenerPro_Certificate_{candidate_data_for_cert['Candidate Name'].replace(' ', '_')}.html",
-                                mime="text/html",
-                                key="download_cert_button"
-                            )
+                            if certificate_pdf_content:
+                                st.download_button(
+                                    label="⬇️ Download Certificate (PDF)",
+                                    data=certificate_pdf_content,
+                                    file_name=f"ScreenerPro_Certificate_{candidate_data_for_cert['Candidate Name'].replace(' ', '_')}.pdf",
+                                    mime="application/pdf",
+                                    key="download_cert_pdf_button"
+                                )
+                            else:
+                                st.warning("PDF generation failed, cannot provide download.")
                         
-                        # Automatically send email if certificate is generated and email is available
+                        # Automatically send email if certificate PDF is generated and email is available
                         if candidate_data_for_cert.get('Email') and candidate_data_for_cert['Email'] != "Not Found":
-                            send_certificate_email(
-                                recipient_email=candidate_data_for_cert['Email'],
-                                candidate_name=candidate_data_for_cert['Candidate Name'],
-                                score=candidate_data_for_cert['Score (%)'], # Pass Score
-                                certificate_html_content=certificate_html_content # Pass generated HTML
-                            )
+                            if certificate_pdf_content:
+                                send_certificate_email(
+                                    recipient_email=candidate_data_for_cert['Email'],
+                                    candidate_name=candidate_data_for_cert['Candidate Name'],
+                                    score=candidate_data_for_cert['Score (%)'],
+                                    certificate_pdf_content=certificate_pdf_content
+                                )
+                            else:
+                                st.error("PDF certificate could not be generated, so email could not be sent.")
                         else:
                             st.info(f"No email address found for {candidate_data_for_cert['Candidate Name']}. Certificate could not be sent automatically.")
 
@@ -1895,7 +1847,7 @@ def resume_screener_page():
 
     if st.session_state['certificate_html_content']:
         st.markdown("---")
-        st.markdown("### Generated Certificate Preview")
+        st.markdown("### Generated Certificate Preview (HTML)")
         st.components.v1.html(st.session_state['certificate_html_content'], height=600, scrolling=True)
         st.markdown("---")
 
@@ -1904,74 +1856,150 @@ def resume_screener_page():
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
 
 @st.cache_data
-def generate_certificate_html(candidate_data): # Removed certificate_hosting_url parameter
-    # This function now generates the HTML content for the certificate,
-    # without any external verification links or QR codes.
-    certificate_template_path = "certification.html" # Assuming this is in the main app directory for generation
-
-    # Read the template from the file system
-    if not os.path.exists(certificate_template_path):
-        st.error(f"Error: Certificate template file '{certificate_template_path}' not found. Using a basic template.")
-        html_template = """
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>ScreenerPro Certification</title>
-            <style>
-                body { font-family: sans-serif; text-align: center; padding: 20px; }
-                .certificate-container { border: 5px solid #00cec9; padding: 30px; margin: 20px auto; max-width: 600px; }
-                .candidate-name { font-size: 2em; margin: 15px 0; }
-                .score-rank { font-size: 1.2em; color: #00cec9; }
-                .date-id { font-size: 0.8em; color: #777; margin-top: 20px; }
-            </style>
-        </head>
-        <body>
-            <div class="certificate-container">
-                <h1>ScreenerPro Certification</h1>
-                <p>This certifies that</p>
-                <div class="candidate-name">{{CANDIDATE_NAME}}</div>
-                <p>has achieved a score of <strong>{{SCORE}}%</strong> and a rank of <strong>{{CERTIFICATE_RANK}}</strong>.</p>
-                <p>Date: {{DATE_SCREENED}}</p>
-                <p>Certificate ID: {{CERTIFICATE_ID}}</p>
+def generate_certificate_html(candidate_data):
+    # Hardcoded HTML template from the 'beautiful-certificate-html' immersive
+    html_template = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScreenerPro Certification - Candidate Name</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8f9fa; /* Light background for print compatibility */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .certificate-container {
+            width: 100%;
+            max-width: 800px;
+            background: linear-gradient(145deg, #ffffff, #e6e6e6);
+            border: 10px solid #00cec9; /* Main border color */
+            border-radius: 20px;
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
+            padding: 40px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .logo-text {
+            font-family: 'Playfair Display', serif; /* A more elegant font for the logo */
+            font-size: 2.8em; /* Larger logo text */
+            color: #00cec9;
+            font-weight: 700;
+            margin-bottom: 15px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+        .certificate-header {
+            font-family: 'Playfair Display', serif;
+            font-size: 2.5em;
+            color: #34495e; /* Darker text for header */
+            margin-bottom: 20px;
+            font-weight: 700;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.05);
+        }
+        .certificate-subheader {
+            font-size: 1.2em;
+            color: #555;
+            margin-bottom: 30px;
+        }
+        .certificate-body {
+            margin-bottom: 40px;
+        }
+        .certificate-body p {
+            font-size: 1.1em;
+            line-height: 1.6;
+            color: #333;
+        }
+        .candidate-name {
+            font-family: 'Playfair Display', serif;
+            font-size: 3.2em; /* Even larger name */
+            color: #00cec9; /* Teal for the name */
+            margin: 25px 0;
+            font-weight: 700;
+            border-bottom: 3px dashed #b0e0e6; /* Lighter dashed line */
+            display: inline-block;
+            padding-bottom: 8px;
+            animation: pulse 1.5s infinite alternate; /* Subtle animation */
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            100% { transform: scale(1.02); }
+        }
+        .score-rank {
+            font-size: 1.6em; /* Larger score/rank */
+            color: #28a745; /* Green for success */
+            font-weight: 700;
+            margin-top: 20px;
+            padding: 5px 15px;
+            background-color: #e6ffe6; /* Light green background */
+            border-radius: 10px;
+            display: inline-block;
+        }
+        .date-id {
+            font-size: 0.95em;
+            color: #777;
+            margin-top: 35px;
+        }
+        .footer-text {
+            font-size: 0.85em;
+            color: #999;
+            margin-top: 40px;
+        }
+        /* Print styles */
+        @media print {
+            body {
+                background-color: #fff;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .certificate-container {
+                border: 5px solid #00cec9;
+                box-shadow: none;
+            }
+            .logo-text, .certificate-header, .candidate-name, .score-rank {
+                color: #00cec9 !important; /* Ensure colors are printed */
+                text-shadow: none !important;
+            }
+            .candidate-name {
+                animation: none !important; /* Disable animation for print */
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="certificate-container">
+        <div class="logo-text">ScreenerPro</div>
+        <div class="certificate-header">Certification of Excellence</div>
+        <div class="certificate-subheader">This is to proudly certify that</div>
+        <div class="candidate-name">{{CANDIDATE_NAME}}</div>
+        <div class="certificate-body">
+            <p>has successfully completed the comprehensive AI-powered screening process by ScreenerPro and achieved a distinguished ranking of</p>
+            <div class="score-rank">
+                {{CERTIFICATE_RANK}}
             </div>
-        </body>
-    </html>
-        """
-    else:
-        try:
-            with open(certificate_template_path, "r", encoding="utf-8") as f:
-                html_template = f.read()
-        except Exception as e:
-            st.error(f"Error reading certificate template file: {e}. Using basic template.")
-            html_template = """
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>ScreenerPro Certification</title>
-                <style>
-                    body { font-family: sans-serif; text-align: center; padding: 20px; }
-                    .certificate-container { border: 5px solid #00cec9; padding: 30px; margin: 20px auto; max-width: 600px; }
-                    .candidate-name { font-size: 2em; margin: 15px 0; }
-                    .score-rank { font-size: 1.2em; color: #00cec9; }
-                    .date-id { font-size: 0.8em; color: #777; margin-top: 20px; }
-                </style>
-            </head>
-            <body>
-                <div class="certificate-container">
-                    <h1>ScreenerPro Certification</h1>
-                    <p>This certifies that</p>
-                    <div class="candidate-name">{{CANDIDATE_NAME}}</div>
-                    <p>has achieved a score of <strong>{{SCORE}}%</strong> and a rank of <strong>{{CERTIFICATE_RANK}}</strong>.</p>
-                    <p>Date: {{DATE_SCREENED}}</p>
-                    <p>Certificate ID: {{CERTIFICATE_ID}}</p>
-                </div>
-            </body>
-            </html>
-            """
+            <p>demonstrating an outstanding Screener Score of **{{SCORE}}%**.</p>
+            <p>This certification attests to their highly relevant skills, extensive experience, and strong alignment with the demanding requirements of modern professional roles. It signifies their readiness to excel in challenging environments and contribute significantly to organizational success.</p>
+        </div>
+        <div class="date-id">
+            Awarded on: {{DATE_SCREENED}}<br>
+            Certificate ID: {{CERTIFICATE_ID}}
+        </div>
+        <div class="footer-text">
+            This certificate is digitally verified by ScreenerPro.
+        </div>
+    </div>
+</body>
+</html>
+    """
 
     candidate_name = candidate_data.get('Candidate Name', 'Candidate Name')
     score = candidate_data.get('Score (%)', 0.0)
