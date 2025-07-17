@@ -6,7 +6,7 @@ import os
 import sklearn
 import joblib
 import numpy as np
-from datetime import datetime
+from datetime import datetime, date # Import date as well
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
@@ -16,21 +16,56 @@ import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
 import uuid
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+import tempfile
+import shutil
+import json # New import for parsing JSON secrets
 
 # --- OCR Specific Imports ---
 from PIL import Image
 import pytesseract
 import cv2
 from pdf2image import convert_from_bytes
-import shutil
 
-# Download NLTK stopwords data if not already downloaded
+# Firebase Imports (for saving certificate data)
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+# Initialize Firebase if not already initialized
+if not firebase_admin._apps:
+    try:
+        # Define the path to your firebase-key.json file
+        firebase_key_path = os.path.join("config", "firebase-key.json")
+
+        if os.path.exists(firebase_key_path):
+            with open(firebase_key_path, "r") as f:
+                firebase_service_account_key_json = json.load(f)
+            cred = credentials.Certificate(firebase_service_account_key_json)
+            firebase_admin.initialize_app(cred)
+            st.success("✅ Firebase Admin SDK initialized successfully from config file!")
+        else:
+            st.error(f"❌ Firebase Admin SDK initialization error: '{firebase_key_path}' not found. "
+                     "Please ensure your 'firebase-key.json' is in a 'config' folder in your repository, "
+                     "or use Streamlit Secrets for secure deployment. **Certificate saving will not work.**")
+            st.stop()
+    except Exception as e:
+        st.error(f"❌ Firebase Admin SDK initialization failed: {e}. "
+                 "This often means your `firebase-key.json` is invalid or corrupted. "
+                 "**Please regenerate your Firebase service account key and replace the file.** "
+                 "Certificate saving will not work.")
+        st.stop()
+
+db = firestore.client()
+
 try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
     nltk.download('stopwords')
 
-# --- Load Embedding + ML Model ---
 @st.cache_resource
 def load_ml_model():
     try:
@@ -43,9 +78,7 @@ def load_ml_model():
 
 model, ml_model = load_ml_model()
 
-# --- Predefined List of Cities for Location Extraction ---
 MASTER_CITIES = set([
-    # Indian Cities
     "Bengaluru", "Mumbai", "Delhi", "Chennai", "Hyderabad", "Kolkata", "Pune", "Ahmedabad", "Jaipur", "Lucknow",
     "Chandigarh", "Kochi", "Coimbatore", "Nagpur", "Bhopal", "Indore", "Gurgaon", "Noida", "Surat", "Visakhapatnam",
     "Patna", "Vadodara", "Ghaziabad", "Ludhiana", "Agra", "Nashik", "Faridabad", "Meerut", "Rajkot", "Varanasi",
@@ -58,8 +91,6 @@ MASTER_CITIES = set([
     "Tiruchirappalli", "Thanjavur", "Dindigul", "Kanyakumari", "Thoothukudi", "Tirunelveli", "Nagercoil", "Puducherry",
     "Panaji", "Margao", "Vasco da Gama", "Mapusa", "Ponda", "Bicholim", "Curchorem", "Sanquelim", "Valpoi", "Pernem",
     "Quepem", "Canacona", "Mormugao", "Sanguem", "Dharbandora", "Tiswadi", "Salcete", "Bardez",
-
-    # Foreign Cities (a selection)
     "London", "New York", "Paris", "Berlin", "Tokyo", "Sydney", "Toronto", "Vancouver", "Singapore", "Dubai",
     "San Francisco", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia", "San Antonio", "San Diego",
     "Dallas", "San Jose", "Austin", "Jacksonville", "Fort Worth", "Columbus", "Charlotte", "Indianapolis",
@@ -92,8 +123,6 @@ MASTER_CITIES = set([
     "Aventura"
 ])
 
-
-# --- Stop Words List (Using NLTK) ---
 NLTK_STOP_WORDS = set(nltk.corpus.stopwords.words('english'))
 CUSTOM_STOP_WORDS = set([
     "work", "experience", "years", "year", "months", "month", "day", "days", "project", "projects",
@@ -180,7 +209,6 @@ CUSTOM_STOP_WORDS = set([
 ])
 STOP_WORDS = NLTK_STOP_WORDS.union(CUSTOM_STOP_WORDS)
 
-# --- Skill Categories (for categorization and weighting) ---
 SKILL_CATEGORIES = {
     "Programming Languages": ["Python", "Java", "JavaScript", "C++", "C#", "Go", "Ruby", "PHP", "Swift", "Kotlin", "TypeScript", "R", "Bash Scripting", "Shell Scripting"],
     "Web Technologies": ["HTML5", "CSS3", "React", "Angular", "Vue.js", "Node.js", "Django", "Flask", "Spring Boot", "Express.js", "WebSockets"],
@@ -216,17 +244,18 @@ SKILL_CATEGORIES = {
     "PHR", "CEH", "OSCP", "CCNA", "CISSP", "CISM", "CompTIA Security+"]
 }
 
-# Dynamically generate MASTER_SKILLS from SKILL_CATEGORIES
 MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for skill in category_list])
 
+# IMPORTANT: REPLACE THESE WITH YOUR ACTUAL DEPLOYMENT URLs
+# This is the base URL of your Streamlit application (e.g., https://your-app-name.streamlit.app)
+APP_BASE_URL = "https://screenerpro-app.streamlit.app" # <--- REPLACE THIS WITH YOUR STREAMLIT APP URL
+# This is the base URL where your certificate.html is hosted (e.g., https://your-github-username.github.io/screenerpro-certs)
+# NOTE: This URL is no longer used for email content, but may be used if you still host a public verification page.
+CERTIFICATE_HOSTING_URL = "https://manav-jain.github.io/screenerpro-certs" # <--- REPLACE THIS WITH YOUR CERTIFICATE HOSTING URL
 
-# --- OCR Helper Functions ---
+
 @st.cache_resource
 def get_tesseract_cmd():
-    """
-    Finds the tesseract executable in the system's PATH.
-    This is crucial for pytesseract to work, especially in deployment environments.
-    """
     tesseract_path = shutil.which("tesseract")
     if tesseract_path:
         pytesseract.pytesseract.tesseract_cmd = tesseract_path
@@ -234,31 +263,19 @@ def get_tesseract_cmd():
     return None
 
 def preprocess_image_for_ocr(image):
-    """
-    Applies basic image preprocessing to improve OCR accuracy.
-    Converts to grayscale and applies adaptive thresholding.
-    """
     img_cv = np.array(image)
     img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
     img_processed = cv2.adaptiveThreshold(img_cv, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                           cv2.THRESH_BINARY, 11, 2)
     return Image.fromarray(img_processed)
 
-
-# --- Helpers ---
 def clean_text(text):
-    """Cleans text by removing newlines, extra spaces, and non-ASCII characters."""
     text = re.sub(r'\n', ' ', text)
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'[^\x00-\x7F]+', ' ', text)
     return text.strip().lower()
 
 def extract_relevant_keywords(text, filter_set):
-    """
-    Extracts relevant keywords from text, prioritizing multi-word skills from filter_set.
-    If filter_set is empty, it falls back to filtering out general STOP_WORDS.
-    Returns a tuple: (raw_keywords_set, categorized_keywords_dict)
-    """
     cleaned_text = clean_text(text)
     extracted_keywords = set()
     categorized_keywords = collections.defaultdict(list)
@@ -308,10 +325,6 @@ def extract_relevant_keywords(text, filter_set):
 
 
 def extract_text_from_file(uploaded_file):
-    """
-    Extracts text from an uploaded file, handling both PDF (text-based and image-based)
-    and common image formats (JPG, PNG).
-    """
     file_type = uploaded_file.type
     full_text = ""
 
@@ -356,7 +369,6 @@ def extract_text_from_file(uploaded_file):
 
 
 def extract_years_of_experience(text):
-    """Extracts years of experience from a given text by parsing date ranges or keywords."""
     text = text.lower()
     total_months = 0
     
@@ -417,24 +429,16 @@ def extract_years_of_experience(text):
     return 0.0
 
 def extract_email(text):
-    """
-    Extracts the most likely email from resume text,
-    fixing common OCR errors without breaking valid structure.
-    """
     text = text.lower()
 
-    # Fix common domain typos
     text = text.replace("gmaill.com", "gmail.com").replace("gmai.com", "gmail.com")
     text = text.replace("yah00", "yahoo").replace("outiook", "outlook")
     text = text.replace("coim", "com").replace("hotmai", "hotmail")
 
-    # Remove odd characters between words
     text = re.sub(r'[^\w\s@._+-]', ' ', text)
 
-    # Find all email-like patterns
     possible_emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.\w+', text)
 
-    # Optional: return most likely one (e.g., the one with your name or domain priority)
     if possible_emails:
         for email in possible_emails:
             if "gmail" in email or "manav" in email:
@@ -444,16 +448,10 @@ def extract_email(text):
     return None
 
 def extract_phone_number(text):
-    """Extracts a phone number from the given text."""
     match = re.search(r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', text)
     return match.group(0) if match else None
 
 def extract_location(text):
-    """
-    Extracts location details by matching against a predefined list of cities (MASTER_CITIES).
-    This approach is less reliant on external NLP models and should be more stable
-    in various deployment environments.
-    """
     found_locations = set()
     text_lower = text.lower()
 
@@ -468,13 +466,7 @@ def extract_location(text):
         return ", ".join(sorted(list(found_locations)))
     return "Not Found"
 
-
 def extract_name(text):
-    """
-    Attempts to extract a name from the first few lines of the resume text.
-    This is a heuristic and might not be perfect for all resume formats.
-    Filters out common non-name terms like "LinkedIn".
-    """
     lines = text.strip().split('\n')
     if not lines:
         return None
@@ -501,11 +493,6 @@ def extract_name(text):
     return None
 
 def extract_cgpa(text):
-    """
-    Extracts CGPA/GPA from text. Handles formats like X.X/Y.Y, X.X out of Y.Y, or just X.X.
-    Assumes a standard scale (e.g., 4.0, 5.0, 10.0).
-    Returns the CGPA normalized to a 4.0 scale if a scale is found, otherwise the raw value.
-    """
     text = text.lower()
     
     matches = re.findall(r'(?:cgpa|gpa|grade point average)\s*[:\s]*(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?|(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(?:cgpa|gpa)', text)
@@ -530,83 +517,53 @@ def extract_cgpa(text):
         
     return None
 
-def extract_education_details(text):
+def extract_education_text(text):
     """
-    Extracts education details (University, Degree, Major, Year) from text.
-    Returns a list of dicts.
+    Extracts a single-line education entry from resume text.
+    Returns a clean string like: "B.Tech in CSE, Alliance University, Bangalore – 2028"
+    Works with or without 'Expected' in the year.
     """
-    education_section_matches = re.finditer(r'(?:education|academic background|qualifications)\s*(\n|$)', text, re.IGNORECASE)
-    education_details = []
-    
-    start_index = -1
-    for match in education_section_matches:
-        start_index = match.end()
-        break
 
-    if start_index != -1:
-        sections = ['experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications']
-        end_index = len(text)
-        for section in sections:
-            section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
-            if section_match:
-                end_index = start_index + section_match.start()
-                break
-        
-        education_text = text[start_index:end_index].strip()
-        
-        edu_blocks = re.split(r'\n(?=\s*(?:bachelor|master|phd|associate|diploma|certificat|graduat|postgraduat|doctorate|university|college|institute|school|academy)\b|\d{4}\s*[-–]\s*(?:\d{4}|present))', education_text, flags=re.IGNORECASE)
-        
-        for block in edu_blocks:
-            block = block.strip()
-            if not block:
-                continue
-            
-            uni = None
-            degree = None
-            major = None
-            year = None
+    text = text.replace('\r', '').replace('\t', ' ')
+    lines = text.split('\n')
+    lines = [line.strip() for line in lines if line.strip()]
 
-            year_match = re.search(r'(\d{4})\s*[-–]\s*(\d{4}|present)|\b(\d{4})\b', block)
-            if year_match:
-                if year_match.group(1) and year_match.group(2):
-                    year = f"{year_match.group(1)}-{year_match.group(2)}"
-                elif year_match.group(3):
-                    year = year_match.group(3)
+    education_section = ''
+    capture = False
 
-            degree_match = re.search(r'\b(b\.?s\.?|bachelor of science|b\.?a\.?|bachelor of arts|m\.?s\.?|master of science|m\.?a\.?|master of arts|ph\.?d\.?|doctor of philosophy|mba|master of business administration|diploma|certificate)\b', block, re.IGNORECASE)
-            if degree_match:
-                degree = degree_match.group(0).title()
+    for line in lines:
+        line_lower = line.lower()
+        if any(h in line_lower for h in ['education', 'academic background', 'qualifications']):
+            capture = True
+            continue
+        if capture and any(h in line_lower for h in ['experience', 'skills', 'certifications', 'projects', 'languages']):
+            break
+        if capture:
+            education_section += line + ' '
 
-            uni_match = re.search(r'\b([A-Z][a-z]+(?:[\s-][A-Z][a-z]+)*)\s+(?:university|college|institute|school|academy)\b', block, re.IGNORECASE)
-            if uni_match:
-                uni = uni_match.group(1)
-            else:
-                lines = block.split('\n')
-                for line in lines:
-                    potential_uni_match = re.search(r'^[A-Z][a-zA-Z\s,&\.]+\b(university|college|institute|school|academy)?', line.strip())
-                    if potential_uni_match and len(potential_uni_match.group(0).split()) > 1:
-                        uni = potential_uni_match.group(0).strip().replace(',', '')
-                        break
-            
-            major_match = re.search(r'(?:in|of)\s+([A-Z][a-zA-Z\s]+(?:engineering|science|arts|business|management|studies|technology))', block, re.IGNORECASE)
-            if major_match:
-                major = major_match.group(1).strip()
-            
-            if uni or degree or major or year:
-                education_details.append({
-                    "University": uni,
-                    "Degree": degree,
-                    "Major": major,
-                    "Year": year
-                })
-    return education_details
+    education_section = education_section.strip()
 
+    edu_match = re.search(
+        r'([A-Za-z0-9.,()&\-\s]+?(university|college|institute|school)[^–\n]{0,50}[–\-—]?\s*(expected\s*)?\d{4})',
+        education_section,
+        re.IGNORECASE
+    )
+
+    if edu_match:
+        return edu_match.group(1).strip()
+
+    fallback_match = re.search(
+        r'([A-Za-z0-9.,()&\-\s]+?(b\.tech|m\.tech|b\.sc|m\.sc|bca|bba|mba|ph\.d)[^–\n]{0,50}\d{4})',
+        education_section,
+        re.IGNORECASE
+    )
+    if fallback_match:
+        return fallback_match.group(1).strip()
+
+    fallback_line = education_section.split('.')[0].strip()
+    return fallback_line if fallback_line else None
 
 def extract_work_history(text):
-    """
-    Extracts work history details (Company, Title, Start Date, End Date) from text.
-    Returns a list of dicts.
-    """
     work_history_section_matches = re.finditer(r'(?:experience|work history|employment history)\s*(\n|$)', text, re.IGNORECASE)
     work_details = []
     
@@ -680,187 +637,173 @@ def extract_work_history(text):
                 })
     return work_details
 
-def extract_project_details(text):
+def extract_project_details(text, MASTER_SKILLS):
     """
-    Extracts project details (Title, Description, Technologies) from text.
-    Returns a list of dicts.
+    Extracts real project entries from resume text.
+    Returns a list of dicts: Title, Description, Technologies Used
     """
+
     project_details = []
-    
-    project_section_keywords = r'(?:projects|personal projects|key projects|portfolio|selected projects|major projects|academic projects|relevant projects)'
-    
+
+    text = text.replace('\r', '').replace('\t', ' ')
+    lines = text.split('\n')
+    lines = [line.strip() for line in lines if line.strip()]
+
+    # Step 1: Isolate project section
+    project_section_keywords = r'(projects|personal projects|key projects|portfolio|selected projects|major projects|academic projects|relevant projects)'
     project_section_match = re.search(project_section_keywords + r'\s*(\n|$)', text, re.IGNORECASE)
-    
+
     if not project_section_match:
-        project_text = text
+        project_text = text[:1000]  # fallback to first 1000 chars
         start_index = 0
     else:
         start_index = project_section_match.end()
-        sections = ['education', 'experience', 'work history', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
+        sections = ['education', 'experience', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
         end_index = len(text)
         for section in sections:
-            section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
-            if section_match:
-                end_index = start_index + section_match.start()
+            match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
+            if match:
+                end_index = start_index + match.start()
                 break
         project_text = text[start_index:end_index].strip()
-    
+
     if not project_text:
         return []
 
     lines = [line.strip() for line in project_text.split('\n') if line.strip()]
-    
     current_project = {"Project Title": None, "Description": [], "Technologies Used": set()}
-    
-    strong_project_indicators = [
-        "project", "developed", "implemented", "created", "designed", "built", "contributed to",
-        "achieved", "led", "managed", "research", "capstone", "thesis", "portfolio"
+
+    forbidden_title_keywords = [
+        'skills gained', 'responsibilities', 'reflection', 'summary',
+        'achievements', 'capabilities', 'what i learned', 'tools used'
     ]
 
     for i, line in enumerate(lines):
         line_lower = line.lower()
-        
+
+        # Skip all-uppercase names or headers
+        if re.match(r'^[A-Z\s]{5,}$', line) and len(line.split()) <= 4:
+            continue
+
+        # Previous line was a bullet?
         prev_line_is_bullet = False
-        if i > 0:
-            prev_line = lines[i-1].strip()
-            if re.match(r'^[•*-]', prev_line):
-                prev_line_is_bullet = True
+        if i > 0 and re.match(r'^[•*-]', lines[i - 1]):
+            prev_line_is_bullet = True
 
-        is_potential_title = (
-            (line and (line[0].isupper() or re.match(r'^\d', line))) and
-            len(line.split()) > 1 and
-            len(line.split()) < 15 and
-            not re.search(r'\d{4}\s*[-–]\s*(?:\d{4}|present)', line_lower) and
-            not re.match(r'^[•*-]\s*(?:achieved|contributed|implemented|developed|designed|built|managed|led)', line_lower) and
-            any(keyword in line_lower for keyword in strong_project_indicators) and
-            not prev_line_is_bullet
+        # Strong new project title if:
+        # - starts with number or bullet
+        # - not just a soft skill block
+        # - contains 3–15 words
+        # - not all caps
+        is_title = (
+            (re.match(r'^[•*-]?\s*\d+[\).:-]?\s', line) or line.lower().startswith("project")) and
+            3 <= len(line.split()) <= 15 and
+            not any(kw in line_lower for kw in forbidden_title_keywords) and
+            not prev_line_is_bullet and
+            not line.isupper()
         )
-        
-        is_url = re.match(r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)', line_lower)
 
-        if is_potential_title or is_url:
-            if current_project["Project Title"] is not None or current_project["Description"]:
-                if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
-                    full_description_for_skills = "\n".join(current_project["Description"])
-                    extracted_skills_for_project, _ = extract_relevant_keywords(full_description_for_skills, MASTER_SKILLS)
-                    current_project["Technologies Used"].update(extracted_skills_for_project)
+        is_url = re.match(r'https?://', line_lower)
 
-                    project_details.append({
-                        "Project Title": current_project["Project Title"],
-                        "Description": full_description_for_skills.strip(),
-                        "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
-                    })
+        # New Project Begins
+        if is_title or is_url:
+            if current_project["Project Title"] or current_project["Description"]:
+                full_desc = "\n".join(current_project["Description"])
+                techs, _ = extract_relevant_keywords(full_desc, MASTER_SKILLS)
+                current_project["Technologies Used"].update(techs)
+
+                project_details.append({
+                    "Project Title": current_project["Project Title"],
+                    "Description": full_desc.strip(),
+                    "Technologies Used": ", ".join(sorted(current_project["Technologies Used"]))
+                })
+
             current_project = {"Project Title": line, "Description": [], "Technologies Used": set()}
         else:
             current_project["Description"].append(line)
-            
-    if current_project["Project Title"] is not None or current_project["Description"]:
-        if current_project["Project Title"] or current_project["Description"] or current_project["Technologies Used"]:
-            full_description_for_skills = "\n".join(current_project["Description"])
-            extracted_skills_for_project, _ = extract_relevant_keywords(full_description_for_skills, MASTER_SKILLS)
-            current_project["Technologies Used"].update(extracted_skills_for_project)
 
-            project_details.append({
-                "Project Title": current_project["Project Title"],
-                "Description": full_description_for_skills.strip(),
-                "Technologies Used": ", ".join(sorted(list(current_project["Technologies Used"])))
-            })
-            
+    # Add last project
+    if current_project["Project Title"] or current_project["Description"]:
+        full_desc = "\n".join(current_project["Description"])
+        techs, _ = extract_relevant_keywords(full_desc, MASTER_SKILLS)
+        current_project["Technologies Used"].update(techs)
+
+        project_details.append({
+            "Project Title": current_project["Project Title"],
+            "Description": full_desc.strip(),
+            "Technologies Used": ", ".join(sorted(current_project["Technologies Used"]))
+        })
+
     return project_details
 
 
 def extract_languages(text):
     """
-    Extracts spoken languages from the resume text.
-    Looks for a "Languages" section and lists known languages.
+    Extracts known languages from resume text.
+    Returns a comma-separated string of detected languages or 'Not Found'.
     """
     languages_list = set()
     cleaned_full_text = clean_text(text)
 
-    all_languages = [
+    # De-duplicated, lowercase language set
+    all_languages = list(set([
         "english", "hindi", "spanish", "french", "german", "mandarin", "japanese", "arabic",
         "russian", "portuguese", "italian", "korean", "bengali", "marathi", "telugu", "tamil",
         "gujarati", "urdu", "kannada", "odia", "malayalam", "punjabi", "assamese", "kashmiri",
         "sindhi", "sanskrit", "dutch", "swedish", "norwegian", "danish", "finnish", "greek",
         "turkish", "hebrew", "thai", "vietnamese", "indonesian", "malay", "filipino", "swahili",
         "farsi", "persian", "polish", "ukrainian", "romanian", "czech", "slovak", "hungarian",
-        "chinese", "vietnamese", "tagalog", "amharic", "somali", "nepali", "sinhala", "burmese",
-        "khmer", "lao", "pashto", "dari", "uzbek", "kazakh", "azerbaijani", "georgian", "armenian",
-        "albanian", "serbian", "croatian", "bosnian", "bulgarian", "macedonian", "slovenian",
-        "estonian", "latvian", "lithuanian", "icelandic", "irish", "welsh", "gaelic", "maltese",
-        "esperanto", "latin", "ancient greek", "modern greek", "yiddish", "romani", "catalan",
-        "galician", "basque", "breton", "cornish", "manx", "frisian", "luxembourgish", "sami",
-        "romansh", "sardinian", "corsican", "occitan", "provencal", "walloon", "flemish",
-        "afrikaans", "zulu", "xhosa", "sesotho", "setswana", "shona", "ndebele", "venda", "tsonga",
-        "swati", "kikuyu", "luganda", "kinyarwanda", "kirundi", "lingala", "kongo", "yoruba",
-        "igbo", "hausa", "fulani", "twi", "ewe", "ga", "dagbani", "gur", "mossi", "bambara",
-        "senufo", "wolof", "mandinka", "susu", "krio", "temne", "limba", "mende", "gola", "vai",
-        "kpele", "loma", "bandi", "kpelle", "kru", "bassa", "grebo", "krahn", "dan", "mano",
-        "guerze", "kono", "kisi", "gola", "de", "bassa", "kru", "grebo", "krahn", "dan", "mano",
-        "guerze", "kono", "kisi", "gola", "de",
-        "de"
-    ]
-    
+        "chinese", "tagalog", "nepali", "sinhala", "burmese", "khmer", "lao", "pashto", "dari",
+        "uzbek", "kazakh", "azerbaijani", "georgian", "armenian", "albanian", "serbian",
+        "croatian", "bosnian", "bulgarian", "macedonian", "slovenian", "estonian", "latvian",
+        "lithuanian", "icelandic", "irish", "welsh", "gaelic", "maltese", "esperanto", "latin",
+        "ancient greek", "modern greek", "yiddish", "romani", "catalan", "galician", "basque",
+        "breton", "cornish", "manx", "frisian", "luxembourgish", "sami", "romansh", "sardinian",
+        "corsican", "occitan", "provencal", "walloon", "flemish", "afrikaans", "zulu", "xhosa",
+        "sesotho", "setswana", "shona", "ndebele", "venda", "tsonga", "swati", "kikuyu",
+        "luganda", "kinyarwanda", "kirundi", "lingala", "kongo", "yoruba", "igbo", "hausa",
+        "fulani", "twi", "ewe", "ga", "dagbani", "gur", "mossi", "bambara", "senufo", "wolof",
+        "mandinka", "susu", "krio", "temne", "limba", "mende", "gola", "vai", "kpelle", "loma",
+        "bandi", "bassa", "grebo", "krahn", "dan", "mano", "guerze", "kono", "kisi"
+    ]))
+
     sorted_all_languages = sorted(all_languages, key=len, reverse=True)
 
-    languages_section_match = re.search(
-        r'\b(languages|language skills|linguistic abilities|proficiencies in languages|known languages)\s*[:\s]*(\n|$)',
+    # Step 1: Try to locate a language-specific section
+    section_match = re.search(
+        r'\b(languages|language skills|linguistic abilities|known languages)\s*[:\-]?\s*\n?',
         cleaned_full_text, re.IGNORECASE
     )
-    
-    text_to_search_for_languages = cleaned_full_text
 
-    if languages_section_match:
-        start_index = languages_section_match.end()
-        sections = ['education', 'experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications', 'interests', 'hobbies', 'achievements']
+    if section_match:
+        start_index = section_match.end()
+        # Optional: stop at next known section
         end_index = len(cleaned_full_text)
-        for section in sections:
-            section_match = re.search(r'\b' + re.escape(section) + r'\b', cleaned_full_text[start_index:], re.IGNORECASE)
-            if section_match:
-                end_index = start_index + section_match.start()
+        stop_words = ['education', 'experience', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
+        for stop in stop_words:
+            m = re.search(r'\b' + stop + r'\b', cleaned_full_text[start_index:], re.IGNORECASE)
+            if m:
+                end_index = start_index + m.start()
                 break
-        
-        languages_text_segment = cleaned_full_text[start_index:end_index].strip()
-        
-        for lang in sorted_all_languages:
-            pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
-            if re.search(pattern, languages_text_segment, re.IGNORECASE):
-                if lang == "de":
-                    languages_list.add("German")
-                else:
-                    languages_list.add(lang.title())
+
+        language_chunk = cleaned_full_text[start_index:end_index]
     else:
-        for lang in sorted_all_languages:
-            pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
-            if re.search(pattern, cleaned_full_text, re.IGNORECASE):
-                if lang == "de":
-                    languages_list.add("German")
-                else:
-                    languages_list.add(lang.title())
+        language_chunk = cleaned_full_text
 
-    return ", ".join(sorted(list(languages_list))) if languages_list else "Not Found"
+    # Step 2: Match known languages
+    for lang in sorted_all_languages:
+        # Use word boundaries for exact matches and allow for common suffixes like " (fluent)"
+        pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
+        if re.search(pattern, language_chunk, re.IGNORECASE):
+            if lang == "de":
+                languages_list.add("German")
+            else:
+                languages_list.add(lang.title())
 
+    return ", ".join(sorted(languages_list)) if languages_list else "Not Found"
 
-def format_education_details(edu_list):
-    """Formats a list of education dictionaries into a readable string."""
-    if not edu_list:
-        return "Not Found"
-    formatted_entries = []
-    for entry in edu_list:
-        parts = []
-        if entry.get("Degree"):
-            parts.append(entry["Degree"])
-        if entry.get("Major"):
-            parts.append(f"in {entry['Major']}")
-        if entry.get("University"):
-            parts.append(f"from {entry['University']}")
-        if entry.get("Year"):
-            parts.append(f"({entry['Year']})")
-        formatted_entries.append(" ".join(parts).strip())
-    return "; ".join(formatted_entries) if formatted_entries else "Not Found"
 
 def format_work_history(work_list):
-    """Formats a list of work history dictionaries into a readable string."""
     if not work_list:
         return "Not Found"
     formatted_entries = []
@@ -878,7 +821,6 @@ def format_work_history(work_list):
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
 
 def format_project_details(proj_list):
-    """Formats a list of project dictionaries into a readable string."""
     if not proj_list:
         return "Not Found"
     formatted_entries = []
@@ -894,14 +836,8 @@ def format_project_details(proj_list):
         formatted_entries.append(" ".join(parts).strip())
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
 
-
-# --- Concise AI Suggestion Function (for table display) ---
 @st.cache_data(show_spinner="Generating concise AI Suggestion...")
 def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_similarity, cgpa):
-    """
-    Generates a concise AI suggestion based on rules, focusing on overall fit and key points.
-    Now includes CGPA in the assessment.
-    """
     overall_fit_description = ""
     review_focus_text = ""
     key_strength_hint = ""
@@ -942,13 +878,8 @@ def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_si
     summary_text = f"**Fit:** {overall_fit_description} **Strengths:** {cgpa_note}{key_strength_hint} **Focus:** {review_focus_text}"
     return summary_text
 
-# --- Detailed HR Assessment Function (for top candidate display) ---
 @st.cache_data(show_spinner="Generating detailed HR Assessment...")
 def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_similarity, cgpa, jd_text, resume_text, matched_keywords, missing_skills, max_exp_cutoff):
-    """
-    Generates a detailed, multi-paragraph HR assessment for a candidate.
-    Now includes matched and missing skills, CGPA, and considers max experience.
-    """
     assessment_parts = []
     overall_assessment_title = ""
     next_steps_focus = ""
@@ -1037,14 +968,7 @@ def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_s
 
     return final_assessment
 
-
 def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills):
-    """
-    Calculates a semantic score using an ML model and provides additional details.
-    Falls back to smart_score if the ML model is not loaded or prediction fails.
-    Applies STOP_WORDS filtering for keyword analysis (internally, not for display).
-    Now includes CGPA and weighted keyword matching in the scoring.
-    """
     jd_clean = clean_text(jd_text)
     resume_clean = clean_text(resume_text)
 
@@ -1077,7 +1001,6 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
         weighted_jd_coverage_percentage = (weighted_keyword_overlap_score / total_jd_skill_weight) * 100
     else:
         weighted_jd_coverage_percentage = 0.0
-
 
     if ml_model is None or model is None:
         st.warning("ML models not loaded. Providing basic score and generic feedback.")
@@ -1122,7 +1045,6 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
             elif cgpa < 2.5:
                 blended_score -= 2
 
-
         score = float(np.clip(blended_score, 0, 100))
         
         return round(score, 2), round(semantic_similarity, 2)
@@ -1142,12 +1064,7 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
 
         return score, 0.0
 
-
-# --- Email Generation Function ---
 def create_mailto_link(recipient_email, candidate_name, job_title="Job Opportunity", sender_name="Recruiting Team"):
-    """
-    Generates a mailto: link with pre-filled subject and body for inviting a candidate.
-    """
     subject = urllib.parse.quote(f"Invitation for Interview - {job_title} - {candidate_name}")
     body = urllib.parse.quote(f"""Dear {candidate_name},
 
@@ -1158,7 +1075,112 @@ Best regards,
 The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
-# --- Function to encapsulate the Resume Screener logic ---
+def save_certificate_data_to_firestore(certificate_data):
+    try:
+        # A consistent ID for the public collection path for certificates
+        app_id_for_firestore_collection = "screenerpro-certs-public" 
+        
+        certs_ref = db.collection(f"artifacts/{app_id_for_firestore_collection}/public/data/certificates")
+        
+        # Prepare data for Firestore
+        data_to_save = {
+            "name": certificate_data.get("Candidate Name"),
+            "score": certificate_data.get("Score (%)"),
+            "rank": certificate_data.get("Certificate Rank"),
+            "date": certificate_data.get("Date Screened").isoformat() if isinstance(certificate_data.get("Date Screened"), (datetime, date)) else str(certificate_data.get("Date Screened")),
+            "certificate_id": certificate_data.get("Certificate ID"),
+            # Add any other relevant data you want to store and retrieve
+        }
+        
+        # Use the certificate_id as the document ID for easy retrieval
+        certs_ref.document(certificate_data["Certificate ID"]).set(data_to_save)
+        st.success(f"✅ Certificate data for {certificate_data['Candidate Name']} saved to Firestore!")
+        return True
+    except Exception as e:
+        st.error(f"❌ Failed to save certificate data to Firestore: {e}. "
+                 "This usually means your Firebase service account key is invalid or Firestore rules prevent writing.")
+        return False
+
+def send_certificate_email(recipient_email, candidate_name, score, certificate_html_content):
+    # Retrieve Gmail credentials from Streamlit secrets
+    gmail_address = st.secrets.get("GMAIL_ADDRESS")
+    gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD")
+
+    if not gmail_address or not gmail_app_password:
+        st.error("❌ Email sending is not configured. Please ensure your Gmail address and App Password secrets are set in Streamlit.")
+        return False
+
+    msg = MIMEMultipart('mixed') # Use 'mixed' for attachments
+    msg['Subject'] = f"🎉 You've Earned It! Here's Your Certification from ScreenerPro"
+    msg['From'] = gmail_address
+    msg['To'] = recipient_email
+
+    plain_text_body = f"""Hi {candidate_name},
+
+Congratulations on successfully clearing the ScreenerProPro resume screening process with a score of {score:.1f}%!
+
+We’re proud to award you an official certificate recognizing your skills and employability.
+
+You can add this to your resume, LinkedIn, or share it with employers to stand out.
+
+Have questions? Contact us at support@screenerpro.in
+
+🚀 Keep striving. Keep growing.
+
+– Team ScreenerPro
+"""
+
+    html_body = f"""
+    <html>
+        <body>
+            <p>Hi {candidate_name},</p>
+            <p>Congratulations on successfully clearing the ScreenerPro resume screening process with a score of <strong>{score:.1f}%</strong>!</p>
+            <p>We’re proud to award you an official certificate recognizing your skills and employability.</p>
+            <p>You can add this to your resume, LinkedIn, or share it with employers to stand out.</p>
+            <p>Have questions? Contact us at support@screenerpro.in</p>
+            <p>🚀 Keep striving. Keep growing.</p>
+            <p>– Team ScreenerPro</p>
+        </body>
+    </html>
+    """
+
+    # Attach the plain text and HTML parts
+    msg.attach(MIMEText(plain_text_body, 'plain'))
+    msg.attach(MIMEText(html_body, 'html'))
+
+    # Attach the certificate HTML file
+    try:
+        # Create a temporary file for the HTML content
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html', encoding='utf-8') as tmp_file:
+            tmp_file.write(certificate_html_content)
+            temp_file_path = tmp_file.name
+
+        with open(temp_file_path, 'rb') as fp:
+            attachment = MIMEBase('application', 'octet-stream')
+            attachment.set_payload(fp.read())
+        encoders.encode_base64(attachment)
+        attachment.add_header('Content-Disposition', 'attachment', filename=f'ScreenerPro_Certificate_{candidate_name.replace(" ", "_")}.html')
+        msg.attach(attachment)
+        st.info(f"Attached certificate HTML to email for {candidate_name}.")
+    except Exception as e:
+        st.error(f"Failed to attach certificate HTML: {e}")
+    finally:
+        if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path) # Clean up the temporary file
+
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(gmail_address, gmail_app_password)
+            smtp.send_message(msg)
+        st.success(f"✅ Certificate email sent to {recipient_email}!")
+        return True
+    except smtplib.SMTPAuthenticationError:
+        st.error("❌ Failed to send email: Authentication error. Please check your Gmail address and App Password.")
+        st.info("Ensure you have generated an App Password for your Gmail account and used it instead of your regular password.")
+    except Exception as e:
+        st.error(f"❌ Failed to send email: {e}")
+    return False
+
 def resume_screener_page():
     st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
 
@@ -1301,11 +1323,11 @@ def resume_screener_page():
             location = extract_location(text)
             languages = extract_languages(text) 
             
-            education_details_raw = extract_education_details(text)
+            education_details_text = extract_education_text(text)
             work_history_raw = extract_work_history(text)
-            project_details_raw = extract_project_details(text)
-
-            education_details_formatted = format_education_details(education_details_raw)
+            project_details_raw = extract_project_details(text, MASTER_SKILLS)
+            
+            education_details_formatted = education_details_text
             work_history_formatted = format_work_history(work_history_raw)
             project_details_formatted = format_project_details(project_details_raw)
 
@@ -1822,13 +1844,20 @@ def resume_screener_page():
                     candidate_data_for_cert = candidate_rows.iloc[0].to_dict()
 
                     if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
+                        # Save certificate data to Firestore
+                        save_certificate_data_to_firestore(candidate_data_for_cert)
+
+                        # Generate HTML content for the certificate (simplified for email attachment)
+                        certificate_html_content = generate_certificate_html(candidate_data_for_cert) # Removed CERTIFICATE_HOSTING_URL as it's not used in the attached HTML
+                        st.session_state['certificate_html_content'] = certificate_html_content # Store for preview
+
                         col_cert_view, col_cert_download = st.columns(2)
                         with col_cert_view:
                             if st.button("👁️ View Certificate", key="view_cert_button"):
-                                st.session_state['certificate_html_content'] = generate_certificate_html(candidate_data_for_cert)
+                                # This button just triggers the preview, content is already generated
+                                pass 
                                 
                         with col_cert_download:
-                            certificate_html_content = generate_certificate_html(candidate_data_for_cert)
                             st.download_button(
                                 label="⬇️ Download Certificate (HTML)",
                                 data=certificate_html_content,
@@ -1836,6 +1865,18 @@ def resume_screener_page():
                                 mime="text/html",
                                 key="download_cert_button"
                             )
+                        
+                        # Automatically send email if certificate is generated and email is available
+                        if candidate_data_for_cert.get('Email') and candidate_data_for_cert['Email'] != "Not Found":
+                            send_certificate_email(
+                                recipient_email=candidate_data_for_cert['Email'],
+                                candidate_name=candidate_data_for_cert['Candidate Name'],
+                                score=candidate_data_for_cert['Score (%)'], # Pass Score
+                                certificate_html_content=certificate_html_content # Pass generated HTML
+                            )
+                        else:
+                            st.info(f"No email address found for {candidate_data_for_cert['Candidate Name']}. Certificate could not be sent automatically.")
+
                     else:
                         st.info(f"{selected_candidate_name_for_cert} does not qualify for a ScreenerPro Certificate at this time.")
                 else:
@@ -1853,23 +1894,75 @@ def resume_screener_page():
     else:
         st.info("Please upload a Job Description and at least one Resume to begin the screening process.")
 
-# --- Certificate HTML Generation Function ---
-def generate_certificate_html(candidate_data):
-    """
-    Generates the HTML content for a ScreenerPro Certification by reading a template file.
-    """
-    certificate_template_path = "certification.html"
-    
-    if not os.path.exists(certificate_template_path):
-        st.error(f"Error: Certificate template file '{certificate_template_path}' not found.")
-        return "<h1>Certificate Template Not Found</h1><p>Please ensure 'certification.html' is in the root directory.</p>"
+@st.cache_data
+def generate_certificate_html(candidate_data): # Removed certificate_hosting_url parameter
+    # This function now generates the HTML content for the certificate,
+    # without any external verification links or QR codes.
+    certificate_template_path = "certification.html" # Assuming this is in the main app directory for generation
 
-    try:
-        with open(certificate_template_path, "r", encoding="utf-8") as f:
-            html_template = f.read()
-    except Exception as e:
-        st.error(f"Error reading certificate template: {e}")
-        return f"<h1>Error Loading Certificate Template</h1><p>{e}</p>"
+    # Read the template from the file system
+    if not os.path.exists(certificate_template_path):
+        st.error(f"Error: Certificate template file '{certificate_template_path}' not found. Using a basic template.")
+        html_template = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>ScreenerPro Certification</title>
+            <style>
+                body { font-family: sans-serif; text-align: center; padding: 20px; }
+                .certificate-container { border: 5px solid #00cec9; padding: 30px; margin: 20px auto; max-width: 600px; }
+                .candidate-name { font-size: 2em; margin: 15px 0; }
+                .score-rank { font-size: 1.2em; color: #00cec9; }
+                .date-id { font-size: 0.8em; color: #777; margin-top: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="certificate-container">
+                <h1>ScreenerPro Certification</h1>
+                <p>This certifies that</p>
+                <div class="candidate-name">{{CANDIDATE_NAME}}</div>
+                <p>has achieved a score of <strong>{{SCORE}}%</strong> and a rank of <strong>{{CERTIFICATE_RANK}}</strong>.</p>
+                <p>Date: {{DATE_SCREENED}}</p>
+                <p>Certificate ID: {{CERTIFICATE_ID}}</p>
+            </div>
+        </body>
+        </html>
+        """
+    else:
+        try:
+            with open(certificate_template_path, "r", encoding="utf-8") as f:
+                html_template = f.read()
+        except Exception as e:
+            st.error(f"Error reading certificate template file: {e}. Using basic template.")
+            html_template = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>ScreenerPro Certification</title>
+                <style>
+                    body { font-family: sans-serif; text-align: center; padding: 20px; }
+                    .certificate-container { border: 5px solid #00cec9; padding: 30px; margin: 20px auto; max-width: 600px; }
+                    .candidate-name { font-size: 2em; margin: 15px 0; }
+                    .score-rank { font-size: 1.2em; color: #00cec9; }
+                    .date-id { font-size: 0.8em; color: #777; margin-top: 20px; }
+                </style>
+            </head>
+            <body>
+                <div class="certificate-container">
+                    <h1>ScreenerPro Certification</h1>
+                    <p>This certifies that</p>
+                    <div class="candidate-name">{{CANDIDATE_NAME}}</div>
+                    <p>has achieved a score of <strong>{{SCORE}}%</strong> and a rank of <strong>{{CERTIFICATE_RANK}}</strong>.</p>
+                    <p>Date: {{DATE_SCREENED}}</p>
+                    <p>Certificate ID: {{CERTIFICATE_ID}}</p>
+                </div>
+            </body>
+            </html>
+            """
 
     candidate_name = candidate_data.get('Candidate Name', 'Candidate Name')
     score = candidate_data.get('Score (%)', 0.0)
@@ -1882,5 +1975,9 @@ def generate_certificate_html(candidate_data):
     html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
     html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
     html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
-    
+
     return html_content
+
+# This line ensures the Streamlit app runs
+if __name__ == "__main__":
+    resume_screener_page()
