@@ -44,7 +44,7 @@ from pdf2image import convert_from_bytes
 MASTER_CITIES = set([
     "Bengaluru", "Mumbai", "Delhi", "Chennai", "Hyderabad", "Kolkata", "Pune", "Ahmedabad", "Jaipur", "Lucknow",
     "Chandigarh", "Kochi", "Coimbatore", "Nagpur", "Bhopal", "Indore", "Gurgaon", "Noida", "Surat", "Visakhapatnam",
-    "Patna", "Vadodara", "Ghaziabad", "Ludhiana", "Agra", "Nashik", "Faridabad", "Meerut", "Rajkot", "Varanasi",
+    "Patna", "Vadodra", "Ghaziabad", "Ludhiana", "Agra", "Nashik", "Faridabad", "Meerut", "Rajkot", "Varanasi",
     "Srinagar", "Aurangabad", "Dhanbad", "Amritsar", "Allahabad", "Ranchi", "Jamshedpur", "Gwalior", "Jabalpur",
     "Vijayawada", "Jodhpur", "Raipur", "Kota", "Guwahati", "Thiruvananthapuram", "Mysuru", "Hubballi-Dharwad",
     "Mangaluru", "Belagavi", "Davangere", "Ballari", "Tumakuru", "Shivamogga", "Bidar", "Hassan", "Gadag-Betageri",
@@ -239,6 +239,37 @@ def load_ml_model():
 # Load models globally (once per app run)
 global_sentence_model, global_ml_model = load_ml_model()
 
+# Pre-compile regex patterns for efficiency
+PHONE_NUMBER_PATTERN = re.compile(r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b')
+EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.\w+')
+CGPA_PATTERN = re.compile(r'(?:cgpa|gpa|grade point average)\s*[:\s]*(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?|(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(?:cgpa|gpa)', re.IGNORECASE)
+EXPERIENCE_DATE_PATTERNS = [
+    re.compile(r'(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})\s*(?:to|–|-)\s*(present|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})', re.IGNORECASE),
+    re.compile(r'(\b\d{4})\s*(?:to|–|-)\s*(present|\b\d{4})')
+]
+EXPERIENCE_KEYWORD_PATTERN = re.compile(r'(\d+(?:\.\d+)?)\s*(\+)?\s*(year|yrs|years)\b|experience[^\d]{0,10}(\d+(?:\.\d+)?)', re.IGNORECASE)
+NAME_EXCLUDE_TERMS = {"linkedin", "github", "portfolio", "resume", "cv", "profile", "contact", "email", "phone"}
+NAME_CLEAN_TERMS = re.compile(r'summary|education|experience|skills|projects|certifications|profile|contact', re.IGNORECASE)
+NAME_PUNCTUATION_CLEAN = re.compile(r'^[^\w\s]+|[^\w\s]+$')
+EDUCATION_SECTION_KEYWORDS = re.compile(r'(education|academic background|qualifications)', re.IGNORECASE)
+EDUCATION_STOP_KEYWORDS = re.compile(r'(experience|skills|certifications|projects|languages)', re.IGNORECASE)
+EDUCATION_MATCH_PATTERN = re.compile(r'([A-Za-z0-9.,()&\-\s]+?(university|college|institute|school)[^–\n]{0,50}[–\-—]?\s*(expected\s*)?\d{4})', re.IGNORECASE)
+EDUCATION_FALLBACK_PATTERN = re.compile(r'([A-Za-z0-9.,()&\-\s]+?(b\.tech|m\.tech|b\.sc|m\.sc|bca|bba|mba|ph\.d)[^–\n]{0,50}\d{4})', re.IGNORECASE)
+WORK_HISTORY_SECTION_KEYWORDS = re.compile(r'(experience|work history|employment history)\s*(\n|$)', re.IGNORECASE)
+WORK_HISTORY_STOP_KEYWORDS = ['education', 'skills', 'projects', 'certifications', 'awards', 'publications']
+WORK_HISTORY_JOB_BLOCK_SPLIT = re.compile(r'\n(?=[A-Z][a-zA-Z\s,&\.]+(?:\s(?:at|@))?\s*[A-Z][a-zA-Z\s,&\.]*\s*(?:-|\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}))', re.IGNORECASE)
+WORK_HISTORY_DATE_RANGE_MATCH = re.compile(r'((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})\s*[-–]\s*(present|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})', re.IGNORECASE)
+WORK_HISTORY_TITLE_COMPANY_MATCH = re.compile(r'([A-Z][a-zA-Z\s,\-&.]+)\s+(?:at|@)\s+([A-Z][a-zA-Z\s,\-&.]+)')
+WORK_HISTORY_COMPANY_TITLE_MATCH = re.compile(r'^([A-Z][a-zA-Z\s,\-&.]+),\s*([A-Z][a-zA-Z\s,\-&.]+)')
+WORK_HISTORY_POTENTIAL_ORG_MATCH = re.compile(r'^[A-Z][a-zA-Z\s,\-&.]+')
+PROJECT_SECTION_KEYWORDS = re.compile(r'(projects|personal projects|key projects|portfolio|selected projects|major projects|academic projects|relevant projects)\s*(\n|$)', re.IGNORECASE)
+PROJECT_STOP_KEYWORDS = ['education', 'experience', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
+PROJECT_BULLET_OR_NUMBER_START = re.compile(r'^[•*-]?\s*\d+[\).:-]?\s')
+PROJECT_FORBIDDEN_TITLE_KEYWORDS = ['skills gained', 'responsibilities', 'reflection', 'summary', 'achievements', 'capabilities', 'what i learned', 'tools used']
+LANGUAGE_SECTION_KEYWORDS = re.compile(r'\b(languages|language skills|linguistic abilities|known languages)\s*[:\-]?\s*\n?', re.IGNORECASE)
+LANGUAGE_STOP_WORDS = ['education', 'experience', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
+LANGUAGE_MATCH_PATTERN = re.compile(r'\b(?P<lang_name>[a-z\s]+)(?:\s*\(?[a-z\s,-]+\)?)?\b', re.IGNORECASE) # Capture group for the language name
+
 # Helper for Activity Logging (for screener.py's own activities)
 def log_activity_screener(message):
     """Logs an activity with a timestamp to the session state for screener.py's activities."""
@@ -262,7 +293,7 @@ def clean_text(text):
     return text.strip().lower()
 
 def extract_relevant_keywords(text, filter_set):
-    cleaned_text = clean_text(text)
+    cleaned_text = text # Assume text is already cleaned
     extracted_keywords = set()
     categorized_keywords = collections.defaultdict(list)
 
@@ -312,7 +343,6 @@ def extract_relevant_keywords(text, filter_set):
 
 def extract_text_from_file(file_bytes, file_name, file_type):
     full_text = ""
-    # Tesseract configuration for speed and common resume layout
     tesseract_config = "--oem 1 --psm 3" 
 
     if "pdf" in file_type:
@@ -329,7 +359,6 @@ def extract_text_from_file(file_bytes, file_name, file_type):
                 full_text = pdf_text
 
         except Exception as e:
-            # Fallback to OCR directly if pdfplumber fails or for any other PDF error
             try:
                 images = convert_from_bytes(file_bytes)
                 for img in images:
@@ -359,16 +388,11 @@ def extract_text_from_file(file_bytes, file_name, file_type):
 
 
 def extract_years_of_experience(text):
-    text = text.lower()
+    text_lower = text.lower() # Assume text is already cleaned
     total_months = 0
     
-    date_patterns = [
-        r'(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})\s*(?:to|–|-)\s*(present|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})',
-        r'(\b\d{4})\s*(?:to|–|-)\s*(present|\b\d{4})'
-    ]
-
-    for pattern in date_patterns:
-        job_date_ranges = re.findall(pattern, text)
+    for pattern in EXPERIENCE_DATE_PATTERNS:
+        job_date_ranges = pattern.findall(text_lower)
         for start_str, end_str in job_date_ranges:
             start_date = None
             end_date = None
@@ -410,40 +434,39 @@ def extract_years_of_experience(text):
     if total_months > 0:
         return round(total_months / 12, 1)
     else:
-        match = re.search(r'(\d+(?:\.\d+)?)\s*(\+)?\s*(year|yrs|years)\b', text)
-        if not match:
-            match = re.search(r'experience[^\d]{0,10}(\d+(?:\.\d+)?)', text)
+        match = EXPERIENCE_KEYWORD_PATTERN.search(text_lower)
         if match:
-            return float(match.group(1))
+            return float(match.group(1) if match.group(1) else match.group(4)) # Group 1 for years, Group 4 for experience[num]
 
     return 0.0
 
 def extract_email(text):
-    text = text.lower()
+    text_lower = text.lower() # Assume text is already cleaned
 
-    text = text.replace("gmaill.com", "gmail.com").replace("gmai.com", "gmail.com")
-    text = text.replace("yah00", "yahoo").replace("outiook", "outlook")
-    text = text.replace("coim", "com").replace("hotmai", "hotmail")
+    text_lower = text_lower.replace("gmaill.com", "gmail.com").replace("gmai.com", "gmail.com")
+    text_lower = text_lower.replace("yah00", "yahoo").replace("outiook", "outlook")
+    text_lower = text_lower.replace("coim", "com").replace("hotmai", "hotmail")
 
-    text = re.sub(r'[^\w\s@._+-]', ' ', text)
+    text_lower = re.sub(r'[^\w\s@._+-]', ' ', text_lower)
 
-    possible_emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.\w+', text)
+    possible_emails = EMAIL_PATTERN.findall(text_lower)
 
     if possible_emails:
         for email in possible_emails:
-            if "gmail" in email or "manav" in email: # Specific filter, consider removing or making configurable
+            # Specific filter, consider removing or making configurable
+            if "gmail" in email or "manav" in email: 
                 return email
         return possible_emails[0]
     
     return None
 
 def extract_phone_number(text):
-    match = re.search(r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', text)
+    match = PHONE_NUMBER_PATTERN.search(text) # Assume text is already cleaned
     return match.group(0) if match else None
 
 def extract_location(text):
     found_locations = set()
-    text_lower = text.lower()
+    text_lower = text.lower() # Assume text is already cleaned
 
     sorted_cities = sorted(list(MASTER_CITIES), key=len, reverse=True)
 
@@ -461,8 +484,6 @@ def extract_name(text):
     if not lines:
         return None
 
-    EXCLUDE_NAME_TERMS = {"linkedin", "github", "portfolio", "resume", "cv", "profile", "contact", "email", "phone"}
-
     potential_name_lines = []
     for line in lines[:5]:
         line = line.strip()
@@ -470,22 +491,22 @@ def extract_name(text):
 
         if not re.search(r'[@\d\.\-]', line) and \
            len(line.split()) <= 4 and \
-           not any(term in line_lower for term in EXCLUDE_NAME_TERMS):
+           not any(term in line_lower for term in NAME_EXCLUDE_TERMS):
             if line.isupper() or (line and line[0].isupper() and all(word[0].isupper() or not word.isalpha() for word in line.split())):
                 potential_name_lines.append(line)
 
     if potential_name_lines:
         name = max(potential_name_lines, key=len)
-        name = re.sub(r'summary|education|experience|skills|projects|certifications|profile|contact', '', name, flags=re.IGNORECASE).strip()
-        name = re.sub(r'^[^\w\s]+|[^\w\s]+$', '', name).strip()
+        name = NAME_CLEAN_TERMS.sub('', name).strip()
+        name = NAME_PUNCTUATION_CLEAN.sub('', name).strip()
         if name:
             return name.title()
     return None
 
 def extract_cgpa(text):
-    text = text.lower()
+    text_lower = text.lower() # Assume text is already cleaned
     
-    matches = re.findall(r'(?:cgpa|gpa|grade point average)\s*[:\s]*(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?|(\d+\.\d+)(?:\s*[\/of]{1,4}\s*(\d+\.\d+|\d+))?\s*(?:cgpa|gpa)', text)
+    matches = CGPA_PATTERN.findall(text_lower)
 
     for match in matches:
         if match[0] and match[0].strip():
@@ -523,30 +544,22 @@ def extract_education_text(text):
 
     for line in lines:
         line_lower = line.lower()
-        if any(h in line_lower for h in ['education', 'academic background', 'qualifications']):
+        if EDUCATION_SECTION_KEYWORDS.search(line_lower):
             capture = True
             continue
-        if capture and any(h in line_lower for h in ['experience', 'skills', 'certifications', 'projects', 'languages']):
+        if capture and EDUCATION_STOP_KEYWORDS.search(line_lower):
             break
         if capture:
             education_section += line + ' '
 
     education_section = education_section.strip()
 
-    edu_match = re.search(
-        r'([A-Za-z0-9.,()&\-\s]+?(university|college|institute|school)[^–\n]{0,50}[–\-—]?\s*(expected\s*)?\d{4})',
-        education_section,
-        re.IGNORECASE
-    )
+    edu_match = EDUCATION_MATCH_PATTERN.search(education_section)
 
     if edu_match:
         return edu_match.group(1).strip()
 
-    fallback_match = re.search(
-        r'([A-Za-z0-9.,()&\-\s]+?(b\.tech|m\.tech|b\.sc|m\.sc|bca|bba|mba|ph\.d)[^–\n]{0,50}\d{4})',
-        education_section,
-        re.IGNORECASE
-    )
+    fallback_match = EDUCATION_FALLBACK_PATTERN.search(education_section)
     if fallback_match:
         return fallback_match.group(1).strip()
 
@@ -554,7 +567,7 @@ def extract_education_text(text):
     return fallback_line if fallback_line else None
 
 def extract_work_history(text):
-    work_history_section_matches = re.finditer(r'(?:experience|work history|employment history)\s*(\n|$)', text, re.IGNORECASE)
+    work_history_section_matches = WORK_HISTORY_SECTION_KEYWORDS.finditer(text)
     work_details = []
     
     start_index = -1
@@ -563,9 +576,8 @@ def extract_work_history(text):
         break
 
     if start_index != -1:
-        sections = ['education', 'skills', 'projects', 'certifications', 'awards', 'publications']
         end_index = len(text)
-        for section in sections:
+        for section in WORK_HISTORY_STOP_KEYWORDS:
             section_match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
             if section_match:
                 end_index = start_index + section_match.start()
@@ -573,7 +585,7 @@ def extract_work_history(text):
         
         work_text = text[start_index:end_index].strip()
         
-        job_blocks = re.split(r'\n(?=[A-Z][a-zA-Z\s,&\.]+(?:\s(?:at|@))?\s*[A-Z][a-zA-Z\s,&\.]*\s*(?:-|\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}))', work_text, flags=re.IGNORECASE)
+        job_blocks = WORK_HISTORY_JOB_BLOCK_SPLIT.split(work_text)
         
         for block in job_blocks:
             block = block.strip()
@@ -585,10 +597,7 @@ def extract_work_history(text):
             start_date = None
             end_date = None
 
-            date_range_match = re.search(
-                r'((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})\s*[-–]\s*(present|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4})',
-                block, re.IGNORECASE
-            )
+            date_range_match = WORK_HISTORY_DATE_RANGE_MATCH.search(block)
             if date_range_match:
                 start_date = date_range_match.group(1)
                 end_date = date_range_match.group(2)
@@ -599,20 +608,20 @@ def extract_work_history(text):
                 line = line.strip()
                 if not line: continue
 
-                title_company_match = re.search(r'([A-Z][a-zA-Z\s,\-&.]+)\s+(?:at|@)\s+([A-Z][a-zA-Z\s,\-&.]+)', line)
+                title_company_match = WORK_HISTORY_TITLE_COMPANY_MATCH.search(line)
                 if title_company_match:
                     title = title_company_match.group(1).strip()
                     company = title_company_match.group(2).strip()
                     break
                 
-                company_title_match = re.search(r'^([A-Z][a-zA-Z\s,\-&.]+),\s*([A-Z][a-zA-Z\s,\-&.]+)', line)
+                company_title_match = WORK_HISTORY_COMPANY_TITLE_MATCH.search(line)
                 if company_title_match:
                     company = company_title_match.group(1).strip()
                     title = company_title_match.group(2).strip()
                     break
                 
                 if not company and not title:
-                    potential_org_match = re.search(r'^[A-Z][a-zA-Z\s,\-&.]+', line)
+                    potential_org_match = WORK_HISTORY_POTENTIAL_ORG_MATCH.search(line)
                     if potential_org_match and len(potential_org_match.group(0).split()) > 1:
                         if not company: company = potential_org_match.group(0).strip()
                         elif not title: title = potential_org_match.group(0).strip()
@@ -640,17 +649,15 @@ def extract_project_details(text, MASTER_SKILLS):
     lines = [line.strip() for line in lines if line.strip()]
 
     # Step 1: Isolate project section
-    project_section_keywords = r'(projects|personal projects|key projects|portfolio|selected projects|major projects|academic projects|relevant projects)'
-    project_section_match = re.search(project_section_keywords + r'\s*(\n|$)', text, re.IGNORECASE)
+    project_section_match = PROJECT_SECTION_KEYWORDS.search(text)
 
     if not project_section_match:
         project_text = text[:1000]  # fallback to first 1000 chars
         start_index = 0
     else:
         start_index = project_section_match.end()
-        sections = ['education', 'experience', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
         end_index = len(text)
-        for section in sections:
+        for section in PROJECT_STOP_KEYWORDS:
             match = re.search(r'\b' + re.escape(section) + r'\b', text[start_index:], re.IGNORECASE)
             if match:
                 end_index = start_index + match.start()
@@ -663,11 +670,6 @@ def extract_project_details(text, MASTER_SKILLS):
     lines = [line.strip() for line in project_text.split('\n') if line.strip()]
     current_project = {"Project Title": None, "Description": [], "Technologies Used": set()}
 
-    forbidden_title_keywords = [
-        'skills gained', 'responsibilities', 'reflection', 'summary',
-        'achievements', 'capabilities', 'what i learned', 'tools used'
-    ]
-
     for i, line in enumerate(lines):
         line_lower = line.lower()
 
@@ -677,7 +679,7 @@ def extract_project_details(text, MASTER_SKILLS):
 
         # Previous line was a bullet?
         prev_line_is_bullet = False
-        if i > 0 and re.match(r'^[•*-]', lines[i - 1]):
+        if i > 0 and PROJECT_BULLET_OR_NUMBER_START.match(lines[i - 1]):
             prev_line_is_bullet = True
 
         # Strong new project title if:
@@ -686,9 +688,9 @@ def extract_project_details(text, MASTER_SKILLS):
         # - contains 3–15 words
         # - not all caps
         is_title = (
-            (re.match(r'^[•*-]?\s*\d+[\).:-]?\s', line) or line.lower().startswith("project")) and
+            (PROJECT_BULLET_OR_NUMBER_START.match(line) or line.lower().startswith("project")) and
             3 <= len(line.split()) <= 15 and
-            not any(kw in line_lower for kw in forbidden_title_keywords) and
+            not any(kw in line_lower for kw in PROJECT_FORBIDDEN_TITLE_KEYWORDS) and
             not prev_line_is_bullet and
             not line.isupper()
         )
@@ -733,7 +735,7 @@ def extract_languages(text):
     Returns a comma-separated string of detected languages or 'Not Found'.
     """
     languages_list = set()
-    cleaned_full_text = clean_text(text)
+    cleaned_full_text = text # Assume text is already cleaned
 
     # De-duplicated, lowercase language set
     all_languages = list(set([
@@ -760,17 +762,13 @@ def extract_languages(text):
     sorted_all_languages = sorted(all_languages, key=len, reverse=True)
 
     # Step 1: Try to locate a language-specific section
-    section_match = re.search(
-        r'\b(languages|language skills|linguistic abilities|known languages)\s*[:\-]?\s*\n?',
-        cleaned_full_text, re.IGNORECASE
-    )
+    section_match = LANGUAGE_SECTION_KEYWORDS.search(cleaned_full_text)
 
     if section_match:
         start_index = section_match.end()
         # Optional: stop at next known section
         end_index = len(cleaned_full_text)
-        stop_words = ['education', 'experience', 'skills', 'certifications', 'awards', 'publications', 'interests', 'hobbies']
-        for stop in stop_words:
+        for stop in LANGUAGE_STOP_WORDS:
             m = re.search(r'\b' + stop + r'\b', cleaned_full_text[start_index:], re.IGNORECASE)
             if m:
                 end_index = start_index + m.start()
@@ -782,13 +780,9 @@ def extract_languages(text):
 
     # Step 2: Match known languages
     for lang in sorted_all_languages:
-        # Use word boundaries for exact matches and allow for common suffixes like " (fluent)"
         pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
         if re.search(pattern, language_chunk, re.IGNORECASE):
-            if lang == "de":
-                languages_list.add("German")
-            else:
-                languages_list.add(lang.title())
+            languages_list.add(lang.title())
 
     return ", ".join(sorted(languages_list)) if languages_list else "Not Found"
 
@@ -1150,6 +1144,99 @@ def _parallel_extract_text(file_data):
     except Exception as e:
         return file_name, None, str(e) # Return error message if extraction fails
 
+# New function to process a single resume's extracted text in parallel
+def _process_single_resume_data(file_name, full_text, job_desc_embedding, jd_text_for_skills, master_skills, sentence_model, ml_model):
+    if "[ERROR]" in full_text:
+        return {
+            "File Name": file_name, "Status": "Error: Text extraction failed",
+            "Score (%)": 0, "Semantic Similarity": 0, "AI Suggestion": "N/A",
+            "Extracted Skills": "N/A", "Categorized Skills": {}, "Years Experience": 0,
+            "Email": "N/A", "Phone Number": "N/A", "Location": "N/A", "Candidate Name": "N/A",
+            "CGPA (4.0 Scale)": "N/A", "Education Details": "N/A", "Work History": "N/A",
+            "Project Details": "N/A", "Languages": "N/A", "Resume Raw Text": full_text,
+            "Tag": "❌ Limited Match", "Certificate Rank": "Not Applicable",
+            "Missing Skills": "N/A", "JD Used": jd_text_for_skills, "Date Screened": date.today().strftime("%Y-%m-%d"),
+            "Certificate ID": "N/A"
+        }
+
+    try:
+        cleaned_text = clean_text(full_text)
+        resume_embedding = sentence_model.encode([cleaned_text])[0]
+
+        semantic_similarity = cosine_similarity([resume_embedding], [job_desc_embedding])[0][0]
+        years_exp = extract_years_of_experience(cleaned_text) # Pass cleaned text
+        
+        features = np.array([[semantic_similarity, years_exp]])
+        if ml_model:
+            predicted_score_proba = ml_model.predict_proba(features)[0][1] * 100
+            score = round(predicted_score_proba, 2)
+        else:
+            score = round(semantic_similarity * 100, 2)
+
+        extracted_skills, categorized_skills = extract_relevant_keywords(cleaned_text, master_skills) # Pass cleaned text
+        email = extract_email(cleaned_text) # Pass cleaned text
+        phone = extract_phone_number(cleaned_text) # Pass cleaned text
+        location = extract_location(cleaned_text) # Pass cleaned text
+        name = extract_name(cleaned_text) # Pass cleaned text
+        cgpa = extract_cgpa(cleaned_text) # Pass cleaned text
+        education = extract_education_text(cleaned_text) # Pass cleaned text
+        work_history_details = extract_work_history(cleaned_text) # Pass cleaned text
+        projects_details = extract_project_details(cleaned_text, master_skills) # Pass cleaned text
+        languages = extract_languages(cleaned_text) # Pass cleaned text
+
+        ai_suggestion = generate_concise_ai_suggestion(name if name else file_name, score, years_exp, semantic_similarity, cgpa)
+        
+        tag = assign_tag(score)
+        cert_rank = assign_certificate_rank(score)
+
+        # Calculate missing skills
+        jd_raw_skills_set, _ = extract_relevant_keywords(jd_text_for_skills, master_skills)
+        resume_raw_skills_set, _ = extract_relevant_keywords(cleaned_text, master_skills)
+        missing_skills = ", ".join(sorted(jd_raw_skills_set.difference(resume_raw_skills_set))) if jd_raw_skills_set.difference(resume_raw_skills_set) else "None"
+
+        certificate_id = str(uuid.uuid4()) if cert_rank != "Not Applicable" else "N/A"
+
+        return {
+            "File Name": file_name,
+            "Status": "Processed",
+            "Score (%)": score,
+            "Semantic Similarity": round(semantic_similarity, 3),
+            "AI Suggestion": ai_suggestion,
+            "Extracted Skills": ", ".join(sorted(extracted_skills)),
+            "Categorized Skills": categorized_skills,
+            "Years Experience": years_exp,
+            "Email": email,
+            "Phone Number": phone,
+            "Location": location,
+            "Candidate Name": name if name else file_name,
+            "CGPA (4.0 Scale)": cgpa,
+            "Education Details": education,
+            "Work History": format_work_history(work_history_details),
+            "Project Details": format_project_details(projects_details),
+            "Languages": languages,
+            "Resume Raw Text": full_text, # Keep original full text for debugging/detailed view
+            "Tag": tag,
+            "Certificate Rank": cert_rank,
+            "Missing Skills": missing_skills,
+            "JD Used": jd_text_for_skills,
+            "Date Screened": date.today().strftime("%Y-%m-%d"),
+            "Certificate ID": certificate_id
+        }
+
+    except Exception as e:
+        traceback.print_exc() # Print full traceback for debugging
+        return {
+            "File Name": file_name, "Status": f"Error: {e}",
+            "Score (%)": 0, "Semantic Similarity": 0, "AI Suggestion": "N/A",
+            "Extracted Skills": "N/A", "Categorized Skills": {}, "Years Experience": 0,
+            "Email": "N/A", "Phone Number": "N/A", "Location": "N/A", "Candidate Name": "N/A",
+            "CGPA (4.0 Scale)": "N/A", "Education Details": "N/A", "Work History": "N/A",
+            "Project Details": "N/A", "Languages": "N/A", "Resume Raw Text": full_text,
+            "Tag": "❌ Limited Match", "Certificate Rank": "Not Applicable",
+            "Missing Skills": "N/A", "JD Used": jd_text_for_skills, "Date Screened": date.today().strftime("%Y-%m-%d"),
+            "Certificate ID": "N/A"
+        }
+
 # Modified resume_screener_page function signature (no arguments)
 def resume_screener_page():
     # Retrieve Firebase config and app_id dynamically
@@ -1215,8 +1302,7 @@ def resume_screener_page():
                 all_file_data_for_extraction.append((file_bytes, file_name, file_type))
 
             extracted_results = []
-            extracted_texts_for_embedding = []
-
+            
             start_time = time.time()
 
             # Phase 1: Parallel Text Extraction
@@ -1234,7 +1320,6 @@ def resume_screener_page():
                             log_activity_screener(f"Error extracting text from {file_name}: {error}")
                         else:
                             extracted_results.append((file_name, extracted_text))
-                            extracted_texts_for_embedding.append(clean_text(extracted_text))
                             log_activity_screener(f"Text extracted from {file_name}.")
                     except Exception as e:
                         st.error(f"Unexpected error during text extraction for {file_name_original}: {e}")
@@ -1242,112 +1327,40 @@ def resume_screener_page():
             extraction_end_time = time.time()
             log_activity_screener(f"Text extraction phase completed in {extraction_end_time - start_time:.2f} seconds.")
 
-            # Phase 2: Batch Embedding and Further Processing
-            if extracted_texts_for_embedding:
-                log_activity_screener(f"Starting batch embedding for {len(extracted_texts_for_embedding)} resumes.")
+            # Phase 2: Parallel Resume Data Processing (after text extraction)
+            if extracted_results:
+                log_activity_screener(f"Starting parallel data processing for {len(extracted_results)} resumes.")
                 
-                # Generate all embeddings in one batch
-                all_resume_embeddings = global_sentence_model.encode(extracted_texts_for_embedding, show_progress_bar=False)
+                tasks_for_parallel_processing = []
+                for file_name, full_text in extracted_results:
+                    tasks_for_parallel_processing.append((
+                        file_name,
+                        full_text,
+                        st.session_state.job_desc_embedding,
+                        st.session_state.job_desc_text,
+                        MASTER_SKILLS,
+                        global_sentence_model,
+                        global_ml_model
+                    ))
                 
-                log_activity_screener("Batch embedding completed.")
+                processed_resume_data_list = []
+                with ProcessPoolExecutor() as executor:
+                    futures = {executor.submit(_process_single_resume_data, *task_args): task_args[0] for task_args in tasks_for_parallel_processing}
+                    
+                    for future in as_completed(futures):
+                        file_name_original = futures[future]
+                        try:
+                            result = future.result()
+                            processed_resume_data_list.append(result)
+                            log_activity_screener(f"Data processed for {file_name_original}.")
+                        except Exception as e:
+                            st.error(f"Unexpected error during data processing for {file_name_original}: {e}")
+                            log_activity_screener(f"Unexpected error during data processing for {file_name_original}: {e}")
 
-                # Process each resume sequentially after getting its embedding
-                for i, (file_name, full_text) in enumerate(extracted_results):
-                    if "[ERROR]" in full_text:
-                        st.session_state.resume_data.append({
-                            "File Name": file_name, "Status": "Error: Text extraction failed",
-                            "Score (%)": 0, "Semantic Similarity": 0, "AI Suggestion": "N/A",
-                            "Extracted Skills": "N/A", "Categorized Skills": {}, "Years Experience": 0,
-                            "Email": "N/A", "Phone Number": "N/A", "Location": "N/A", "Candidate Name": "N/A",
-                            "CGPA (4.0 Scale)": "N/A", "Education Details": "N/A", "Work History": "N/A",
-                            "Project Details": "N/A", "Languages": "N/A", "Resume Raw Text": full_text,
-                            "Tag": "❌ Limited Match", "Certificate Rank": "Not Applicable",
-                            "Missing Skills": "N/A", "JD Used": st.session_state.job_desc_text, "Date Screened": date.today().strftime("%Y-%m-%d"),
-                            "Certificate ID": "N/A"
-                        })
-                        continue
+                st.session_state.resume_data = processed_resume_data_list
 
-                    try:
-                        cleaned_text = clean_text(full_text)
-                        resume_embedding = all_resume_embeddings[i]
-
-                        semantic_similarity = cosine_similarity([resume_embedding], [st.session_state.job_desc_embedding])[0][0]
-                        years_exp = extract_years_of_experience(full_text)
-                        
-                        features = np.array([[semantic_similarity, years_exp]])
-                        if global_ml_model:
-                            predicted_score_proba = global_ml_model.predict_proba(features)[0][1] * 100
-                            score = round(predicted_score_proba, 2)
-                        else:
-                            score = round(semantic_similarity * 100, 2)
-
-                        extracted_skills, categorized_skills = extract_relevant_keywords(full_text, MASTER_SKILLS)
-                        email = extract_email(full_text)
-                        phone = extract_phone_number(full_text)
-                        location = extract_location(full_text)
-                        name = extract_name(full_text)
-                        cgpa = extract_cgpa(full_text)
-                        education = extract_education_text(full_text)
-                        work_history_details = extract_work_history(full_text)
-                        projects_details = extract_project_details(full_text, MASTER_SKILLS)
-                        languages = extract_languages(full_text)
-
-                        ai_suggestion = generate_concise_ai_suggestion(name if name else file_name, score, years_exp, semantic_similarity, cgpa)
-                        
-                        tag = assign_tag(score)
-                        cert_rank = assign_certificate_rank(score)
-
-                        # Calculate missing skills
-                        jd_raw_skills_set, _ = extract_relevant_keywords(st.session_state.job_desc_text, MASTER_SKILLS)
-                        resume_raw_skills_set, _ = extract_relevant_keywords(full_text, MASTER_SKILLS)
-                        missing_skills = ", ".join(sorted(jd_raw_skills_set.difference(resume_raw_skills_set))) if jd_raw_skills_set.difference(resume_raw_skills_set) else "None"
-
-                        certificate_id = str(uuid.uuid4()) if cert_rank != "Not Applicable" else "N/A"
-
-                        st.session_state.resume_data.append({
-                            "File Name": file_name,
-                            "Status": "Processed",
-                            "Score (%)": score,
-                            "Semantic Similarity": round(semantic_similarity, 3),
-                            "AI Suggestion": ai_suggestion,
-                            "Extracted Skills": ", ".join(sorted(extracted_skills)),
-                            "Categorized Skills": categorized_skills,
-                            "Years Experience": years_exp,
-                            "Email": email,
-                            "Phone Number": phone,
-                            "Location": location,
-                            "Candidate Name": name if name else file_name,
-                            "CGPA (4.0 Scale)": cgpa,
-                            "Education Details": education,
-                            "Work History": format_work_history(work_history_details),
-                            "Project Details": format_project_details(projects_details),
-                            "Languages": languages,
-                            "Resume Raw Text": full_text,
-                            "Tag": tag,
-                            "Certificate Rank": cert_rank,
-                            "Missing Skills": missing_skills,
-                            "JD Used": st.session_state.job_desc_text,
-                            "Date Screened": date.today().strftime("%Y-%m-%d"),
-                            "Certificate ID": certificate_id
-                        })
-
-                    except Exception as e:
-                        st.error(f"Error processing {file_name}: {e}")
-                        traceback.print_exc()
-                        log_activity_screener(f"Error processing {file_name}: {e}")
-                        st.session_state.resume_data.append({
-                            "File Name": file_name, "Status": f"Error: {e}",
-                            "Score (%)": 0, "Semantic Similarity": 0, "AI Suggestion": "N/A",
-                            "Extracted Skills": "N/A", "Categorized Skills": {}, "Years Experience": 0,
-                            "Email": "N/A", "Phone Number": "N/A", "Location": "N/A", "Candidate Name": "N/A",
-                            "CGPA (4.0 Scale)": "N/A", "Education Details": "N/A", "Work History": "N/A",
-                            "Project Details": "N/A", "Languages": "N/A", "Resume Raw Text": full_text,
-                            "Tag": "❌ Limited Match", "Certificate Rank": "Not Applicable",
-                            "Missing Skills": "N/A", "JD Used": st.session_state.job_desc_text, "Date Screened": date.today().strftime("%Y-%m-%d"),
-                            "Certificate ID": "N/A"
-                        })
             else:
-                st.warning("No valid text extracted from uploaded resumes for embedding.")
+                st.warning("No valid text extracted from uploaded resumes for processing.")
             
             end_time = time.time()
             total_processing_time = end_time - start_time
@@ -1397,12 +1410,6 @@ def resume_screener_page():
                 ax.set_ylim(0, 100)
                 plt.xticks(rotation=60, ha='right', fontsize=10)
                 plt.yticks(fontsize=10)
-                
-                # Dynamic text color based on Streamlit's dark mode (if available, otherwise default)
-                # This requires Streamlit's internal theme detection or a custom toggle
-                # For simplicity, we'll assume a light background for plots unless explicitly set
-                # In a real app, you might use st.get_option("theme.base") to check 'dark' or 'light'
-                # For now, keeping colors fixed for plot elements for consistency.
                 
                 for bar in bars:
                     yval = bar.get_height()
