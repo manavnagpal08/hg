@@ -24,7 +24,7 @@ from email import encoders
 import tempfile
 import shutil
 from weasyprint import HTML
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed # Changed to ProcessPoolExecutor
 from io import BytesIO
 import traceback
 import time # Import time for measuring performance
@@ -1100,7 +1100,7 @@ Have questions? Contact us at support@screenerpro.in
         st.error(f"❌ Failed to send email: {e}")
     return False
 
-# Wrapper for extract_text_from_file to be used with ThreadPoolExecutor
+# Wrapper for extract_text_from_file to be used with ProcessPoolExecutor
 def _extract_text_wrapper(file_info):
     file_data_bytes, file_name, file_type = file_info
     text = extract_text_from_file(file_data_bytes, file_name, file_type)
@@ -1114,12 +1114,10 @@ def _process_single_resume_for_screener_page(file_name, text, jd_text, jd_embedd
     """
     Processes a single resume (pre-extracted text and pre-computed embeddings)
     for the main screener page and returns a dictionary of results.
-    This function is designed to be run in a ThreadPoolExecutor.
+    This function is designed to be run in a ProcessPoolExecutor.
     """
-    # print(f"DEBUG: Starting processing for {file_name}") # Removed for cleaner logs during performance testing
     try:
         if text.startswith("[ERROR]"):
-            print(f"ERROR: Text extraction failed for {file_name}: {text}")
             return {
                 "File Name": file_name,
                 "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
@@ -1183,7 +1181,6 @@ def _process_single_resume_for_screener_page(file_name, text, jd_text, jd_embedd
         score, semantic_similarity = semantic_score_calculation(
             jd_embedding, resume_embedding, exp, cgpa, weighted_keyword_overlap_score, _global_ml_model
         )
-        # print(f"DEBUG: Semantic score result for {file_name}: Score={score}, Semantic_Similarity={semantic_similarity}") # Removed for cleaner logs
         
         concise_ai_suggestion = generate_concise_ai_suggestion(
             candidate_name=candidate_name,
@@ -1379,6 +1376,9 @@ def resume_screener_page():
     resume_files = st.file_uploader("📄 **Upload Resumes (PDF, JPG, PNG)**", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, help="Upload one or more PDF or image resumes for screening.")
 
     if jd_text and resume_files:
+        # Start overall timer
+        total_screening_start_time = time.time()
+
         st.markdown("---")
         st.markdown("## ☁️ Job Description Keyword Cloud")
         st.caption("Visualizing the most frequent and important keywords from the Job Description.")
@@ -1413,11 +1413,14 @@ def resume_screener_page():
             file_data_bytes = file.read() # Read file content into memory once
             file_infos_for_extraction.append((file_data_bytes, file.name, file.type))
 
-        with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
+        # Use ProcessPoolExecutor for CPU-bound text extraction
+        # Max workers set to os.cpu_count() for optimal CPU utilization with processes
+        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor: 
             text_futures = [executor.submit(_extract_text_wrapper, info) for info in file_infos_for_extraction]
             
             for i, future in enumerate(as_completed(text_futures)):
-                status_text.text(f"Extracting text: {file_infos_for_extraction[i][1]} ({i+1}/{total_resumes})...")
+                # Update status text less frequently or with a general message to avoid Streamlit context issues in threads
+                status_text.text(f"Extracting text: Processing resume {i+1} of {total_resumes}...")
                 try:
                     extracted_texts_info.append(future.result())
                 except Exception as e:
@@ -1484,21 +1487,26 @@ def resume_screener_page():
         # --- PHASE 3: Parallel Individual Resume Analysis ---
         start_time_analysis = time.time()
         st.info(f"Step 3/3: Processing {len(successfully_extracted_texts_map)} resumes with AI models concurrently...")
-        main_processing_futures = []
-        with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
-            for file_name in resume_names_for_embedding:
-                text = successfully_extracted_texts_map[file_name]
-                resume_embedding = resume_embedding_map[file_name]
+        
+        # Prepare arguments for the process pool
+        processing_args = []
+        for file_name in resume_names_for_embedding:
+            text = successfully_extracted_texts_map[file_name]
+            resume_embedding = resume_embedding_map[file_name]
+            processing_args.append((
+                file_name, text, jd_text, jd_embedding, resume_embedding,
+                jd_name_for_results, high_priority_skills, medium_priority_skills, max_experience,
+                global_ml_model
+            ))
 
-                main_processing_futures.append(executor.submit(
-                    _process_single_resume_for_screener_page,
-                    file_name, text, jd_text, jd_embedding, resume_embedding,
-                    jd_name_for_results, high_priority_skills, medium_priority_skills, max_experience,
-                    global_ml_model
-                ))
+        # Use ProcessPoolExecutor for CPU-bound analysis
+        # Max workers set to os.cpu_count() for optimal CPU utilization with processes
+        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor: 
+            analysis_futures = [executor.submit(_process_single_resume_for_screener_page, *args) for args in processing_args]
             
-            for i, future in enumerate(as_completed(main_processing_futures)):
-                status_text.text(f"Analyzing: {resume_names_for_embedding[i]} ({i+1}/{len(resume_names_for_embedding)})...")
+            for i, future in enumerate(as_completed(analysis_futures)):
+                # Update status text less frequently or with a general message
+                status_text.text(f"Analyzing resumes: Processing candidate {i+1} of {len(resume_names_for_embedding)}...")
                 try:
                     result = future.result()
                     results.append(result)
@@ -1523,6 +1531,9 @@ def resume_screener_page():
         st.session_state['comprehensive_df'] = pd.DataFrame(results).sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
         
         st.session_state['comprehensive_df'].to_csv("results.csv", index=False)
+
+        total_screening_end_time = time.time()
+        print(f"Total time for entire screening process: {total_screening_end_time - total_screening_start_time:.2f} seconds")
 
 
         st.markdown("---")
@@ -2124,54 +2135,4 @@ def generate_certificate_html(candidate_data):
                 box-shadow: none;
             }
             .logo-text, .certificate-header, .candidate-name, .score-rank {
-                color: #00cec9 !important; /* Ensure colors are printed */
-                text-shadow: none !important;
-            }
-            .candidate-name {
-                animation: none !important; /* Disable animation for print */
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="certificate-container">
-        <div class="logo-text">ScreenerPro</div>
-        <div class="certificate-header">Certification of Excellence</div>
-        <div class="certificate-subheader">This is to proudly certify that</div>
-        <div class="candidate-name">{{CANDIDATE_NAME}}</div>
-        <div class="certificate-body">
-            <p>has successfully completed the comprehensive AI-powered screening process by ScreenerPro and achieved a distinguished ranking of</p>
-            <div class="score-rank">
-                {{CERTIFICATE_RANK}}
-            </div>
-            <p>demonstrating an outstanding Screener Score of **{{SCORE}}%**.</p>
-            <p>This certification attests to their highly relevant skills, extensive experience, and strong alignment with the demanding requirements of modern professional roles. It signifies their readiness to excel in challenging environments and contribute significantly to organizational success.</p>
-        </div>
-        <div class="date-id">
-            Awarded on: {{DATE_SCREENED}}<br>
-            Certificate ID: {{CERTIFICATE_ID}}
-        </div>
-        <div class="footer-text">
-            This certificate is digitally verified by ScreenerPro.
-        </div>
-    </div>
-</body>
-</html>
-    """
-
-    candidate_name = candidate_data.get('Candidate Name', 'Candidate Name')
-    score = candidate_data.get('Score (%)', 0.0)
-    certificate_rank = candidate_data.get('Certificate Rank', 'Not Applicable')
-    date_screened = candidate_data.get('Date Screened', datetime.now().date()).strftime("%B %d, %Y")
-    certificate_id = candidate_data.get('Certificate ID', 'N/A')
-    
-    html_content = html_template.replace("{{CANDIDATE_NAME}}", candidate_name)
-    html_content = html_content.replace("{{SCORE}}", f"{score:.1f}")
-    html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
-    html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
-    html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
-
-    return html_content
-
-if __name__ == "__main__":
-    resume_screener_page()
+                color: #00c
