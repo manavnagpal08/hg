@@ -2388,7 +2388,7 @@ def resume_screener_page():
             }
             .certificate-content {
                 background: white;
-                padding: 40px;
+                padding: 40.0px;
                 border-radius: 15px;
                 box-shadow: 0 10px 25px rgba(0,0,0,0.4);
                 max-width: 850px;
