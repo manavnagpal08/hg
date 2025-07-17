@@ -24,7 +24,7 @@ from email import encoders
 import tempfile
 import shutil
 from weasyprint import HTML
-from concurrent.futures import ProcessPoolExecutor, as_completed # Changed to ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed # Reverted to ThreadPoolExecutor
 from io import BytesIO
 
 # --- OCR Specific Imports ---
@@ -216,13 +216,28 @@ APP_BASE_URL = "https://screenerpro-app.streamlit.app" # <--- REPLACE THIS WITH 
 CERTIFICATE_HOSTING_URL = "https://manav-jain.github.io/screenerpro-certs" # <--- REPLACE THIS WITH YOUR CERTIFICATE HOSTING URL
 
 
-# This function needs to be called in each process.
-def _get_tesseract_cmd_for_process():
+@st.cache_resource
+def get_tesseract_cmd():
     tesseract_path = shutil.which("tesseract")
     if tesseract_path:
         pytesseract.pytesseract.tesseract_cmd = tesseract_path
         return tesseract_path
     return None
+
+# Load ML models once using st.cache_resource
+@st.cache_resource
+def load_ml_model():
+    try:
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        ml_model = joblib.load("ml_screening_model.pkl")
+        return model, ml_model
+    except Exception as e:
+        st.error(f"❌ Error loading ML models: {e}. Please ensure 'ml_screening_model.pkl' is in the same directory.")
+        return None, None
+
+# Load models globally (once per app run)
+model, ml_model = load_ml_model()
+
 
 def preprocess_image_for_ocr(image):
     img_cv = np.array(image)
@@ -299,8 +314,8 @@ def extract_text_from_file(uploaded_file):
 
     full_text = ""
 
-    # Ensure tesseract command is set for this process
-    _get_tesseract_cmd_for_process()
+    # Tesseract command should be set globally via @st.cache_resource in the main thread
+    # No need to call _get_tesseract_cmd_for_process() here anymore.
 
     if "pdf" in file_type:
         try:
@@ -811,7 +826,7 @@ def format_project_details(proj_list):
         formatted_entries.append(" ".join(parts).strip())
     return "; ".join(formatted_entries) if formatted_entries else "Not Found"
 
-# Removed @st.cache_data as this function will be called in child processes
+@st.cache_data(show_spinner="Generating concise AI Suggestion...")
 def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_similarity, cgpa):
     overall_fit_description = ""
     review_focus_text = ""
@@ -853,7 +868,7 @@ def generate_concise_ai_suggestion(candidate_name, score, years_exp, semantic_si
     summary_text = f"**Fit:** {overall_fit_description} **Strengths:** {cgpa_note}{key_strength_hint} **Focus:** {review_focus_text}"
     return summary_text
 
-# Removed @st.cache_data as this function will be called in child processes
+@st.cache_data(show_spinner="Generating detailed HR Assessment...")
 def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_similarity, cgpa, jd_text, resume_text, matched_keywords, missing_skills, max_exp_cutoff):
     assessment_parts = []
     overall_assessment_title = ""
@@ -943,17 +958,8 @@ def generate_detailed_hr_assessment(candidate_name, score, years_exp, semantic_s
 
     return final_assessment
 
-# This function will now load models within each process
-def _load_ml_models_for_process():
-    try:
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-        ml_model = joblib.load("ml_screening_model.pkl")
-        return model, ml_model
-    except Exception as e:
-        # In a child process, cannot use st.error directly
-        print(f"Error loading ML models in child process: {e}")
-        return None, None
-
+# semantic_score now accepts model and ml_model as arguments, which are loaded once globally
+@st.cache_data(show_spinner="Calculating Semantic Score...")
 def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, medium_priority_skills, model, ml_model):
     jd_clean = clean_text(jd_text)
     resume_clean = clean_text(resume_text)
@@ -989,7 +995,7 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
         weighted_jd_coverage_percentage = 0.0
 
     if ml_model is None or model is None:
-        # print("ML models not loaded in semantic_score. Providing basic score and generic feedback.") # For debugging child process
+        # st.warning("ML models not loaded in semantic_score. Providing basic score and generic feedback.") # Cannot use st.warning in cached function
         basic_score = (weighted_jd_coverage_percentage * 0.7)
         basic_score += min(years_exp * 5, 30)
         
@@ -1036,7 +1042,7 @@ def semantic_score(resume_text, jd_text, years_exp, cgpa, high_priority_skills, 
         return round(score, 2), round(semantic_similarity, 2)
 
     except Exception as e:
-        # print(f"Error during semantic scoring in child process, falling back to basic: {e}") # For debugging child process
+        # st.warning(f"Error during semantic scoring, falling back to basic: {e}") # Cannot use st.warning in cached function
         basic_score = (weighted_jd_coverage_percentage * 0.7)
         basic_score += min(years_exp * 5, 30)
         
@@ -1061,6 +1067,8 @@ Best regards,
 The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
+# @st.cache_data is fine here as it's called in the main thread
+@st.cache_data
 def generate_certificate_pdf(html_content):
     """Converts HTML content to PDF bytes."""
     try:
@@ -1071,21 +1079,15 @@ def generate_certificate_pdf(html_content):
         return None
 
 def send_certificate_email(recipient_email, candidate_name, score, certificate_pdf_content, gmail_address, gmail_app_password):
-    # Retrieve Gmail credentials from Streamlit secrets - these are passed now
-    # gmail_address = st.secrets.get("GMAIL_ADDRESS")
-    # gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD")
-
     if not gmail_address or not gmail_app_password:
         st.error("❌ Email sending is not configured. Please ensure your Gmail address and App Password secrets are set in Streamlit.")
         return False
 
-    # Create the main message container
     msg = MIMEMultipart('mixed')
     msg['Subject'] = f"🎉 You've Earned It! Here's Your Certification from ScreenerPro"
     msg['From'] = gmail_address
     msg['To'] = recipient_email
 
-    # Create the plain text body
     plain_text_body = f"""Hi {candidate_name},
 
 Congratulations on successfully clearing the ScreenerPro resume screening process with a score of {score:.1f}%!
@@ -1101,7 +1103,6 @@ Have questions? Contact us at support@screenerpro.in
 – Team ScreenerPro
 """
 
-    # Create the HTML body
     html_body = f"""
     <html>
         <body>
@@ -1116,16 +1117,12 @@ Have questions? Contact us at support@screenerpro.in
     </html>
     """
 
-    # Create an 'alternative' part for the plain text and HTML body
-    # This tells email clients to display the best available version (HTML preferred)
     msg_alternative = MIMEMultipart('alternative')
     msg_alternative.attach(MIMEText(plain_text_body, 'plain'))
     msg_alternative.attach(MIMEText(html_body, 'html'))
     
-    # Attach the 'alternative' part to the main message
     msg.attach(msg_alternative)
 
-    # Attach the certificate PDF file
     if certificate_pdf_content:
         try:
             attachment = MIMEBase('application', 'pdf')
@@ -1154,32 +1151,13 @@ Have questions? Contact us at support@screenerpro.in
 
 # Helper function to process a single resume for the main screener page
 def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_type, jd_text, jd_name_for_results,
-                                             high_priority_skills, medium_priority_skills, max_experience):
+                                             high_priority_skills, medium_priority_skills, max_experience,
+                                             global_model, global_ml_model): # Pass models as arguments
     """
     Processes a single resume file (bytes content) for the main screener page
     and returns a dictionary of results.
-    This function is designed to be run in a ProcessPoolExecutor.
+    This function is designed to be run in a ThreadPoolExecutor.
     """
-    # Load models within the child process to ensure picklability and isolation
-    model, ml_model = _load_ml_models_for_process()
-    if model is None or ml_model is None:
-        return {
-            "File Name": file_name,
-            "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
-            "Score (%)": 0, "Years Experience": 0, "CGPA (4.0 Scale)": None,
-            "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
-            "Languages": "Not Found", "Education Details": "Not Found",
-            "Work History": "Not Found", "Project Details": "Not Found",
-            "AI Suggestion": "Error: ML models could not be loaded.",
-            "Detailed HR Assessment": "Error: ML models could not be loaded.",
-            "Matched Keywords": "", "Missing Skills": "",
-            "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
-            "Semantic Similarity": 0.0, "Resume Raw Text": "",
-            "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
-            "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
-            "Tag": "❌ Processing Error"
-        }
-
     try:
         # Create a BytesIO object to simulate an uploaded file for extract_text_from_file
         uploaded_file_mock = BytesIO(file_data_bytes)
@@ -1229,7 +1207,8 @@ def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_ty
         matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
         missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
 
-        score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills, model, ml_model)
+        # Pass the globally loaded models to semantic_score
+        score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills, global_model, global_ml_model)
         
         concise_ai_suggestion = generate_concise_ai_suggestion(
             candidate_name=candidate_name,
@@ -1347,7 +1326,7 @@ def resume_screener_page():
         st.session_state['certificate_html_content'] = ""
 
     # Initial check for Tesseract (main process only)
-    tesseract_cmd_path = _get_tesseract_cmd_for_process()
+    tesseract_cmd_path = get_tesseract_cmd() # Use the cached version
     if not tesseract_cmd_path:
         st.error("Tesseract OCR engine not found. Please ensure it's installed and in your system's PATH.")
         st.info("On Streamlit Community Cloud, ensure you have a `packages.txt` file in your repository's root with `tesseract-ocr` and `tesseract-ocr-eng` listed.")
@@ -1448,10 +1427,11 @@ def resume_screener_page():
 
         total_resumes = len(resume_files)
         
-        # Use ProcessPoolExecutor for true parallel processing
-        st.info(f"Processing {total_resumes} resumes in parallel using multiple CPU cores...")
-        # Max workers can be set to os.cpu_count() for optimal CPU utilization
-        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        # Use ThreadPoolExecutor for concurrent processing
+        st.info(f"Processing {total_resumes} resumes concurrently...")
+        # Max workers can be adjusted based on your server's capabilities and nature of tasks.
+        # For a mix of I/O and CPU, os.cpu_count() * 2 is a common heuristic.
+        with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
             futures = []
             for file in resume_files:
                 # Read file content into memory once to pass to the executor
@@ -1459,7 +1439,8 @@ def resume_screener_page():
                 futures.append(executor.submit(
                     _process_single_resume_for_screener_page,
                     file_data_bytes, file.name, file.type, jd_text, jd_name_for_results,
-                    high_priority_skills, medium_priority_skills, max_experience
+                    high_priority_skills, medium_priority_skills, max_experience,
+                    model, ml_model # Pass the globally loaded models
                 ))
             
             for i, future in enumerate(as_completed(futures)):
