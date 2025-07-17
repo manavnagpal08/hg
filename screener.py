@@ -1305,8 +1305,8 @@ def resume_screener_page():
         ])
     if 'resume_raw_texts' not in st.session_state:
         st.session_state['resume_raw_texts'] = {}
-    if 'view_certificate_id' not in st.session_state:
-        st.session_state['view_certificate_id'] = None
+    if 'certificate_to_display_data' not in st.session_state: # Changed from view_certificate_id
+        st.session_state['certificate_to_display_data'] = None
 
     # --- Initial Tesseract Check ---
     tesseract_cmd_path = get_tesseract_cmd()
@@ -2005,7 +2005,8 @@ def resume_screener_page():
                         col_cert_view, col_cert_download = st.columns(2)
                         with col_cert_view:
                             if st.button("👁️ View Certificate", key="view_cert_button"):
-                                st.session_state['view_certificate_id'] = candidate_data_for_cert['Certificate ID']
+                                # Store the entire candidate data for certificate display
+                                st.session_state['certificate_to_display_data'] = candidate_data_for_cert
                                 st.rerun()
 
                         with col_cert_download:
@@ -2025,16 +2026,10 @@ def resume_screener_page():
             st.info("No candidates available to generate certificates for. Please screen resumes first.")
 
         # Handle certificate display when a button is clicked via session state
-        if 'view_certificate_id' in st.session_state and st.session_state.view_certificate_id:
-            cert_id_to_view = st.session_state.view_certificate_id
+        if 'certificate_to_display_data' in st.session_state and st.session_state.certificate_to_display_data: # Changed from view_certificate_id
+            candidate_data_for_cert = st.session_state.certificate_to_display_data # Retrieve directly
             
-            # Find the candidate data for this certificate ID from the comprehensive_df
-            candidate_data_for_cert_row = st.session_state['comprehensive_df'][
-                st.session_state['comprehensive_df']['Certificate ID'] == cert_id_to_view
-            ]
-            
-            if not candidate_data_for_cert_row.empty:
-                candidate_data_for_cert = candidate_data_for_cert_row.iloc[0].to_dict()
+            if candidate_data_for_cert: # Check if data exists
                 # Display the certificate HTML in a modal-like fashion
                 with certificate_modal_placeholder.container():
                     st.markdown("""
@@ -2087,13 +2082,13 @@ def resume_screener_page():
                     st.markdown(f"""
                     <div class="certificate-overlay">
                         <div class="certificate-content">
-                            <button class="close-button" onclick="parent.postMessage({{type: 'streamlit:setSessionState', args: ['view_certificate_id', null]}}, '*')">&times;</button>
+                            <button class="close-button" onclick="parent.postMessage({{type: 'streamlit:setSessionState', args: ['certificate_to_display_data', null]}}, '*')">&times;</button>
                             {generate_certificate_html(candidate_data_for_cert)}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
             else:
-                st.warning("Certificate data not found for the selected ID. It might have been removed or filtered out.")
+                st.warning("Certificate data could not be retrieved. Please try again.")
             
             # Reset the session state variable after displaying
             # This is handled by the JS in the close button, but also good to have a fallback
