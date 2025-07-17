@@ -696,71 +696,68 @@ def extract_project_details(text, MASTER_SKILLS):
 
 
 def extract_languages(text):
+    """
+    Extracts known languages from resume text.
+    Returns a comma-separated string of detected languages or 'Not Found'.
+    """
     languages_list = set()
     cleaned_full_text = clean_text(text)
 
-    all_languages = [
+    # De-duplicated, lowercase language set
+    all_languages = list(set([
         "english", "hindi", "spanish", "french", "german", "mandarin", "japanese", "arabic",
         "russian", "portuguese", "italian", "korean", "bengali", "marathi", "telugu", "tamil",
         "gujarati", "urdu", "kannada", "odia", "malayalam", "punjabi", "assamese", "kashmiri",
         "sindhi", "sanskrit", "dutch", "swedish", "norwegian", "danish", "finnish", "greek",
         "turkish", "hebrew", "thai", "vietnamese", "indonesian", "malay", "filipino", "swahili",
         "farsi", "persian", "polish", "ukrainian", "romanian", "czech", "slovak", "hungarian",
-        "chinese", "vietnamese", "tagalog", "amharic", "somali", "nepali", "sinhala", "burmese",
-        "khmer", "lao", "pashto", "dari", "uzbek", "kazakh", "azerbaijani", "georgian", "armenian",
-        "albanian", "serbian", "croatian", "bosnian", "bulgarian", "macedonian", "slovenian",
-        "estonian", "latvian", "lithuanian", "icelandic", "irish", "welsh", "gaelic", "maltese",
-        "esperanto", "latin", "ancient greek", "modern greek", "yiddish", "romani", "catalan",
-        "galician", "basque", "breton", "cornish", "manx", "frisian", "luxembourgish", "sami",
-        "romansh", "sardinian", "corsican", "occitan", "provencal", "walloon", "flemish",
-        "afrikaans", "zulu", "xhosa", "sesotho", "setswana", "shona", "ndebele", "venda", "tsonga",
-        "swati", "kikuyu", "luganda", "kinyarwanda", "kirundi", "lingala", "kongo", "yoruba",
-        "igbo", "hausa", "fulani", "twi", "ewe", "ga", "dagbani", "gur", "mossi", "bambara",
-        "senufo", "wolof", "mandinka", "susu", "krio", "temne", "limba", "mende", "gola", "vai",
-        "kpele", "loma", "bandi", "kpelle", "kru", "bassa", "grebo", "krahn", "dan", "mano",
-        "guerze", "kono", "kisi", "gola", "de", "bassa", "kru", "grebo", "krahn", "dan", "mano",
-        "guerze", "kono", "kisi", "gola", "de",
-        "de"
-    ]
-    
+        "chinese", "tagalog", "nepali", "sinhala", "burmese", "khmer", "lao", "pashto", "dari",
+        "uzbek", "kazakh", "azerbaijani", "georgian", "armenian", "albanian", "serbian",
+        "croatian", "bosnian", "bulgarian", "macedonian", "slovenian", "estonian", "latvian",
+        "lithuanian", "icelandic", "irish", "welsh", "gaelic", "maltese", "esperanto", "latin",
+        "ancient greek", "modern greek", "yiddish", "romani", "catalan", "galician", "basque",
+        "breton", "cornish", "manx", "frisian", "luxembourgish", "sami", "romansh", "sardinian",
+        "corsican", "occitan", "provencal", "walloon", "flemish", "afrikaans", "zulu", "xhosa",
+        "sesotho", "setswana", "shona", "ndebele", "venda", "tsonga", "swati", "kikuyu",
+        "luganda", "kinyarwanda", "kirundi", "lingala", "kongo", "yoruba", "igbo", "hausa",
+        "fulani", "twi", "ewe", "ga", "dagbani", "gur", "mossi", "bambara", "senufo", "wolof",
+        "mandinka", "susu", "krio", "temne", "limba", "mende", "gola", "vai", "kpelle", "loma",
+        "bandi", "bassa", "grebo", "krahn", "dan", "mano", "guerze", "kono", "kisi"
+    ]))
+
     sorted_all_languages = sorted(all_languages, key=len, reverse=True)
 
-    languages_section_match = re.search(
-        r'\b(languages|language skills|linguistic abilities|proficiencies in languages|known languages)\s*[:\s]*(\n|$)',
+    # Step 1: Try to locate a language-specific section
+    section_match = re.search(
+        r'\b(languages|language skills|linguistic abilities|known languages)\s*[:\-]?\s*\n?',
         cleaned_full_text, re.IGNORECASE
     )
-    
-    text_to_search_for_languages = cleaned_full_text
 
-    if languages_section_match:
-        start_index = languages_section_match.end()
-        sections = ['education', 'experience', 'work history', 'skills', 'projects', 'certifications', 'awards', 'publications', 'interests', 'hobbies', 'achievements']
+    if section_match:
+        start_index = section_match.end()
+        # Optional: stop at next known section
         end_index = len(cleaned_full_text)
-        for section in sections:
-            section_match = re.search(r'\b' + re.escape(section) + r'\b', cleaned_full_text[start_index:], re.IGNORECASE)
-            if section_match:
-                end_index = start_index + section_match.start()
+        stop_words = ['education', 'experience', 'skills', 'certifications', 'projects', 'awards']
+        for stop in stop_words:
+            m = re.search(r'\b' + stop + r'\b', cleaned_full_text[start_index:], re.IGNORECASE)
+            if m:
+                end_index = start_index + m.start()
                 break
-        
-        languages_text_segment = cleaned_full_text[start_index:end_index].strip()
-        
-        for lang in sorted_all_languages:
-            pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
-            if re.search(pattern, languages_text_segment, re.IGNORECASE):
-                if lang == "de":
-                    languages_list.add("German")
-                else:
-                    languages_list.add(lang.title())
-    else:
-        for lang in sorted_all_languages:
-            pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
-            if re.search(pattern, cleaned_full_text, re.IGNORECASE):
-                if lang == "de":
-                    languages_list.add("German")
-                else:
-                    languages_list.add(lang.title())
 
-    return ", ".join(sorted(list(languages_list))) if languages_list else "Not Found"
+        language_chunk = cleaned_full_text[start_index:end_index]
+    else:
+        language_chunk = cleaned_full_text
+
+    # Step 2: Match known languages
+    for lang in sorted_all_languages:
+        pattern = r'\b' + re.escape(lang) + r'\b'
+        if re.search(pattern, language_chunk, re.IGNORECASE):
+            if lang == "de":
+                languages_list.add("German")
+            else:
+                languages_list.add(lang.title())
+
+    return ", ".join(sorted(languages_list)) if languages_list else "Not Found"
 
 
 def format_work_history(work_list):
@@ -1042,10 +1039,10 @@ def send_certificate_email(recipient_email, candidate_name, certificate_html_con
     # you generated from your Google Account Security settings.
     # Learn more: https://support.google.com/accounts/answer/185833?hl=en
     gmail_address = "screenerpro.ai@gmail.com"  # <--- REPLACE THIS WITH YOUR GMAIL ADDRESS
-    gmail_app_password = "kxgr bpdc yavo deoo"  # <--- REPLACE THIS WITH YOUR 16-CHARACTER APP PASSWORD
+    gmail_app_password = "hcss uefd gaae wrse"  # <--- REPLACE THIS WITH YOUR 16-CHARACTER APP PASSWORD
     # --- END IMPORTANT ---
 
-    if not gmail_address or not gmail_app_password or gmail_address == "screenerpro.ai@gmail.com":
+    if not gmail_address or not gmail_app_password: # Removed the specific placeholder check
         st.error("Email sending is not configured. Please replace the placeholder Gmail credentials in `screener.py` to enable this feature.")
         return False
 
