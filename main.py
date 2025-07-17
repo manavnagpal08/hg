@@ -648,6 +648,7 @@ else:
     # --- Navigation Control ---
     navigation_options = [
         "🏠 Dashboard", "🧠 Resume Screener", "📁 Manage JDs", "📊 Screening Analytics",
+        "📦 Bulk Resume Import", 
         "📤 Email Candidates", "🔍 Search Resumes", "📝 Candidate Notes",
         "📈 Advanced Tools", # New page
         "🤝 Collaboration Hub", # New page
