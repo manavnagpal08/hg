@@ -92,7 +92,7 @@ MASTER_CITIES = set([
     "Indian Creek", "North Bay Village", "Biscayne Park", "El Portal", "Miami Shores", "North Miami Beach",
     "Aventura"
 ])
-
+NLTK_STOP_WORDS = set(nltk.corpus.stopwords.words('english'))
 # Changed to use sklearn's ENGLISH_STOP_WORDS for efficiency
 STOP_WORDS = set(ENGLISH_STOP_WORDS).union(set([
     "work", "experience", "years", "year", "months", "month", "day", "days", "project", "projects",
