@@ -236,9 +236,9 @@ MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for sk
 
 # IMPORTANT: REPLACE THESE WITH YOUR ACTUAL DEPLOYMENT URLs
 # This is the base URL of your Streamlit application (e.g., https://your-app-name.streamlit.app)
-APP_BASE_URL = "YOUR_APP_BASE_URL"
+APP_BASE_URL = "https://cbie8lbzkfhxgwsbvrsab4.streamlit.app/"
 # This is the base URL where your certificate.html is hosted (e.g., https://your-github-username.github.io/screenerpro-certs)
-CERTIFICATE_HOSTING_URL = "YOUR_CERTIFICATE_HOSTING_URL"
+CERTIFICATE_HOSTING_URL = "https://manavnagpal08.github.io/screenerpro-certs/"
 
 
 @st.cache_resource
