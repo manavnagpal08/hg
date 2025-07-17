@@ -1993,28 +1993,34 @@ def resume_screener_page():
             )
 
             if selected_candidate_name_for_cert:
-                candidate_data_for_cert = filtered_display_df[
+                # Ensure the selected candidate still exists in the filtered DataFrame
+                candidate_rows = filtered_display_df[
                     filtered_display_df['Candidate Name'] == selected_candidate_name_for_cert
-                ].iloc[0].to_dict()
+                ]
+                
+                if not candidate_rows.empty:
+                    candidate_data_for_cert = candidate_rows.iloc[0].to_dict()
 
-                if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
-                    col_cert_view, col_cert_download = st.columns(2)
-                    with col_cert_view:
-                        if st.button("👁️ View Certificate", key="view_cert_button"):
-                            st.session_state['view_certificate_id'] = candidate_data_for_cert['Certificate ID']
-                            st.rerun() # Changed from st.experimental_rerun()
+                    if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
+                        col_cert_view, col_cert_download = st.columns(2)
+                        with col_cert_view:
+                            if st.button("👁️ View Certificate", key="view_cert_button"):
+                                st.session_state['view_certificate_id'] = candidate_data_for_cert['Certificate ID']
+                                st.rerun()
 
-                    with col_cert_download:
-                        certificate_html_content = generate_certificate_html(candidate_data_for_cert)
-                        st.download_button(
-                            label="⬇️ Download Certificate (HTML)",
-                            data=certificate_html_content,
-                            file_name=f"ScreenerPro_Certificate_{candidate_data_for_cert['Candidate Name'].replace(' ', '_')}.html",
-                            mime="text/html",
-                            key="download_cert_button"
-                        )
+                        with col_cert_download:
+                            certificate_html_content = generate_certificate_html(candidate_data_for_cert)
+                            st.download_button(
+                                label="⬇️ Download Certificate (HTML)",
+                                data=certificate_html_content,
+                                file_name=f"ScreenerPro_Certificate_{candidate_data_for_cert['Candidate Name'].replace(' ', '_')}.html",
+                                mime="text/html",
+                                key="download_cert_button"
+                            )
+                    else:
+                        st.info(f"{selected_candidate_name_for_cert} does not qualify for a ScreenerPro Certificate at this time.")
                 else:
-                    st.info(f"{selected_candidate_name_for_cert} does not qualify for a ScreenerPro Certificate at this time.")
+                    st.warning(f"Selected candidate '{selected_candidate_name_for_cert}' not found in the current filtered results. Please re-select or adjust filters.")
         else:
             st.info("No candidates available to generate certificates for. Please screen resumes first.")
 
@@ -2023,11 +2029,12 @@ def resume_screener_page():
             cert_id_to_view = st.session_state.view_certificate_id
             
             # Find the candidate data for this certificate ID
-            candidate_data_for_cert = st.session_state['comprehensive_df'][
+            candidate_data_for_cert_row = st.session_state['comprehensive_df'][
                 st.session_state['comprehensive_df']['Certificate ID'] == cert_id_to_view
-            ].iloc[0].to_dict()
+            ]
             
-            if candidate_data_for_cert:
+            if not candidate_data_for_cert_row.empty:
+                candidate_data_for_cert = candidate_data_for_cert_row.iloc[0].to_dict()
                 # Display the certificate HTML in a modal-like fashion
                 with certificate_modal_placeholder.container():
                     st.markdown("""
@@ -2085,6 +2092,8 @@ def resume_screener_page():
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
+            else:
+                st.warning("Certificate data not found for the selected ID. It might have been removed or filtered out.")
             
             # Reset the session state variable after displaying
             # This is handled by the JS in the close button, but also good to have a fallback
@@ -2120,8 +2129,8 @@ def generate_certificate_html(candidate_data):
     
     # Replace placeholders in the HTML template
     html_content = html_template.replace("{{CANDIDATE_NAME}}", candidate_name)
-    html_content = html_template.replace("{{SCORE}}", f"{score:.1f}")
-    html_content = html_template.replace("{{CERTIFICATE_RANK}}", certificate_rank)
+    html_content = html_content.replace("{{SCORE}}", f"{score:.1f}")
+    html_content = html_content.replace("{{CERTIFICATE_RANK}}", certificate_rank)
     html_content = html_content.replace("{{DATE_SCREENED}}", date_screened)
     html_content = html_content.replace("{{CERTIFICATE_ID}}", certificate_id)
     
