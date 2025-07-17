@@ -203,7 +203,7 @@ SKILL_CATEGORIES = {
     "QuickBooks", "SAP FICO", "Oracle Financials", "Workday", "Microsoft Dynamics", "NetSuite", "Adobe Creative Suite", "Canva", "Mailchimp", "Hootsuite", "Buffer", "SEMrush", "Ahrefs", "Moz", "Screaming Frog",
     "JMeter", "Postman", "SoapUI", "SVN", "Perforce", "Asana", "Monday.com", "Miro", "Lucidchart", "Visio", "MS Project", "Primavera", "AutoCAD", "SolidWorks", "MATLAB", "LabVIEW", "Simulink", "ANSYS",
     "CATIA", "NX", "Revit", "ArcGIS", "QGIS", "OpenCV", "NLTK", "SpaCy", "Gensim", "Hugging Face Transformers",
-    "Docker Compose", "Helm", "Ansible Tower", "SaltStack", "Chef InSpec", "Terraform Cloud", "Vault",
+    ""Docker Compose", "Helm", "Ansible Tower", "SaltStack", "Chef InSpec", "Terraform Cloud", "Vault",
     "Consul", "Nomad", "Prometheus", "Grafana", "Alertmanager", "Loki", "Tempo", "Jaeger", "Zipkin",
     "Fluentd", "Logstash", "Kibana", "Grafana Loki", "Datadog", "New Relic", "AppDynamics", "Dynatrace",
     "Nagios", "Zabbix", "Icinga", "PRTG", "SolarWinds", "Wireshark", "Nmap", "Metasploit", "Burp Suite",
@@ -1135,7 +1135,8 @@ def _parallel_extract_text(file_data):
     except Exception as e:
         return file_name, None, str(e) # Return error message if extraction fails
 
-def resume_screener_page(job_description_embedding, firestore_rest_api_base_url, firebase_web_api_key, app_id):
+# Modified resume_screener_page function signature
+def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_id):
     st.title("📄 Resume Screener Pro")
     st.markdown("Upload resumes (PDF or Image) and a job description to find the best candidates.")
 
