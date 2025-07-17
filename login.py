@@ -252,10 +252,15 @@ def login_section_ui(portal_type, load_session_data_callback=None):
     if st.session_state.authenticated and st.session_state.get("user_role") in allowed_roles:
         return True 
 
-    # Use st.tabs for a cleaner UI for Login/Register within each portal
-    tabs = st.tabs(["Login", "Register"], key=f"portal_tabs_{portal_type}")
+    # Use st.radio to simulate tabs for Login/Register within each portal
+    tab_selection = st.radio(
+        f"Choose an option for the {portal_type.replace('_', ' ').upper()}:",
+        ("Login", "Register"),
+        key=f"login_register_radio_{portal_type}", # Unique key for each portal's radio button
+        index=0 if st.session_state[tab_key] == "Login" else 1
+    )
 
-    with tabs[0]: # Login tab
+    if tab_selection == "Login":
         st.subheader(f"🔐 {portal_type.replace('_', ' ').upper()} Login")
         st.info(f"If you don't have an account, please go to the 'Register' option first for the {portal_type.replace('_', ' ').upper()}.")
         with st.form(f"login_form_{portal_type}", clear_on_submit=False):
@@ -274,7 +279,7 @@ def login_section_ui(portal_type, load_session_data_callback=None):
                 else:
                     return False # Login failed
 
-    with tabs[1]: # Register tab
+    elif tab_selection == "Register":
         register_section_ui(portal_type)
     
     return False # Not yet authenticated or role doesn't match
