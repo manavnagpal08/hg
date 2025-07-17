@@ -2384,7 +2384,7 @@ def resume_screener_page():
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                z-index: 1000; /* Ensure it's on top */
+                z-index: 1000; 
             }
             .certificate-content {
                 background: white;
