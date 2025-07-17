@@ -750,7 +750,8 @@ def extract_languages(text):
 
     # Step 2: Match known languages
     for lang in sorted_all_languages:
-        pattern = r'\b' + re.escape(lang) + r'\b'
+        # Use word boundaries for exact matches and allow for common suffixes like " (fluent)"
+        pattern = r'\b' + re.escape(lang) + r'(?:\s*\(?[a-z\s,-]+\)?)?\b'
         if re.search(pattern, language_chunk, re.IGNORECASE):
             if lang == "de":
                 languages_list.add("German")
@@ -1047,11 +1048,12 @@ def send_certificate_email(recipient_email, candidate_name, certificate_html_con
         return False
 
     msg = MIMEMultipart('alternative')
-    msg['Subject'] = f"ScreenerPro Certification for {candidate_name}"
+    msg['Subject'] = f"Congratulations! You've received a ScreenerPro Certificate!"
     msg['From'] = gmail_address
     msg['To'] = recipient_email
 
-    part1 = MIMEText("Please find your ScreenerPro Certificate attached.", 'plain')
+    # Updated email message
+    part1 = MIMEText(f"Dear {candidate_name},\n\nCongratulations! You've received a ScreenerPro Certificate for your outstanding profile. Please find your certificate attached.\n\nBest regards,\nThe ScreenerPro Team", 'plain')
     part2 = MIMEText(certificate_html_content, 'html')
 
     msg.attach(part1)
@@ -1733,13 +1735,16 @@ def resume_screener_page():
                     candidate_data_for_cert = candidate_rows.iloc[0].to_dict()
 
                     if candidate_data_for_cert.get('Certificate Rank') != "Not Applicable":
-                        col_cert_view, col_cert_download, col_cert_email = st.columns(3)
+                        certificate_html_content = generate_certificate_html(candidate_data_for_cert)
+                        st.session_state['certificate_html_content'] = certificate_html_content # Store for preview
+
+                        col_cert_view, col_cert_download = st.columns(2) # Removed email column
                         with col_cert_view:
                             if st.button("👁️ View Certificate", key="view_cert_button"):
-                                st.session_state['certificate_html_content'] = generate_certificate_html(candidate_data_for_cert)
+                                # This button just triggers the preview, content is already generated
+                                pass 
                                 
                         with col_cert_download:
-                            certificate_html_content = generate_certificate_html(candidate_data_for_cert)
                             st.download_button(
                                 label="⬇️ Download Certificate (HTML)",
                                 data=certificate_html_content,
@@ -1747,17 +1752,17 @@ def resume_screener_page():
                                 mime="text/html",
                                 key="download_cert_button"
                             )
-                        with col_cert_email:
-                            if st.button("📧 Email Certificate", key="email_cert_button"):
-                                if candidate_data_for_cert.get('Email') and candidate_data_for_cert['Email'] != "Not Found":
-                                    certificate_html_content = generate_certificate_html(candidate_data_for_cert)
-                                    send_certificate_email(
-                                        recipient_email=candidate_data_for_cert['Email'],
-                                        candidate_name=candidate_data_for_cert['Candidate Name'],
-                                        certificate_html_content=certificate_html_content
-                                    )
-                                else:
-                                    st.warning(f"No email address found for {candidate_data_for_cert['Candidate Name']}. Cannot send certificate via email.")
+                        
+                        # Automatically send email if certificate is generated and email is available
+                        if candidate_data_for_cert.get('Email') and candidate_data_for_cert['Email'] != "Not Found":
+                            send_certificate_email(
+                                recipient_email=candidate_data_for_cert['Email'],
+                                candidate_name=candidate_data_for_cert['Candidate Name'],
+                                certificate_html_content=certificate_html_content
+                            )
+                        else:
+                            st.info(f"No email address found for {candidate_data_for_cert['Candidate Name']}. Certificate could not be sent automatically.")
+
                     else:
                         st.info(f"{selected_candidate_name_for_cert} does not qualify for a ScreenerPro Certificate at this time.")
                 else:
