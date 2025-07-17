@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
 from sentence_transformers import SentenceTransformer
-import nltk
+# import nltk # Removed NLTK for stopwords
 import collections
 from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
@@ -30,6 +30,7 @@ import time
 import pandas as pd # Ensure pandas is imported
 import requests # For Firestore REST API calls
 import json # For JSON parsing/dumping
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS # New, more efficient stop words
 
 # CRITICAL: Disable Hugging Face tokenizers parallelism to avoid deadlocks with ProcessPoolExecutor
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -40,11 +41,11 @@ import pytesseract
 import cv2
 from pdf2image import convert_from_bytes
 
-# Global NLTK download check (should run once)
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords')
+# Global NLTK download check (should run once) - No longer needed for stopwords, but kept in case other NLTK components are used later.
+# try:
+#     nltk.data.find('corpora/stopwords')
+# except LookupError:
+#     nltk.download('stopwords')
 
 # Define global constants
 MASTER_CITIES = set([
@@ -92,8 +93,8 @@ MASTER_CITIES = set([
     "Aventura"
 ])
 
-NLTK_STOP_WORDS = set(nltk.corpus.stopwords.words('english'))
-CUSTOM_STOP_WORDS = set([
+# Changed to use sklearn's ENGLISH_STOP_WORDS for efficiency
+STOP_WORDS = set(ENGLISH_STOP_WORDS).union(set([
     "work", "experience", "years", "year", "months", "month", "day", "days", "project", "projects",
     "team", "teams", "developed", "managed", "led", "created", "implemented", "designed",
     "responsible", "proficient", "knowledge", "ability", "strong", "proven", "demonstrated",
@@ -176,7 +177,7 @@ CUSTOM_STOP_WORDS = set([
     "rhce", "vmware", "vcpa", "vcpd", "vcpi", "vcpe", "vcpx", "citrix", "cc-v", "cc-p",
     "cc-e", "cc-m", "cc-s", "cc-x", "palo", "alto", "pcnsa", "pcnse", "fortinet", "fcsa",
     "fcsp", "fcc", "fcnsp", "fct", "fcp", "fcs", "fce", "fcn", "fcnp", "fcnse"
-])
+]))
 STOP_WORDS = NLTK_STOP_WORDS.union(CUSTOM_STOP_WORDS)
 
 SKILL_CATEGORIES = {
@@ -203,7 +204,7 @@ SKILL_CATEGORIES = {
     "QuickBooks", "SAP FICO", "Oracle Financials", "Workday", "Microsoft Dynamics", "NetSuite", "Adobe Creative Suite", "Canva", "Mailchimp", "Hootsuite", "Buffer", "SEMrush", "Ahrefs", "Moz", "Screaming Frog",
     "JMeter", "Postman", "SoapUI", "SVN", "Perforce", "Asana", "Monday.com", "Miro", "Lucidchart", "Visio", "MS Project", "Primavera", "AutoCAD", "SolidWorks", "MATLAB", "LabVIEW", "Simulink", "ANSYS",
     "CATIA", "NX", "Revit", "ArcGIS", "QGIS", "OpenCV", "NLTK", "SpaCy", "Gensim", "Hugging Face Transformers",
-    "Docker Compose", "Helm", "Ansible Tower", "SaltStack", "Chef InSpec", "Terraform Cloud", "Vault",
+    ""Docker Compose", "Helm", "Ansible Tower", "SaltStack", "Chef InSpec", "Terraform Cloud", "Vault",
     "Consul", "Nomad", "Prometheus", "Grafana", "Alertmanager", "Loki", "Tempo", "Jaeger", "Zipkin",
     "Fluentd", "Logstash", "Kibana", "Grafana Loki", "Datadog", "New Relic", "AppDynamics", "Dynatrace",
     "Nagios", "Zabbix", "Icinga", "PRTG", "SolarWinds", "Wireshark", "Nmap", "Metasploit", "Burp Suite",
@@ -1175,10 +1176,12 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
         if st.button("🚀 Start Screening"):
             st.session_state.resume_data = [] # Clear previous results
             
-            total_files = len(uploaded_files)
-            progress_bar = st.progress(0, text="Starting resume processing...")
-            status_text = st.empty()
+            # Removed progress_bar and status_text updates from within the loop for speed
+            # progress_bar = st.progress(0, text="Starting resume processing...")
+            # status_text = st.empty()
             
+            st.info(f"Starting processing for {len(uploaded_files)} resumes. This may take a moment...")
+
             all_file_data_for_extraction = []
             for i, uploaded_file in enumerate(uploaded_files):
                 file_bytes = uploaded_file.read()
@@ -1193,8 +1196,8 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
             start_time = time.time()
 
             # Phase 1: Parallel Text Extraction
-            status_text.info(f"Phase 1/2: Extracting text from {total_files} resumes in parallel...")
-            log_activity_screener(f"Starting parallel text extraction for {total_files} resumes.")
+            # status_text.info(f"Phase 1/2: Extracting text from {total_files} resumes in parallel...") # Removed
+            log_activity_screener(f"Starting parallel text extraction for {len(uploaded_files)} resumes.")
             
             with ProcessPoolExecutor() as executor:
                 futures = {executor.submit(_parallel_extract_text, data): data[1] for data in all_file_data_for_extraction}
@@ -1214,19 +1217,18 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
                         st.error(f"Unexpected error during text extraction for {file_name_original}: {e}")
                         log_activity_screener(f"Unexpected error during text extraction for {file_name_original}: {e}")
                     
-                    progress = (i + 1) / total_files
-                    progress_bar.progress(progress, text=f"Extracted text from {i+1}/{total_files} resumes...")
+                    # progress_bar.progress((i + 1) / total_files, text=f"Extracted text from {i+1}/{total_files} resumes...") # Removed
 
             extraction_end_time = time.time()
             log_activity_screener(f"Text extraction phase completed in {extraction_end_time - start_time:.2f} seconds.")
 
             # Phase 2: Batch Embedding and Further Processing
             if extracted_texts_for_embedding:
-                status_text.info(f"Phase 2/2: Generating embeddings and analyzing {len(extracted_texts_for_embedding)} resumes...")
+                # status_text.info(f"Phase 2/2: Generating embeddings and analyzing {len(extracted_texts_for_embedding)} resumes...") # Removed
                 log_activity_screener(f"Starting batch embedding for {len(extracted_texts_for_embedding)} resumes.")
                 
                 # Generate all embeddings in one batch
-                all_resume_embeddings = global_sentence_model.encode(extracted_texts_for_embedding, show_progress_bar=True)
+                all_resume_embeddings = global_sentence_model.encode(extracted_texts_for_embedding, show_progress_bar=False) # Changed to False
                 
                 log_activity_screener("Batch embedding completed.")
 
@@ -1375,16 +1377,16 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
                             "Languages": "N/A"
                         })
                     
-                    progress = (i + 1) / len(extracted_results)
-                    progress_bar.progress(progress, text=f"Analyzing {i+1}/{len(extracted_results)} resumes...")
+                    # progress_bar.progress((i + 1) / len(extracted_results), text=f"Analyzing {i+1}/{len(extracted_results)} resumes...") # Removed
             else:
                 st.warning("No valid text extracted from uploaded resumes for embedding.")
             
             end_time = time.time()
             total_processing_time = end_time - start_time
-            status_text.success(f"Processing complete! Total time: {total_processing_time:.2f} seconds for {len(st.session_state.resume_data)} resumes.")
+            st.success(f"Processing complete! Total time: {total_processing_time:.2f} seconds for {len(st.session_state.resume_data)} resumes.") # Final success message
             log_activity_screener(f"Total processing time: {total_processing_time:.2f} seconds for {len(st.session_state.resume_data)} resumes.")
-            progress_bar.empty() # Clear the progress bar
+            # progress_bar.empty() # Removed
+            # status_text.empty() # Removed
 
     if st.session_state.resume_data:
         st.subheader("Screening Results")
@@ -1468,6 +1470,7 @@ def resume_screener_page(firestore_rest_api_base_url, firebase_web_api_key, app_
                     ax.imshow(wordcloud, interpolation='bilinear')
                     ax.axis('off')
                     st.pyplot(fig)
+                    plt.close(fig) # Close the plot to prevent memory issues
                 else:
                     st.info("Upload resumes and screen to see the skill cloud.")
         else:
