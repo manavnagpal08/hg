@@ -24,6 +24,8 @@ from email import encoders
 import tempfile
 import shutil
 from weasyprint import HTML # New import for PDF generation
+from concurrent.futures import ThreadPoolExecutor, as_completed # Import for parallel processing
+from io import BytesIO # Needed for simulating uploaded files from zip
 
 # --- OCR Specific Imports ---
 from PIL import Image
@@ -295,17 +297,26 @@ def extract_relevant_keywords(text, filter_set):
 
 
 def extract_text_from_file(uploaded_file):
-    file_type = uploaded_file.type
+    # Ensure uploaded_file is a BytesIO object with a name and type attribute
+    if isinstance(uploaded_file, BytesIO):
+        file_bytes = uploaded_file.getvalue()
+        file_name = uploaded_file.name
+        file_type = uploaded_file.type
+    else: # Assume it's a Streamlit UploadedFile object
+        file_bytes = uploaded_file.read()
+        file_name = uploaded_file.name
+        file_type = uploaded_file.type
+
     full_text = ""
 
     if "pdf" in file_type:
         try:
-            with pdfplumber.open(uploaded_file) as pdf:
+            with pdfplumber.open(BytesIO(file_bytes)) as pdf:
                 pdf_text = ''.join(page.extract_text() or '' for page in pdf.pages)
             
-            if len(pdf_text.strip()) < 50:
-                st.warning(f"Low text extracted from PDF {uploaded_file.name} using pdfplumber. Attempting OCR...")
-                images = convert_from_bytes(uploaded_file.read())
+            if len(pdf_text.strip()) < 50: # Heuristic for potentially scanned PDF
+                st.warning(f"Low text extracted from PDF {file_name} using pdfplumber. Attempting OCR...")
+                images = convert_from_bytes(file_bytes)
                 for img in images:
                     processed_img = preprocess_image_for_ocr(img)
                     full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
@@ -313,9 +324,10 @@ def extract_text_from_file(uploaded_file):
                 full_text = pdf_text
 
         except Exception as e:
-            st.error(f"Error processing PDF {uploaded_file.name} with pdfplumber/OCR: {e}. Trying OCR fallback directly.")
+            # Fallback to OCR directly if pdfplumber fails or for any other PDF error
+            st.error(f"Error processing PDF {file_name} with pdfplumber: {e}. Trying OCR fallback directly.")
             try:
-                images = convert_from_bytes(uploaded_file.read())
+                images = convert_from_bytes(file_bytes)
                 for img in images:
                     processed_img = preprocess_image_for_ocr(img)
                     full_text += pytesseract.image_to_string(processed_img, lang='eng') + "\n"
@@ -324,7 +336,7 @@ def extract_text_from_file(uploaded_file):
 
     elif "image" in file_type:
         try:
-            img = Image.open(uploaded_file).convert("RGB")
+            img = Image.open(BytesIO(file_bytes)).convert("RGB")
             processed_img = preprocess_image_for_ocr(img)
             full_text = pytesseract.image_to_string(processed_img, lang='eng')
         except Exception as e:
@@ -411,7 +423,7 @@ def extract_email(text):
 
     if possible_emails:
         for email in possible_emails:
-            if "gmail" in email or "manav" in email:
+            if "gmail" in email or "manav" in email: # Specific filter, consider removing or making configurable
                 return email
         return possible_emails[0]
     
@@ -1136,6 +1148,154 @@ Have questions? Contact us at support@screenerpro.in
         st.error(f"❌ Failed to send email: {e}")
     return False
 
+# Helper function to process a single resume for the main screener page
+def _process_single_resume_for_screener_page(file_data_bytes, file_name, file_type, jd_text, jd_name_for_results,
+                                             high_priority_skills, medium_priority_skills, max_experience):
+    """
+    Processes a single resume file (bytes content) for the main screener page
+    and returns a dictionary of results.
+    This function is designed to be run in a ThreadPoolExecutor.
+    """
+    try:
+        # Create a BytesIO object to simulate an uploaded file for extract_text_from_file
+        uploaded_file_mock = BytesIO(file_data_bytes)
+        uploaded_file_mock.name = file_name
+        uploaded_file_mock.type = file_type
+        
+        text = extract_text_from_file(uploaded_file_mock)
+        
+        if text.startswith("[ERROR]"):
+            return {
+                "File Name": file_name,
+                "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
+                "Score (%)": 0, "Years Experience": 0, "CGPA (4.0 Scale)": None,
+                "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
+                "Languages": "Not Found", "Education Details": "Not Found",
+                "Work History": "Not Found", "Project Details": "Not Found",
+                "AI Suggestion": f"Error: {text.replace('[ERROR] ', '')}",
+                "Detailed HR Assessment": f"Error processing resume: {text.replace('[ERROR] ', '')}",
+                "Matched Keywords": "", "Missing Skills": "",
+                "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
+                "Semantic Similarity": 0.0, "Resume Raw Text": "",
+                "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
+                "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
+                "Tag": "❌ Processing Error"
+            }
+
+        exp = extract_years_of_experience(text)
+        email = extract_email(text)
+        phone = extract_phone_number(text)
+        location = extract_location(text)
+        languages = extract_languages(text) 
+        
+        education_details_text = extract_education_text(text)
+        work_history_raw = extract_work_history(text)
+        project_details_raw = extract_project_details(text, MASTER_SKILLS)
+        
+        education_details_formatted = education_details_text
+        work_history_formatted = format_work_history(work_history_raw)
+        project_details_formatted = format_project_details(project_details_raw)
+
+        candidate_name = extract_name(text) or file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title()
+        cgpa = extract_cgpa(text)
+
+        resume_raw_skills_set, resume_categorized_skills = extract_relevant_keywords(text, MASTER_SKILLS)
+        jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, MASTER_SKILLS)
+
+        matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
+        missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
+
+        score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills)
+        
+        concise_ai_suggestion = generate_concise_ai_suggestion(
+            candidate_name=candidate_name,
+            score=score,
+            years_exp=exp,
+            semantic_similarity=semantic_similarity,
+            cgpa=cgpa
+        )
+
+        detailed_hr_assessment = generate_detailed_hr_assessment(
+            candidate_name=candidate_name,
+            score=score,
+            years_exp=exp,
+            semantic_similarity=semantic_similarity,
+            cgpa=cgpa,
+            jd_text=jd_text,
+            resume_text=text,
+            matched_keywords=matched_keywords,
+            missing_skills=missing_skills,
+            max_exp_cutoff=max_experience
+        )
+
+        certificate_id = str(uuid.uuid4())
+        certificate_rank = "Not Applicable"
+
+        if score >= 90:
+            certificate_rank = "🏅 Elite Match"
+        elif score >= 80:
+            certificate_rank = "⭐ Strong Match"
+        elif score >= 75:
+            certificate_rank = "✅ Good Fit"
+        
+        # Determine Tag
+        tag = "❌ Limited Match"
+        if score >= 90 and exp >= 5 and exp <= max_experience and semantic_similarity >= 0.85 and (cgpa is None or cgpa >= 3.5):
+            tag = "👑 Exceptional Match"
+        elif score >= 80 and exp >= 3 and exp <= max_experience and semantic_similarity >= 0.7 and (cgpa is None or cgpa >= 3.0):
+            tag = "🔥 Strong Candidate"
+        elif score >= 60 and exp >= 1 and exp <= max_experience and (cgpa is None or cgpa >= 2.5):
+            tag = "✨ Promising Fit"
+        elif score >= 40:
+            tag = "⚠️ Needs Review"
+
+        return {
+            "File Name": file_name,
+            "Candidate Name": candidate_name,
+            "Score (%)": score,
+            "Years Experience": exp,
+            "CGPA (4.0 Scale)": cgpa,
+            "Email": email or "Not Found",
+            "Phone Number": phone or "Not Found",
+            "Location": location or "Not Found",
+            "Languages": languages,
+            "Education Details": education_details_formatted,
+            "Work History": work_history_formatted,
+            "Project Details": project_details_formatted,
+            "AI Suggestion": concise_ai_suggestion,
+            "Detailed HR Assessment": detailed_hr_assessment,
+            "Matched Keywords": ", ".join(matched_keywords),
+            "Missing Skills": ", ".join(missing_skills),
+            "Matched Keywords (Categorized)": dict(resume_categorized_skills),
+            "Missing Skills (Categorized)": dict(jd_categorized_skills),
+            "Semantic Similarity": semantic_similarity,
+            "Resume Raw Text": text,
+            "JD Used": jd_name_for_results,
+            "Date Screened": datetime.now().date(),
+            "Certificate ID": certificate_id,
+            "Certificate Rank": certificate_rank,
+            "Tag": tag
+        }
+    except Exception as e:
+        st.error(f"Error processing {file_name}: {e}")
+        return {
+            "File Name": file_name,
+            "Candidate Name": file_name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title(),
+            "Score (%)": 0, "Years Experience": 0, "CGPA (4.0 Scale)": None,
+            "Email": "Not Found", "Phone Number": "Not Found", "Location": "Not Found",
+            "Languages": "Not Found", "Education Details": "Not Found",
+            "Work History": "Not Found", "Project Details": "Not Found",
+            "AI Suggestion": f"Error: {e}",
+            "Detailed HR Assessment": f"Error processing resume: {e}",
+            "Matched Keywords": "", "Missing Skills": "",
+            "Matched Keywords (Categorized)": {}, "Missing Skills (Categorized)": {},
+            "Semantic Similarity": 0.0, "Resume Raw Text": "",
+            "JD Used": jd_name_for_results, "Date Screened": datetime.now().date(),
+            "Certificate ID": str(uuid.uuid4()), "Certificate Rank": "Not Applicable",
+            "Tag": "❌ Processing Error"
+        }
+
+
 def resume_screener_page():
     st.title("🧠 ScreenerPro – AI-Powered Resume Screener")
 
@@ -1261,111 +1421,65 @@ def resume_screener_page():
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        for i, file in enumerate(resume_files):
-            status_text.text(f"Processing {file.name} ({i+1}/{len(resume_files)})...")
-            progress_bar.progress((i + 1) / len(resume_files))
-
-            text = extract_text_from_file(file)
-            if text.startswith("[ERROR]"):
-                st.error(f"Failed to process {file.name}: {text.replace('[ERROR] ', '')}")
-                continue
-
-            st.session_state['resume_raw_texts'][file.name] = text
-
-            exp = extract_years_of_experience(text)
-            email = extract_email(text)
-            phone = extract_phone_number(text)
-            location = extract_location(text)
-            languages = extract_languages(text) 
-            
-            education_details_text = extract_education_text(text)
-            work_history_raw = extract_work_history(text)
-            project_details_raw = extract_project_details(text, MASTER_SKILLS)
-            
-            education_details_formatted = education_details_text
-            work_history_formatted = format_work_history(work_history_raw)
-            project_details_formatted = format_project_details(project_details_raw)
-
-            candidate_name = extract_name(text) or file.name.replace('.pdf', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('_', ' ').title()
-            cgpa = extract_cgpa(text)
-
-            resume_raw_skills_set, resume_categorized_skills = extract_relevant_keywords(text, all_master_skills)
-            jd_raw_skills_set, jd_categorized_skills = extract_relevant_keywords(jd_text, all_master_skills)
-
-            matched_keywords = list(resume_raw_skills_set.intersection(jd_raw_skills_set))
-            missing_skills = list(jd_raw_skills_set.difference(resume_raw_skills_set)) 
-
-            score, semantic_similarity = semantic_score(text, jd_text, exp, cgpa, high_priority_skills, medium_priority_skills)
-            
-            concise_ai_suggestion = generate_concise_ai_suggestion(
-                candidate_name=candidate_name,
-                score=score,
-                years_exp=exp,
-                semantic_similarity=semantic_similarity,
-                cgpa=cgpa
+        total_resumes = len(resume_files)
+        
+        # Use ThreadPoolExecutor for parallel processing if multiple files are uploaded
+        if total_resumes > 1:
+            st.info(f"Processing {total_resumes} resumes in parallel...")
+            with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
+                futures = []
+                for file in resume_files:
+                    # Read file content into memory once to pass to the executor
+                    file_data_bytes = file.read()
+                    futures.append(executor.submit(
+                        _process_single_resume_for_screener_page,
+                        file_data_bytes, file.name, file.type, jd_text, jd_name_for_results,
+                        high_priority_skills, medium_priority_skills, max_experience
+                    ))
+                
+                for i, future in enumerate(as_completed(futures)):
+                    status_text.text(f"Processing: {resume_files[i].name} ({i+1}/{total_resumes})...")
+                    try:
+                        result = future.result()
+                        results.append(result)
+                    except Exception as exc:
+                        st.error(f"Resume processing generated an exception for {resume_files[i].name}: {exc}")
+                    progress_bar.progress((i + 1) / total_resumes)
+        else: # For single file upload, process sequentially
+            file = resume_files[0]
+            status_text.text(f"Processing {file.name} (1/1)...")
+            progress_bar.progress(0)
+            file_data_bytes = file.read() # Read file content
+            result = _process_single_resume_for_screener_page(
+                file_data_bytes, file.name, file.type, jd_text, jd_name_for_results,
+                high_priority_skills, medium_priority_skills, max_experience
             )
+            results.append(result)
+            progress_bar.progress(100)
 
-            detailed_hr_assessment = generate_detailed_hr_assessment(
-                candidate_name=candidate_name,
-                score=score,
-                years_exp=exp,
-                semantic_similarity=semantic_similarity,
-                cgpa=cgpa,
-                jd_text=jd_text,
-                resume_text=text,
-                matched_keywords=matched_keywords,
-                missing_skills=missing_skills,
-                max_exp_cutoff=max_experience
-            )
 
-            certificate_id = str(uuid.uuid4())
-            certificate_rank = "Not Applicable"
-
-            if score >= 90:
-                certificate_rank = "🏅 Elite Match"
-            elif score >= 80:
-                certificate_rank = "⭐ Strong Match"
-            elif score >= 75:
-                certificate_rank = "✅ Good Fit"
-            
-            results.append({
-                "File Name": file.name,
-                "Candidate Name": candidate_name,
-                "Score (%)": score,
-                "Years Experience": exp,
-                "CGPA (4.0 Scale)": cgpa,
-                "Email": email or "Not Found",
-                "Phone Number": phone or "Not Found",
-                "Location": location or "Not Found",
-                "Languages": languages,
-                "Education Details": education_details_formatted,
-                "Work History": work_history_formatted,
-                "Project Details": project_details_formatted,
-                "AI Suggestion": concise_ai_suggestion,
-                "Detailed HR Assessment": detailed_hr_assessment,
-                "Matched Keywords": ", ".join(matched_keywords),
-                "Missing Skills": ", ".join(missing_skills),
-                "Matched Keywords (Categorized)": dict(resume_categorized_skills),
-                "Missing Skills (Categorized)": dict(jd_categorized_skills),
-                "Semantic Similarity": semantic_similarity,
-                "Resume Raw Text": text,
-                "JD Used": jd_name_for_results,
-                "Date Screened": datetime.now().date(),
-                "Certificate ID": certificate_id,
-                "Certificate Rank": certificate_rank
-            })
             
         progress_bar.empty()
         status_text.empty()
+        
+        # Filter out any error results before creating DataFrame
+        results = [r for r in results if r.get("Tag") != "❌ Processing Error"]
+
+        if not results:
+            st.warning("No resumes were successfully processed. Please check the files and try again.")
+            st.session_state['comprehensive_df'] = pd.DataFrame() # Ensure DF is empty
+            return
 
         st.session_state['comprehensive_df'] = pd.DataFrame(results).sort_values(by="Score (%)", ascending=False).reset_index(drop=True)
         
-        st.session_state['comprehensive_df']['Tag'] = st.session_state['comprehensive_df'].apply(lambda row: 
-            "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.85 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.5) else (
-            "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.7 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.0) else (
-            "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 and row['Years Experience'] <= max_experience and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 2.5) else (
-            "⚠️ Needs Review" if row['Score (%)'] >= 40 else 
-            "❌ Limited Match"))), axis=1)
+        # The 'Tag' calculation is now done inside _process_single_resume_for_screener_page
+        # so this block is no longer needed here.
+        # st.session_state['comprehensive_df']['Tag'] = st.session_state['comprehensive_df'].apply(lambda row: 
+        #     "👑 Exceptional Match" if row['Score (%)'] >= 90 and row['Years Experience'] >= 5 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.85 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.5) else (
+        #     "🔥 Strong Candidate" if row['Score (%)'] >= 80 and row['Years Experience'] >= 3 and row['Years Experience'] <= max_experience and row['Semantic Similarity'] >= 0.7 and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 3.0) else (
+        #     "✨ Promising Fit" if row['Score (%)'] >= 60 and row['Years Experience'] >= 1 and row['Years Experience'] <= max_experience and (row['CGPA (4.0 Scale)'] is None or row['CGPA (4.0 Scale)'] >= 2.5) else (
+        #     "⚠️ Needs Review" if row['Score (%)'] >= 40 else 
+        #     "❌ Limited Match"))), axis=1)
 
         st.session_state['comprehensive_df'].to_csv("results.csv", index=False)
 
@@ -1986,7 +2100,7 @@ def generate_certificate_html(candidate_data):
             <div class="score-rank">
                 {{CERTIFICATE_RANK}}
             </div>
-            <p>demonstrating an outstanding Screener Score of {{SCORE}}%.</p>
+            <p>demonstrating an outstanding Screener Score of **{{SCORE}}%**.</p>
             <p>This certification attests to their highly relevant skills, extensive experience, and strong alignment with the demanding requirements of modern professional roles. It signifies their readiness to excel in challenging environments and contribute significantly to organizational success.</p>
         </div>
         <div class="date-id">
