@@ -1033,7 +1033,7 @@ Best regards,
 The {sender_name}""")
     return f"mailto:{recipient_email}?subject={subject}&body={body}"
 
-def send_certificate_email(recipient_email, candidate_name, certificate_html_content):
+def send_certificate_email(recipient_email, candidate_name, certificate_id, certificate_rank):
     # --- IMPORTANT: REPLACE THESE PLACEHOLDERS WITH YOUR ACTUAL GMAIL CREDENTIALS ---
     # To enable email sending, you MUST replace "screenerpro.ai@gmail.com" with your
     # Gmail address and "hcss uefd gaae wrse" with the 16-character App Password
@@ -1043,18 +1043,53 @@ def send_certificate_email(recipient_email, candidate_name, certificate_html_con
     gmail_app_password = "hcss uefd gaae wrse"  # <--- REPLACE THIS WITH YOUR 16-CHARACTER APP PASSWORD
     # --- END IMPORTANT ---
 
-    if not gmail_address or not gmail_app_password: # Removed the specific placeholder check
+    if not gmail_address or not gmail_app_password:
         st.error("Email sending is not configured. Please replace the placeholder Gmail credentials in `screener.py` to enable this feature.")
         return False
+
+    # IMPORTANT: Replace "YOUR_APP_BASE_URL" with the actual base URL of your deployed Streamlit app.
+    # This URL should point to the Streamlit app's certificate page, e.g.,
+    # "https://your-streamlit-app-url.streamlit.app" or "https://your-custom-domain.com".
+    # The certificate.html will then use the ID from the URL to fetch data.
+    APP_BASE_URL = "YOUR_APP_BASE_URL" # <-- REPLACE THIS
+    verification_link = f"{APP_BASE_URL}/certificate/{certificate_id}"
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = f"Congratulations! You've received a ScreenerPro Certificate!"
     msg['From'] = gmail_address
     msg['To'] = recipient_email
 
-    # Updated email message
-    part1 = MIMEText(f"Dear {candidate_name},\n\nCongratulations! You've received a ScreenerPro Certificate for your outstanding profile. Please find your certificate attached.\n\nBest regards,\nThe ScreenerPro Team", 'plain')
-    part2 = MIMEText(certificate_html_content, 'html')
+    plain_text_body = f"""Dear {candidate_name},
+
+Congratulations! You've received a ScreenerPro Certificate for your outstanding profile.
+
+Your certification rank is: {certificate_rank}
+Certificate ID: {certificate_id}
+
+You can view and download your certificate from our official verification page:
+{verification_link}
+
+Best regards,
+The ScreenerPro Team
+"""
+
+    html_body = f"""
+    <html>
+        <body>
+            <p>Dear {candidate_name},</p>
+            <p>Congratulations! You've received a ScreenerPro Certificate for your outstanding profile.</p>
+            <p>Your certification rank is: <strong>{certificate_rank}</strong></p>
+            <p>Certificate ID: <strong>{certificate_id}</strong></p>
+            <p>You can view and download your certificate from our official verification page:</p>
+            <p><a href="{verification_link}" style="background-color:#00cec9;color:white;border:none;padding:10px 20px;text-align:center;text-decoration:none;display:inline-block;font-size:16px;margin:4px 2px;cursor:pointer;border-radius:8px;">View and Download Your Certificate</a></p>
+            <p>Best regards,</p>
+            <p>The ScreenerPro Team</p>
+        </body>
+    </html>
+    """
+
+    part1 = MIMEText(plain_text_body, 'plain')
+    part2 = MIMEText(html_body, 'html')
 
     msg.attach(part1)
     msg.attach(part2)
@@ -1758,7 +1793,8 @@ def resume_screener_page():
                             send_certificate_email(
                                 recipient_email=candidate_data_for_cert['Email'],
                                 candidate_name=candidate_data_for_cert['Candidate Name'],
-                                certificate_html_content=certificate_html_content
+                                certificate_id=candidate_data_for_cert['Certificate ID'], # Pass ID
+                                certificate_rank=candidate_data_for_cert['Certificate Rank'] # Pass Rank
                             )
                         else:
                             st.info(f"No email address found for {candidate_data_for_cert['Candidate Name']}. Certificate could not be sent automatically.")
