@@ -13,6 +13,10 @@ import statsmodels.api as sm
 import collections
 import requests # Added for REST API calls
 
+# Import the new pages
+from about_us import about_us_page
+from privacy_policy import privacy_policy_page
+
 # --- Firebase REST Setup ---
 # IMPORTANT: Replace "YOUR_FIREBASE_WEB_API_KEY" with your actual Firebase Web API Key
 # You can find this in your Firebase project settings -> Project settings -> General -> Web API Key
@@ -1457,158 +1461,11 @@ else:
             FIRESTORE_BASE_URL=FIRESTORE_BASE_URL
         )
 
-    elif tab == "🏢 About Us": # New About Us Page
-        st.markdown('<div class="dashboard-header">🏢 About Us</div>', unsafe_allow_html=True)
-        st.write("""
-        Welcome to **ScreenerPro**, your intelligent partner in modern recruitment.
-        We leverage cutting-edge AI to streamline your hiring process,
-        helping you identify the best talent quickly and efficiently.
-        """)
+    elif tab == "🏢 About Us": # Call the imported function
+        about_us_page()
 
-        st.subheader("Our Vision")
-        st.write("""
-        At ScreenerPro, our vision is to revolutionize talent acquisition by making it
-        more data-driven, fair, and efficient. We believe in empowering HR professionals
-        and hiring managers with tools that not only save time but also enhance the
-        quality of hires, ultimately contributing to organizational success.
-        """)
-
-        st.subheader("Our Mission")
-        st.write("""
-        Our mission is to provide an intuitive, powerful, and reliable resume screening solution
-        that reduces unconscious bias, highlights truly relevant skills, and accelerates the
-        shortlisting process. We are committed to continuous innovation, ensuring our platform
-        remains at the forefront of AI-powered HR technology.
-        """)
-
-        st.subheader("Our Team")
-        st.write("""
-        We are a passionate team of AI engineers, data scientists, and HR experts dedicated
-        to solving real-world recruitment challenges. Our diverse backgrounds enable us
-        to build a product that is both technically robust and deeply understands the
-        nuances of human resources.
-        """)
-        st.markdown("---")
-        st.write("For inquiries, please use the 'Feedback & Help' section.")
-
-    elif tab == "⚖️ Privacy Policy & Terms": # New Privacy Policy & Terms Page
-        st.markdown('<div class="dashboard-header">⚖️ Privacy Policy & Terms</div>', unsafe_allow_html=True)
-
-        st.subheader("Privacy Policy")
-        st.write("""
-        **Last Updated: July 17, 2025**
-
-        ScreenerPro is committed to protecting your privacy. This Privacy Policy explains
-        how we collect, use, disclose, and safeguard your information when you use our
-        AI-powered resume screening platform.
-
-        **Information We Collect:**
-        * **Personal Information:** When you register, we collect your email (username) and company name.
-            When you upload resumes, we process the text content, which may contain personal data
-            of candidates (e.g., names, contact details, work history).
-        * **Usage Data:** We collect information on how you access and use the service,
-            such as features used, time spent, and interactions with the dashboard.
-        * **Uploaded Data:** Resumes and Job Descriptions you upload are processed to
-            perform screening and analysis. We do not store raw resume text persistently
-            in our cloud database (Firestore) to minimize data footprint; only extracted
-            metadata and scores are saved for session persistence.
-
-        **How We Use Your Information:**
-        * To provide and maintain the ScreenerPro service.
-        * To perform resume screening, analysis, and generate insights.
-        * To personalize your experience and improve our service.
-        * For internal analytics and research to enhance our AI models and features.
-        * To communicate with you regarding service updates, support, and relevant information.
-
-        **Data Security:**
-        We implement robust security measures, including data encryption (for passwords),
-        access controls, and secure data transmission. While we strive to protect your
-        information, no method of transmission over the Internet or electronic storage
-        is 100% secure.
-
-        **Data Retention:**
-        We retain your account information as long as your account is active.
-        Screening results and associated metadata are retained to provide session persistence
-        and analytics. You can delete your data by contacting support.
-
-        **Your Rights:**
-        You have the right to access, correct, or delete your personal information.
-        Please contact us to exercise these rights.
-
-        **Changes to This Policy:**
-        We may update this Privacy Policy from time to time. We will notify you of any
-        changes by posting the new policy on this page.
-        """)
-
-        st.subheader("Terms of Service")
-        st.write("""
-        **Last Updated: July 17, 2025**
-
-        Welcome to ScreenerPro! These Terms of Service ("Terms") govern your access to
-        and use of the ScreenerPro website and services (the "Service"). By accessing
-        or using the Service, you agree to be bound by these Terms.
-
-        **1. Acceptance of Terms**
-        By using the Service, you confirm that you have read, understood, and agree to
-        be bound by these Terms, including our Privacy Policy. If you do not agree
-        with all of these Terms, then you are expressly prohibited from using the Service.
-
-        **2. Use of Service**
-        ScreenerPro provides an AI-powered platform for resume screening and talent
-        acquisition. You agree to use the Service only for lawful purposes and in
-        accordance with these Terms. You are responsible for ensuring that your use
-        of the Service complies with all applicable laws and regulations, including
-        data privacy laws (e.g., GDPR, CCPA) when processing candidate data.
-
-        **3. User Accounts**
-        To access certain features of the Service, you may be required to register
-        for an account. You agree to provide accurate, current, and complete information
-        during the registration process and to update such information to keep it accurate,
-        current, and complete. You are responsible for safeguarding your password
-        and for any activities or actions under your account.
-
-        **4. Intellectual Property**
-        All intellectual property rights in the Service and its content (excluding
-        user-uploaded content) are owned by ScreenerPro or its licensors. You may not
-        reproduce, distribute, modify, create derivative works of, publicly display,
-        publicly perform, republish, download, store, or transmit any of the material
-        on our Service, except as generally permitted by the Service.
-
-        **5. User Content**
-        You retain all rights in the resumes, job descriptions, and other content
-        you upload to the Service ("User Content"). You grant ScreenerPro a limited,
-        non-exclusive, worldwide, royalty-free license to use, reproduce, modify,
-        adapt, publish, translate, create derivative works from, distribute, and
-        display such User Content solely for the purpose of operating, improving,
-        and providing the Service to you.
-
-        **6. Disclaimers**
-        The Service is provided on an "as is" and "as available" basis. ScreenerPro
-        makes no warranties, express or implied, regarding the accuracy, reliability,
-        or completeness of any content or results generated by the Service.
-        AI-generated assessments are for informational purposes only and should not
-        be the sole basis for hiring decisions.
-
-        **7. Limitation of Liability**
-        To the fullest extent permitted by law, ScreenerPro shall not be liable for
-        any indirect, incidental, special, consequential, or punitive damages, or
-        any loss of profits or revenues, whether incurred directly or indirectly,
-        or any loss of data, use, goodwill, or other intangible losses, resulting
-        from (a) your access to or use of or inability to access or use the Service;
-        (b) any conduct or content of any third party on the Service; or (c)
-        unauthorized access, use, or alteration of your transmissions or content.
-
-        **8. Governing Law**
-        These Terms shall be governed and construed in accordance with the laws
-        of [Your Jurisdiction, e.g., India], without regard to its conflict of law provisions.
-
-        **9. Contact Us**
-        If you have any questions about these Terms, please contact us via the
-        "Feedback & Help" section in the application.
-        """)
-        st.markdown("---")
-        st.write("Your continued use of ScreenerPro signifies your acceptance of these policies.")
-
+    elif tab == "⚖️ Privacy Policy & Terms": # Call the imported function
+        privacy_policy_page()
 
     elif tab == "📤 Email Candidates":
         try:
@@ -1644,6 +1501,29 @@ else:
         if 'user_email' not in st.session_state:
             st.session_state['user_email'] = st.session_state.get('username', 'anonymous_user')
         feedback_and_help_page()
+
+    elif tab == "⚙️ Admin Tools": # Admin Tools page
+        st.markdown('<div class="dashboard-header">⚙️ Admin Tools</div>', unsafe_allow_html=True)
+        if is_admin:
+            st.subheader(f"Welcome, Admin {st.session_state.username}!")
+            admin_tab = st.tabs(["Create User", "Reset Password", "Toggle User Status", "Activity Log"])
+
+            with admin_tab[0]:
+                admin_registration_section()
+            with admin_tab[1]:
+                admin_password_reset_section()
+            with admin_tab[2]:
+                admin_disable_enable_user_section()
+            with admin_tab[3]:
+                st.subheader("Recent Activity Log (Main App)")
+                if 'activity_log' in st.session_state and st.session_state.activity_log:
+                    for log_entry in st.session_state.activity_log:
+                        st.text(log_entry)
+                else:
+                    st.info("No recent activity to display.")
+        else:
+            st.error("Access Denied: You do not have administrative privileges to view this page.")
+
 
     elif tab == "🚪 Logout":
         log_activity_main(f"User '{st.session_state.get('username', 'anonymous_user')}' logged out.")
