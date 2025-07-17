@@ -2307,7 +2307,7 @@ if __name__ == "__main__":
     # For this single file, they are already in global scope.
 
     st.set_page_config(page_title="ScreenerPro – AI Hiring Dashboard", layout="wide", page_icon="🧠")
-    load_css("style.css") # Load CSS
+
     dark_mode = st.sidebar.toggle("🌙 Dark Mode", key="dark_mode_main_init") # Use a unique key
     
     # Apply dark mode styles initially
