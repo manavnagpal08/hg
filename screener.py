@@ -2100,17 +2100,22 @@ def resume_screener_page():
                         <div class="certificate-content">
                             <button class="close-button" onclick="
                                 console.log('Close button clicked.');
-                                var hiddenButtonContainer = document.querySelector('[data-testid=\"stButton-secondary-hidden_cert_close_trigger\"]');
-                                if (hiddenButtonContainer) {{
-                                    var hiddenButton = hiddenButtonContainer.querySelector('button');
-                                    if (hiddenButton) {{
-                                        console.log('Hidden Streamlit button found, attempting click.');
-                                        hiddenButton.click();
+                                var streamlitApp = document.querySelector('.stApp'); // Main Streamlit app container
+                                if (streamlitApp) {{
+                                    var hiddenButtonContainer = streamlitApp.querySelector('[data-testid=\"stButton-secondary-hidden_cert_close_trigger\"]');
+                                    if (hiddenButtonContainer) {{
+                                        var hiddenButton = hiddenButtonContainer.querySelector('button');
+                                        if (hiddenButton) {{
+                                            console.log('Hidden Streamlit button found, attempting click.');
+                                            hiddenButton.click();
+                                        }} else {{
+                                            console.error('Actual button element inside data-testid container not found.');
+                                        }}
                                     }} else {{
-                                        console.error('Actual button element inside data-testid container not found.');
+                                        console.error('Hidden close button container (data-testid) not found.');
                                     }}
                                 }} else {{
-                                    console.error('Hidden close button container (data-testid) not found.');
+                                    console.error('Streamlit app container (.stApp) not found.');
                                 }}
                             ">&times;</button>
                             {generate_certificate_html(candidate_data_for_cert)}
