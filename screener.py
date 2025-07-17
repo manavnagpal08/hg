@@ -27,6 +27,7 @@ from weasyprint import HTML
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 import traceback
+import time # Import time for measuring performance
 
 # --- OCR Specific Imports (Moved to top) ---
 from PIL import Image
@@ -1116,7 +1117,7 @@ def _process_single_resume_for_screener_page(file_name, text, jd_text, jd_embedd
     for the main screener page and returns a dictionary of results.
     This function is designed to be run in a ThreadPoolExecutor.
     """
-    print(f"DEBUG: Starting processing for {file_name}")
+    # print(f"DEBUG: Starting processing for {file_name}") # Removed for cleaner logs during performance testing
     try:
         if text.startswith("[ERROR]"):
             print(f"ERROR: Text extraction failed for {file_name}: {text}")
@@ -1183,7 +1184,7 @@ def _process_single_resume_for_screener_page(file_name, text, jd_text, jd_embedd
         score, semantic_similarity = semantic_score_calculation(
             jd_embedding, resume_embedding, exp, cgpa, weighted_keyword_overlap_score, _global_ml_model
         )
-        print(f"DEBUG: Semantic score result for {file_name}: Score={score}, Semantic_Similarity={semantic_similarity}")
+        # print(f"DEBUG: Semantic score result for {file_name}: Score={score}, Semantic_Similarity={semantic_similarity}") # Removed for cleaner logs
         
         concise_ai_suggestion = generate_concise_ai_suggestion(
             candidate_name=candidate_name,
@@ -1405,6 +1406,7 @@ def resume_screener_page():
         total_resumes = len(resume_files)
         
         # --- PHASE 1: Parallel Text Extraction ---
+        start_time_extraction = time.time()
         st.info(f"Step 1/3: Extracting text from {total_resumes} resumes concurrently...")
         extracted_texts_info = [] # Stores (file_name, text) tuples
         file_infos_for_extraction = []
@@ -1424,6 +1426,9 @@ def resume_screener_page():
                     extracted_texts_info.append((file_infos_for_extraction[i][1], f"[ERROR] {e}")) # Mark as error
                 progress_bar.progress((i + 1) / total_resumes)
         
+        end_time_extraction = time.time()
+        print(f"Time taken for Text Extraction: {end_time_extraction - start_time_extraction:.2f} seconds")
+
         progress_bar.empty()
         status_text.empty()
 
@@ -1452,6 +1457,7 @@ def resume_screener_page():
             return
         
         # --- PHASE 2: Batch Embedding Generation ---
+        start_time_embedding = time.time()
         st.info(f"Step 2/3: Generating embeddings for {len(successfully_extracted_texts_map)} resumes and JD...")
         jd_clean = clean_text(jd_text)
         jd_embedding = global_sentence_model.encode([jd_clean])[0]
@@ -1460,19 +1466,24 @@ def resume_screener_page():
         resume_texts_for_embedding = [successfully_extracted_texts_map[name] for name in resume_names_for_embedding]
         
         # Use batch_size for encoding all resume texts
+        # Increased batch_size from 16 to 64 for better performance
         resume_embeddings_array = global_sentence_model.encode(
             resume_texts_for_embedding, 
-            batch_size=16, # Recommended batch size for SentenceTransformer
+            batch_size=64, # Optimized batch size
             show_progress_bar=False # Streamlit handles progress bar
         )
         
         # Create a mapping from file_name to its embedding
         resume_embedding_map = {name: embed for name, embed in zip(resume_names_for_embedding, resume_embeddings_array)}
         
+        end_time_embedding = time.time()
+        print(f"Time taken for Embedding Generation: {end_time_embedding - start_time_embedding:.2f} seconds")
+
         progress_bar.empty()
         status_text.empty()
 
         # --- PHASE 3: Parallel Individual Resume Analysis ---
+        start_time_analysis = time.time()
         st.info(f"Step 3/3: Processing {len(successfully_extracted_texts_map)} resumes with AI models concurrently...")
         main_processing_futures = []
         with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
@@ -1498,6 +1509,9 @@ def resume_screener_page():
         
         # Add results from failed extractions back to the list
         results.extend(failed_extraction_results)
+
+        end_time_analysis = time.time()
+        print(f"Time taken for Individual Resume Analysis: {end_time_analysis - start_time_analysis:.2f} seconds")
 
         progress_bar.empty()
         status_text.empty()
