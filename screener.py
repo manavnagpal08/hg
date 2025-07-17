@@ -50,15 +50,18 @@ if not firebase_admin._apps:
                 firebase_service_account_key_json = json.load(f)
             cred = credentials.Certificate(firebase_service_account_key_json)
             firebase_admin.initialize_app(cred)
-            st.success("Firebase Admin SDK initialized successfully from config file!")
+            st.success("✅ Firebase Admin SDK initialized successfully from config file!")
         else:
             st.error(f"❌ Firebase Admin SDK initialization error: '{firebase_key_path}' not found. "
                      "Please ensure your 'firebase-key.json' is in a 'config' folder in your repository, "
-                     "or use Streamlit Secrets for secure deployment.")
+                     "or use Streamlit Secrets for secure deployment. **Certificate saving will not work.**")
             st.stop()
         # --- END OF MODIFICATION ---
     except Exception as e:
-        st.error(f"❌ Firebase Admin SDK initialization error: {e}. Please ensure your Firebase service account key is valid.")
+        st.error(f"❌ Firebase Admin SDK initialization failed: {e}. "
+                 "This often means your `firebase-key.json` is invalid or corrupted. "
+                 "**Please regenerate your Firebase service account key and replace the file.** "
+                 "Certificate saving will not work.")
         st.stop()
 
 db = firestore.client()
@@ -252,7 +255,7 @@ MASTER_SKILLS = set([skill for category_list in SKILL_CATEGORIES.values() for sk
 # This is the base URL of your Streamlit application (e.g., https://your-app-name.streamlit.app)
 APP_BASE_URL = "https://screenerpro-app.streamlit.app" # <--- REPLACE THIS WITH YOUR STREAMLIT APP URL
 # This is the base URL where your certificate.html is hosted (e.g., https://your-github-username.github.io/screenerpro-certs)
-CERTIFICATE_HOSTING_URL = "https://manavnagpal08.github.io/screenerpro-certs" # <--- REPLACE THIS WITH YOUR CERTIFICATE HOSTING URL
+CERTIFICATE_HOSTING_URL = "https://manav-jain.github.io/screenerpro-certs" # <--- REPLACE THIS WITH YOUR CERTIFICATE HOSTING URL
 
 
 @st.cache_resource
@@ -1095,19 +1098,20 @@ def save_certificate_data_to_firestore(certificate_data):
         
         # Use the certificate_id as the document ID for easy retrieval
         certs_ref.document(certificate_data["Certificate ID"]).set(data_to_save)
-        st.success(f"Certificate data for {certificate_data['Candidate Name']} saved to Firestore!")
+        st.success(f"✅ Certificate data for {certificate_data['Candidate Name']} saved to Firestore!")
         return True
     except Exception as e:
-        st.error(f"Failed to save certificate data to Firestore: {e}")
+        st.error(f"❌ Failed to save certificate data to Firestore: {e}. "
+                 "This usually means your Firebase service account key is invalid or Firestore rules prevent writing.")
         return False
 
 def send_certificate_email(recipient_email, candidate_name, certificate_id, score, certificate_html_content, attach_html_file=False):
     # Retrieve Gmail credentials from Streamlit secrets
-    gmail_address = "screenerpro.ai@gmail.com"
-    gmail_app_password = "udwi life nbdv kgdt"
+    gmail_address = st.secrets.get("GMAIL_ADDRESS")
+    gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD")
 
     if not gmail_address or not gmail_app_password:
-        st.error("Email sending is not configured. Please ensure your Gmail address and App Password secrets are set in Streamlit.")
+        st.error("❌ Email sending is not configured. Please ensure your Gmail address and App Password secrets are set in Streamlit.")
         return False
 
     # The verification link will point to your externally hosted certificate.html page.
@@ -1180,13 +1184,13 @@ Have questions? Contact us at support@screenerpro.in
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
             smtp.login(gmail_address, gmail_app_password)
             smtp.send_message(msg)
-        st.success(f"Certificate email sent to {recipient_email}!")
+        st.success(f"✅ Certificate email sent to {recipient_email}!")
         return True
     except smtplib.SMTPAuthenticationError:
-        st.error("Failed to send email: Authentication error. Please check your Gmail address and App Password.")
+        st.error("❌ Failed to send email: Authentication error. Please check your Gmail address and App Password.")
         st.info("Ensure you have generated an App Password for your Gmail account and used it instead of your regular password.")
     except Exception as e:
-        st.error(f"Failed to send email: {e}")
+        st.error(f"❌ Failed to send email: {e}")
     return False
 
 def resume_screener_page():
