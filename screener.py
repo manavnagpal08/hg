@@ -1110,14 +1110,16 @@ def send_certificate_email(recipient_email, candidate_name, score, certificate_h
         st.error("❌ Email sending is not configured. Please ensure your Gmail address and App Password secrets are set in Streamlit.")
         return False
 
-    msg = MIMEMultipart('mixed') # Use 'mixed' for attachments
+    # Create the main message container
+    msg = MIMEMultipart('mixed')
     msg['Subject'] = f"🎉 You've Earned It! Here's Your Certification from ScreenerPro"
     msg['From'] = gmail_address
     msg['To'] = recipient_email
 
+    # Create the plain text body
     plain_text_body = f"""Hi {candidate_name},
 
-Congratulations on successfully clearing the ScreenerProPro resume screening process with a score of {score:.1f}%!
+Congratulations on successfully clearing the ScreenerPro resume screening process with a score of {score:.1f}%!
 
 We’re proud to award you an official certificate recognizing your skills and employability.
 
@@ -1130,6 +1132,7 @@ Have questions? Contact us at support@screenerpro.in
 – Team ScreenerPro
 """
 
+    # Create the HTML body
     html_body = f"""
     <html>
         <body>
@@ -1144,9 +1147,14 @@ Have questions? Contact us at support@screenerpro.in
     </html>
     """
 
-    # Attach the plain text and HTML parts
-    msg.attach(MIMEText(plain_text_body, 'plain'))
-    msg.attach(MIMEText(html_body, 'html'))
+    # Create an 'alternative' part for the plain text and HTML body
+    # This tells email clients to display the best available version (HTML preferred)
+    msg_alternative = MIMEMultipart('alternative')
+    msg_alternative.attach(MIMEText(plain_text_body, 'plain'))
+    msg_alternative.attach(MIMEText(html_body, 'html'))
+    
+    # Attach the 'alternative' part to the main message
+    msg.attach(msg_alternative)
 
     # Attach the certificate HTML file
     try:
@@ -1928,7 +1936,7 @@ def generate_certificate_html(candidate_data): # Removed certificate_hosting_url
                 <p>Certificate ID: {{CERTIFICATE_ID}}</p>
             </div>
         </body>
-        </html>
+    </html>
         """
     else:
         try:
