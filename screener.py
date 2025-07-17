@@ -1000,10 +1000,7 @@ def semantic_score_calculation(jd_embedding, resume_embedding, years_exp, cgpa, 
         basic_score += min(years_exp * 5, 30)
         
         if cgpa is not None:
-            if cgpa >= 3.5:
-                basic_score += 5
-            elif cgpa < 2.5:
-                basic_score -= 5
+            basic_score += 5 if cgpa >= 3.5 else (-5 if cgpa < 2.5 else 0)
 
         score = round(min(basic_score, 100), 2)
 
@@ -1466,10 +1463,10 @@ def resume_screener_page():
         resume_texts_for_embedding = [successfully_extracted_texts_map[name] for name in resume_names_for_embedding]
         
         # Use batch_size for encoding all resume texts
-        # Increased batch_size from 16 to 64 for better performance
+        # Increased batch_size from 64 to 128 for better performance
         resume_embeddings_array = global_sentence_model.encode(
             resume_texts_for_embedding, 
-            batch_size=64, # Optimized batch size
+            batch_size=128, # Optimized batch size
             show_progress_bar=False # Streamlit handles progress bar
         )
         
