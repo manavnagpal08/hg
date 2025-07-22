@@ -353,63 +353,77 @@ def extract_text_from_file(file_bytes, file_name, file_type):
 
 
 
+def extract_years_of_experience(resume_text):
+    def remove_education_section(text):
+        lines = text.lower().splitlines()
+        filtered = []
+        inside_education = False
+        for line in lines:
+            if any(keyword in line for keyword in [
+                "education", "b.tech", "btech", "class x", "class xii", "school",
+                "higher secondary", "cgpa", "percentage"
+            ]):
+                inside_education = True
+            elif inside_education and line.strip() == "":
+                inside_education = False
+            if not inside_education:
+                filtered.append(line)
+        return "\n".join(filtered)
 
-def extract_years_of_experience(text):
-    text = text.lower()
+    def normalize_date_str(date_str):
+        return re.sub(r'[,\.\s]+', ' ', date_str.strip().lower()).title()
+
+    text = remove_education_section(resume_text)
+    text = re.sub(r'[\:\,\–—]+', ' - ', text)  # Normalize all symbols to hyphen
+
     total_months = 0
     now = datetime.now()
 
-    # Keep only sections that might include experience
-    relevant_sections = []
-    for section in re.split(r'\n{2,}', text):  # split by double newlines (blocks)
-        if any(keyword in section for keyword in ["experience", "internship", "project", "work"]):
-            relevant_sections.append(section)
-
-    filtered_text = "\n".join(relevant_sections)
-
     date_patterns = [
-        r'(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})\s*(?:to|–|-)\s*(present|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})',
-        r'(\b\d{4})\s*(?:to|–|-)\s*(present|\b\d{4})'
+        r'(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{4})\s*[-to]+\s*(present|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{4})',
+        r'(\b\d{4})\s*[-to]+\s*(present|\b\d{4})'
     ]
 
     for pattern in date_patterns:
-        job_date_ranges = re.findall(pattern, filtered_text)
+        job_date_ranges = re.findall(pattern, text)
         for start_str, end_str in job_date_ranges:
-            start_date = None
-            end_date = None
+            start_str = normalize_date_str(start_str)
+            end_str = normalize_date_str(end_str)
 
+            # Parse start date
             try:
-                start_date = datetime.strptime(start_str.strip(), '%B %Y')
-            except ValueError:
+                start_date = datetime.strptime(start_str, '%B %Y')
+            except:
                 try:
-                    start_date = datetime.strptime(start_str.strip(), '%b %Y')
-                except ValueError:
+                    start_date = datetime.strptime(start_str, '%b %Y')
+                except:
                     try:
                         start_date = datetime(int(start_str.strip()), 1, 1)
-                    except ValueError:
-                        pass
+                    except:
+                        continue
 
-            if start_date is None or start_date > now:
+            if not start_date or start_date > now:
                 continue
 
-            if end_str.strip() == 'present':
+            # Parse end date
+            if 'present' in end_str.lower():
                 end_date = now
             else:
                 try:
-                    end_date = datetime.strptime(end_str.strip(), '%B %Y')
-                except ValueError:
+                    end_date = datetime.strptime(end_str, '%B %Y')
+                except:
                     try:
-                        end_date = datetime.strptime(end_str.strip(), '%b %Y')
-                    except ValueError:
+                        end_date = datetime.strptime(end_str, '%b %Y')
+                    except:
                         try:
                             end_date = datetime(int(end_str.strip()), 12, 31)
-                        except ValueError:
-                            pass
+                        except:
+                            continue
 
-                if end_date and end_date > now:
+                if end_date > now:
                     end_date = now
 
-            if end_date is None:
+            if not end_date:
                 continue
 
             delta_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
@@ -418,7 +432,7 @@ def extract_years_of_experience(text):
     if total_months > 0:
         return round(total_months / 12, 1)
 
-    # fallback to text like "5 years of experience"
+    # Fallback: textual pattern like "3 years of experience"
     match = re.search(r'(\d+(?:\.\d+)?)\s*(\+)?\s*(year|yrs|years)\b', text)
     if not match:
         match = re.search(r'experience[^\d]{0,10}(\d+(?:\.\d+)?)', text)
@@ -426,6 +440,7 @@ def extract_years_of_experience(text):
         return float(match.group(1))
 
     return 0.0
+
 
 def extract_email(text):
     text = text.lower()
