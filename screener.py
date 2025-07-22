@@ -352,9 +352,11 @@ def extract_text_from_file(file_bytes, file_name, file_type):
     return full_text
 
 
+
 def extract_years_of_experience(text):
     text = text.lower()
     total_months = 0
+    now = datetime.now()
     
     date_patterns = [
         r'(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})\s*(?:to|–|-)\s*(present|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})',
@@ -378,11 +380,11 @@ def extract_years_of_experience(text):
                     except ValueError:
                         pass
 
-            if start_date is None:
-                continue
+            if start_date is None or start_date > now:
+                continue  # skip future start dates
 
             if end_str.strip() == 'present':
-                end_date = datetime.now()
+                end_date = now
             else:
                 try:
                     end_date = datetime.strptime(end_str.strip(), '%B %Y')
@@ -394,13 +396,17 @@ def extract_years_of_experience(text):
                             end_date = datetime(int(end_str.strip()), 12, 31)
                         except ValueError:
                             pass
-            
+
+                if end_date and end_date > now:
+                    end_date = now  # cap end date to today
+
             if end_date is None:
                 continue
 
             delta_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
             total_months += max(delta_months, 0)
 
+    # If no date-based experience found, fallback to textual patterns
     if total_months > 0:
         return round(total_months / 12, 1)
     else:
