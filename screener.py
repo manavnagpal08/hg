@@ -353,18 +353,27 @@ def extract_text_from_file(file_bytes, file_name, file_type):
 
 
 
+
 def extract_years_of_experience(text):
     text = text.lower()
     total_months = 0
     now = datetime.now()
-    
+
+    # Keep only sections that might include experience
+    relevant_sections = []
+    for section in re.split(r'\n{2,}', text):  # split by double newlines (blocks)
+        if any(keyword in section for keyword in ["experience", "internship", "project", "work"]):
+            relevant_sections.append(section)
+
+    filtered_text = "\n".join(relevant_sections)
+
     date_patterns = [
         r'(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})\s*(?:to|–|-)\s*(present|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})',
         r'(\b\d{4})\s*(?:to|–|-)\s*(present|\b\d{4})'
     ]
 
     for pattern in date_patterns:
-        job_date_ranges = re.findall(pattern, text)
+        job_date_ranges = re.findall(pattern, filtered_text)
         for start_str, end_str in job_date_ranges:
             start_date = None
             end_date = None
@@ -381,7 +390,7 @@ def extract_years_of_experience(text):
                         pass
 
             if start_date is None or start_date > now:
-                continue  # skip future start dates
+                continue
 
             if end_str.strip() == 'present':
                 end_date = now
@@ -398,7 +407,7 @@ def extract_years_of_experience(text):
                             pass
 
                 if end_date and end_date > now:
-                    end_date = now  # cap end date to today
+                    end_date = now
 
             if end_date is None:
                 continue
@@ -406,15 +415,15 @@ def extract_years_of_experience(text):
             delta_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
             total_months += max(delta_months, 0)
 
-    # If no date-based experience found, fallback to textual patterns
     if total_months > 0:
         return round(total_months / 12, 1)
-    else:
-        match = re.search(r'(\d+(?:\.\d+)?)\s*(\+)?\s*(year|yrs|years)\b', text)
-        if not match:
-            match = re.search(r'experience[^\d]{0,10}(\d+(?:\.\d+)?)', text)
-        if match:
-            return float(match.group(1))
+
+    # fallback to text like "5 years of experience"
+    match = re.search(r'(\d+(?:\.\d+)?)\s*(\+)?\s*(year|yrs|years)\b', text)
+    if not match:
+        match = re.search(r'experience[^\d]{0,10}(\d+(?:\.\d+)?)', text)
+    if match:
+        return float(match.group(1))
 
     return 0.0
 
